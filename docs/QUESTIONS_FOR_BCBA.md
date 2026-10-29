@@ -45,3 +45,11 @@ Each question lists the default the build uses today. Defaults are the safer cho
 21. **Second reviewer for rules with numbers.** The strategy recommends a second person confirm any rule containing a number (hours, percentages, units). *Default:* one BCBA is enough, because a solo practice has no second reviewer; the quote must still contain every number in the rule. Should multi-BCBA practices require two?
 22. **How long a verification lasts.** *Default:* until the payor's next scheduled revision (next quarter for Georgia's manual, the "Next Review" date for Aetna policies), and never more than 180 days for an official document (90 days for written payor correspondence).
 23. **Same-topic change alerts.** *Default:* a checklist-only rule is flagged "needs re-check" when the payor's official document logs a change on the same topic, for supervision, licensing/credentials, and treatment-plan templates only. Too many or too few alerts?
+
+## From the payor documents review (docs/PAYOR_DOCUMENTS_REVIEW.md)
+
+24. **Georgia: separate or consolidated prior authorizations?** The Q4 manual contradicts itself: Appendix E B.iii/iv says assessment and treatment are separate PAs, while B.xiv requires one consolidated PA after the initial assessment. Amerigroup's checklist rule also says 97151 is separate. *Default:* warn, cite both passages, and let the BCBA choose.
+25. **Aetna: how to request ABA authorization?** The office manual (6/26) says to call the number on the member's card; the newer GR-69017-4 form (effective 2026-08-01) says initial requests start on Availity. *Default:* unverified warning naming both.
+26. **TRICARE technicians: RBT only, or also ABAT/BCAT?** The checklist says RBT; the Humana Military FAQ lists QABA (ABAT) and BICC (BCAT) among accepted boards, subject to the TRICARE Operations Manual and state law. *Default:* warn only.
+27. **TRICARE "report due 14 days after assessment".** No official document found states this; the only 14-day figure is the FAQ's window for completing 97151. Is the checklist rule right?
+28. **Plan structure:** should the app move to the 23-section structure in the review (with payor-specific order and conditional school, group, and telehealth sections)?
