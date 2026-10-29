@@ -13,8 +13,8 @@ import { goalGraphSvg } from "../plan/graphs";
 import type { RuleResult } from "../payors/types";
 import { renderMilestonesGridSvg } from "../vbmapp/grid-svg";
 import { evaluateClientRules } from "./payors";
-import { GOAL_STATUS_LABEL, type GoalStatus } from "../plan/context";
-import { sectionDone } from "../plan/sections";
+import { GOAL_STATUS_LABEL, measureUnit, type GoalStatus } from "../plan/context";
+import { isLegacyPlan, sectionDone } from "../plan/sections";
 import { assertExportable, NOT_APPLICABLE_ITEM } from "./plans";
 import { loadPlanBundle } from "../plan/context";
 
@@ -149,7 +149,7 @@ function goalRecordTable(g: PlanBundle["goals"][number]): string {
     [
       "Baseline",
       g.baselineLockedAt && g.baselineValue !== null
-        ? `${Math.round(g.baselineValue * 10) / 10}${g.measure === "percent" ? "%" : ""} (recorded ${d(g.baselineDate)})`
+        ? `${Math.round(g.baselineValue * 10) / 10}${measureUnit(g.measure)} (recorded ${d(g.baselineDate)})`
         : "not locked",
     ],
   ];
@@ -185,10 +185,12 @@ export function packetHtml(b: PlanBundle, results: RuleResult[], asOf: Day): str
             )}<p class="meta">Approved by BCBA ${s.approvedAt ? toDay(s.approvedAt) : ""}</p></section>`,
     )
     .join("");
+  // Plans written with the eleven-section structure export exactly as before.
+  const legacy = isLegacyPlan(b.plan.sections.map((s) => s.key));
   const goals = b.goals
     .map(
       (g) =>
-        `<div class="goal"><h3>Goal ${g.ordinal}: ${esc(g.domain)}</h3><p>${render(g.objective)}</p><p class="rationale"><em>Medical necessity:</em> ${render(g.rationale)}</p>${goalRecordTable(g)}${g.flatExplanation ? `<p><em>Progress note:</em> ${esc(g.flatExplanation)}</p>` : ""}${goalGraphSvg({ title: `Goal ${g.ordinal}: ${g.domain}`, measure: g.measure, points: g.dataPoints.map((p) => ({ date: toDay(p.date), value: p.value })), phaseChanges: g.phaseChanges.map((p) => ({ date: toDay(p.date), label: p.label })), masteryPct: g.masteryAccuracyPct })}</div>`,
+        `<div class="goal"><h3>Goal ${g.ordinal}: ${esc(g.domain)}</h3><p>${render(g.objective)}</p><p class="rationale"><em>Medical necessity:</em> ${render(g.rationale)}</p>${legacy ? "" : goalRecordTable(g)}${g.flatExplanation ? `<p><em>Progress note:</em> ${esc(g.flatExplanation)}</p>` : ""}${goalGraphSvg({ title: `Goal ${g.ordinal}: ${g.domain}`, measure: g.measure, points: g.dataPoints.map((p) => ({ date: toDay(p.date), value: p.value })), phaseChanges: g.phaseChanges.map((p) => ({ date: toDay(p.date), label: p.label })), masteryPct: g.masteryAccuracyPct })}</div>`,
     )
     .join("");
   const latest = b.administrations.at(-1);

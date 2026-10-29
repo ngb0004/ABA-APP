@@ -17,6 +17,7 @@ import {
 import { isDemo } from "../demo";
 import { extractDocumentText, MAX_BYTES, MIN_TEXT } from "../rules-watch/fetch";
 import {
+  credentialsMissingFromQuote,
   looksLikeClientRecord,
   normalizeText,
   numbersMissingFromQuote,
@@ -150,26 +151,52 @@ export async function uploadOfficialCopy(
   if (doc.secondary)
     throw new HttpError(422, `${doc.name} is a secondary source. Upload an official payor document instead.`);
   if (doc.locator) throw new HttpError(409, `${doc.name} is fetched automatically from the payor's site.`);
-  if (input.data.length > MAX_BYTES) throw new HttpError(413, "File too large");
+  // Every rejected upload is recorded (reason and size only, never the file's text).
+  const reject = async (
+    status: number,
+    reason: string,
+    message: string,
+    extra: Record<string, unknown> = {},
+  ) => {
+    await withOrg(ctx, (tx) =>
+      audit(tx, {
+        action: "source:upload_rejected",
+        entityType: "PayorDocument",
+        entityId: documentId,
+        meta: { key: doc.key, reason, byteLength: input.data.length, ...extra },
+      }),
+    );
+    return new HttpError(status, message);
+  };
+  if (input.data.length > MAX_BYTES) throw await reject(413, "too_large", "File too large");
   if (input.data.subarray(0, 5).toString() !== "%PDF-")
-    throw new HttpError(422, "Upload the payor's PDF file.");
+    throw await reject(422, "not_pdf", "Upload the payor's PDF file.");
   const effectiveDate = input.effectiveDate?.trim() || null;
-  if (effectiveDate && !ISO_DAY.test(effectiveDate))
+  if (
+    effectiveDate &&
+    !(ISO_DAY.test(effectiveDate) && toDay(new Date(`${effectiveDate}T00:00:00Z`)) === effectiveDate)
+  )
     throw new HttpError(422, "Effective date must be a date (YYYY-MM-DD)");
   let text: string;
   try {
     text = normalizeText(await extractDocumentText(input.data, "application/pdf", "upload.pdf"));
   } catch {
-    throw new HttpError(422, "Could not read text from that PDF.");
+    throw await reject(422, "unreadable", "Could not read text from that PDF.");
   }
   if (text.length < MIN_TEXT)
-    throw new HttpError(422, "That PDF has almost no text (it may be a scan). Upload the payor's text PDF.");
-  if (looksLikeClientRecord(text))
-    throw new HttpError(
+    throw await reject(
       422,
-      "That file looks like it contains a client's information (a name, date of birth, or member ID). Upload only the payor's public publication.",
+      "too_little_text",
+      "That PDF has almost no text (it may be a scan). Upload the payor's text PDF.",
     );
   const sha = textSha256(text);
+  if (looksLikeClientRecord(text))
+    throw await reject(
+      422,
+      "looks_like_client_record",
+      "That file looks like it contains a client's information (a name, date of birth, or member ID). Upload only the payor's public publication.",
+      { textSha256: sha },
+    );
   const versionLabel = input.versionLabel?.trim().slice(0, 120) || null;
   return withOrg(ctx, async (tx) => {
     const latest = await tx.payorDocumentSnapshot.findFirst({
@@ -177,7 +204,24 @@ export async function uploadOfficialCopy(
       orderBy: { fetchedAt: "desc" },
       select: { textSha256: true },
     });
-    if (latest?.textSha256 === sha) return { snapshotId: null, unchanged: true };
+    if (latest?.textSha256 === sha) {
+      await audit(tx, {
+        action: "source:upload_unchanged",
+        entityType: "PayorDocument",
+        entityId: documentId,
+        meta: { key: doc.key, textSha256: sha },
+      });
+      return { snapshotId: null, unchanged: true };
+    }
+    // A corrected copy uploaded without a date keeps the edition date of the copy before it.
+    const priorDated = effectiveDate
+      ? null
+      : await tx.payorDocumentSnapshot.findFirst({
+          where: { documentId, effectiveDate: { not: null } },
+          orderBy: { fetchedAt: "desc" },
+          select: { effectiveDate: true },
+        });
+    const edition = effectiveDate ?? (priorDated?.effectiveDate ? toDay(priorDated.effectiveDate) : null);
     const now = new Date();
     const snap = await tx.payorDocumentSnapshot.create({
       data: {
@@ -190,7 +234,7 @@ export async function uploadOfficialCopy(
         textSha256: sha,
         text,
         versionLabel,
-        effectiveDate: effectiveDate ? new Date(`${effectiveDate}T00:00:00Z`) : null,
+        effectiveDate: edition ? new Date(`${edition}T00:00:00Z`) : null,
         origin: "upload",
         uploadedById: ctx.userId,
       },
@@ -199,7 +243,8 @@ export async function uploadOfficialCopy(
     await tx.payorDocument.update({
       where: { id: documentId },
       data: {
-        health: effectiveDate && cited && effectiveDate > cited ? "changed" : "ok",
+        // Newer edition than the one cited, or (undated) different text from the first copy: re-check.
+        health: (edition && cited && edition > cited) || (!edition && latest) ? "changed" : "ok",
         lastError: null,
         lastCheckedAt: now,
         ...(latest ? { lastChangedAt: now } : {}),
@@ -280,6 +325,12 @@ export async function verifyRuleWithQuote(
       throw new HttpError(
         422,
         `That sentence does not appear in the current version of ${doc.name}${snap.versionLabel ? ` (${snap.versionLabel})` : ""}. Copy it exactly from the document.`,
+      );
+    const creds = credentialsMissingFromQuote(rule.params, quote);
+    if (creds.length)
+      throw new HttpError(
+        422,
+        `The quote must name every credential in the rule. Missing: ${creds.join(", ")}`,
       );
     const missing = numbersMissingFromQuote(rule.params, quote);
     if (missing.length)

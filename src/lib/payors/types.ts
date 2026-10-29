@@ -42,20 +42,38 @@ export const LocatorSchema = z.discriminatedUnion("kind", [
 export type Locator = z.infer<typeof LocatorSchema>;
 
 export const SeedSchema = z.object({
-  documents: z.record(
-    z.string(),
-    z.object({
-      name: z.string(),
-      version: z.string(),
-      url: z.string().nullable(),
-      effective_date: z.string().optional(),
-      /** How to find the current version; defaults to the url. */
-      locator: LocatorSchema.optional(),
-      secondary: z.boolean().optional(),
-      /** Earlier keys for this document: sync renames the stored row, keeping its fetched copies. */
-      formerly: z.array(z.string()).optional(),
+  documents: z
+    .record(
+      z.string(),
+      z.object({
+        name: z.string(),
+        version: z.string(),
+        url: z.string().nullable(),
+        effective_date: z.string().optional(),
+        /** How to find the current version; defaults to the url. */
+        locator: LocatorSchema.optional(),
+        secondary: z.boolean().optional(),
+        /**
+         * Earlier keys for this document, oldest first: sync renames the stored row (keeping its
+         * fetched copies), and rules keep the lineage they had under the oldest key.
+         */
+        formerly: z.array(z.string()).optional(),
+      }),
+    )
+    .superRefine((docs, ctx) => {
+      const claimed = new Map<string, string>();
+      for (const [key, d] of Object.entries(docs))
+        for (const old of d.formerly ?? []) {
+          if (old in docs)
+            ctx.addIssue({ code: "custom", message: `${key}: formerly "${old}" is still a document key` });
+          if (claimed.has(old))
+            ctx.addIssue({
+              code: "custom",
+              message: `"${old}" is listed as formerly by ${claimed.get(old)} and ${key}`,
+            });
+          claimed.set(old, key);
+        }
     }),
-  ),
   payors: z.array(
     z.object({
       id: z.string(),

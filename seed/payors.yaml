@@ -332,7 +332,7 @@ payors:
         source: ga_medicaid_asd_manual
         section: "601.1.1.6 Registered Behavior Technician"
         page: 8
-        quote: "601.1.1.6.3. Must be supervised by a BCBA/BCBA-D or BCaBA"
+        quote: "601.1.1.6. Registered Behavior Technician (RBT): 601.1.1.6.1. Paraprofessional who implements the service plan under supervision of a BCBA/BCBA-D 601.1.1.6.2. May not be the enrolled QHCP. 601.1.1.6.3. Must be supervised by a BCBA/BCBA-D or BCaBA"
         verified: false
       - type: event_trigger
         params: {"event": "bcba_transfer_same_company", "requires": "Receiving behavior analyst reviews and attests the treatment plan"}
@@ -759,9 +759,9 @@ payors:
         source: humana_aba_faq_xpbb0825
         section: "National certification boards"
         page: 2
-        quote: "Providers must meet the requirements outlined in the TRICARE Operations Manual (TOM) and comply with applicable state legislation."
+        quote: "Registered Behavior Technicians (RBT) • Qualified Applied Behavior Analysis Certification Board (QABA) • Qualified Autism Services Practitioner (QASP) • Applied Behavior Analysis Technician (ABAT) • Behavioral Intervention Certification Council (BICC) • Board Certified Autism Technician (BCAT)"
         verified: false
-        notes: "The FAQ lists BACB (RBT), QABA (ABAT), and BICC (BCAT). The TOM and state law may be stricter; the practice checklist says RBT only (question 26)."
+        notes: "Under the list: providers must meet the TRICARE Operations Manual and state law, which may be stricter; the practice checklist says RBT only (question 26)."
       - type: concurrent_billing
         params: {codes: ["97153", "97155"], allowed: false, outcome: "higher rate paid, other denied"}
         source: humana_aba_faq_xpbb0825

@@ -21,6 +21,8 @@ export type EvalContext = {
     sections: { key: string; state: string; hasContent: boolean }[];
     includesEvaluationDate: boolean;
     allApprovedByBcba: boolean;
+    /** Every goal has data points, so the packet carries a progress graph for each. */
+    goalsHaveData?: boolean;
   } | null;
   /** Org offices for form_address checks: [{state, address}] */
   offices: { state: string; address: string }[];

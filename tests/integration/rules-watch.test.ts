@@ -349,3 +349,99 @@ describe("uploaded official copies (documents with no public URL)", () => {
     expect(audit).toBe(1);
   });
 });
+
+describe("uploads: audit and edition dates", () => {
+  const HANDBOOK = "tricare_east_provider_handbook_2026";
+  const docByKey = (key: string) =>
+    withOrg(bcba, (tx) => tx.payorDocument.findFirstOrThrow({ where: { key } }));
+  const count = (action: string, entityId: string) =>
+    withOrg(bcba, (tx) => tx.auditEvent.count({ where: { action, entityId } }));
+
+  it("records rejected and unchanged uploads without the file's text", async () => {
+    const doc = await docByKey(HANDBOOK);
+    const before = await count("source:upload_rejected", doc.id);
+    await expect(
+      uploadOfficialCopy(bcba, doc.id, {
+        data: readFileSync("fixtures/payor-docs/synthetic-client-letter.pdf"),
+      }),
+    ).rejects.toMatchObject({ status: 422 });
+    await expect(uploadOfficialCopy(bcba, doc.id, { data: Buffer.from("nope") })).rejects.toMatchObject({
+      status: 422,
+    });
+    expect(await count("source:upload_rejected", doc.id)).toBe(before + 2);
+    const rows = await withOrg(bcba, (tx) =>
+      tx.auditEvent.findMany({ where: { action: "source:upload_rejected", entityId: doc.id } }),
+    );
+    for (const r of rows) expect(JSON.stringify(r.meta)).not.toMatch(/Childname|Date of Birth/);
+    // The handbook fixture was uploaded earlier in this file: the same file again is recorded as unchanged.
+    await uploadOfficialCopy(bcba, doc.id, {
+      data: readFileSync("fixtures/payor-docs/synthetic-handbook.pdf"),
+    });
+    expect(await count("source:upload_unchanged", doc.id)).toBeGreaterThanOrEqual(1);
+  });
+
+  it("a corrected copy without a date keeps the previous edition date", async () => {
+    const doc = await docByKey("humana_aba_faq_xpbb0825");
+    const pdf = readFileSync("fixtures/payor-docs/synthetic-handbook.pdf");
+    await uploadOfficialCopy(bcba, doc.id, { data: pdf, effectiveDate: "2027-01-01" });
+    const r = await uploadOfficialCopy(bcba, doc.id, {
+      data: readFileSync("fixtures/payor-docs/synthetic-handbook-corrected.pdf"),
+    });
+    expect(r.unchanged).toBe(false);
+    const latest = await withOrg(bcba, (tx) =>
+      tx.payorDocumentSnapshot.findFirstOrThrow({
+        where: { documentId: doc.id },
+        orderBy: { fetchedAt: "desc" },
+      }),
+    );
+    expect(latest.effectiveDate?.toISOString().slice(0, 10)).toBe("2027-01-01");
+    // This document cites no edition date, so a newer edition is not a "change" against it.
+    expect((await docByKey("humana_aba_faq_xpbb0825")).health).toBe("ok");
+  });
+});
+
+describe("document renames (run last: they change document rows)", () => {
+  it("renaming keeps verifications, and reusing the old key does not clash", async () => {
+    const channel = async () =>
+      (await rulesOf("cigna_evernorth")).find((r) => r.type === "submission_channel")!;
+    const before = await channel();
+    expect(before.verified).toBe(true);
+    const oldDoc = await withOrg(bcba, (tx) =>
+      tx.payorDocument.findFirstOrThrow({ where: { key: "evernorth_aba_pa_928213d" } }),
+    );
+    const renamed = julySeed();
+    renamed.documents.evernorth_v2 = {
+      ...renamed.documents.evernorth_aba_pa_928213d!,
+      formerly: ["evernorth_aba_pa_928213d"],
+    };
+    delete renamed.documents.evernorth_aba_pa_928213d;
+    for (const p of renamed.payors)
+      for (const r of [...p.rules, ...p.extra_rules])
+        if (r.source === "evernorth_aba_pa_928213d") r.source = "evernorth_v2";
+    await withOrg(bcba, (tx) => syncPayorLibrary(tx, org.id, renamed));
+    const after = await channel();
+    expect(after.lineageKey).toBe(before.lineageKey);
+    expect(after.verified).toBe(true);
+    // A later library that uses the old key again gets a new row instead of a primary-key clash.
+    await withOrg(bcba, (tx) => syncPayorLibrary(tx, org.id, julySeed()));
+    const reused = await withOrg(bcba, (tx) =>
+      tx.payorDocument.findFirstOrThrow({ where: { key: "evernorth_aba_pa_928213d" } }),
+    );
+    expect(reused.id).not.toBe(oldDoc.id);
+  });
+
+  it("a document that loses its public copy stops being watched and can be uploaded", async () => {
+    const seed = julySeed();
+    seed.documents.aetna_cpb_0648 = { ...seed.documents.aetna_cpb_0648!, url: null, locator: undefined };
+    await withOrg(bcba, (tx) => syncPayorLibrary(tx, org.id, seed));
+    const doc = await withOrg(bcba, (tx) =>
+      tx.payorDocument.findFirstOrThrow({ where: { key: "aetna_cpb_0648" } }),
+    );
+    expect(doc.locator).toBeNull();
+    expect(doc.url).toBeNull();
+    // Not 409 ("fetched automatically") any more: the upload is judged on the file.
+    await expect(uploadOfficialCopy(bcba, doc.id, { data: Buffer.from("x") })).rejects.toMatchObject({
+      status: 422,
+    });
+  });
+});

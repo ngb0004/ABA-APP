@@ -73,6 +73,8 @@ export type SectionDef = {
   };
   /** Intake answers this section collects (defaults to its own key). */
   intakeFrom?: SectionKey[];
+  /** Exact intake fields, frozen for the legacy structure so its required items never change. */
+  intakeFields?: string[];
 };
 
 const REDUCTION = ["behavior_reduction", "replacement"];
@@ -382,7 +384,7 @@ export const LEGACY_SECTIONS: SectionDef[] = [
       { key: "referral_source", label: "Referral source documented" },
       { key: "guardian_signers", label: "Guardian(s) who may sign identified from custody answers" },
     ],
-    intakeFrom: ["client_information"],
+    intakeFields: ["custody_arrangement"],
   },
   {
     key: "background",
@@ -394,7 +396,21 @@ export const LEGACY_SECTIONS: SectionDef[] = [
       { key: "medical_history", label: "Medical history and medications reviewed" },
       { key: "restricted_statement", label: "BCBA-written statement for restricted history (or none)" },
     ],
-    intakeFrom: ["biopsychosocial", "diagnosis_and_referral"],
+    intakeFields: [
+      "primary_concerns",
+      "diagnosis_date",
+      "diagnosing_provider_type",
+      "medications",
+      "seizures",
+      "sleep_difficulty",
+      "feeding_concerns",
+      "communication_modes",
+      "school_placement",
+      "prior_evaluations",
+      "substance_use",
+      "abuse_history",
+      "family_psychiatric_history",
+    ],
   },
   {
     key: "assessment",
@@ -407,7 +423,7 @@ export const LEGACY_SECTIONS: SectionDef[] = [
       { key: "isolated_scores_verified", label: "Isolated-score flags verified against protocol (or none)" },
     ],
     context: { isolatedScores: true },
-    intakeFrom: ["assessment_results"],
+    intakeFields: ["prior_evaluations"],
   },
   {
     key: "behavior",
@@ -417,7 +433,15 @@ export const LEGACY_SECTIONS: SectionDef[] = [
     valuePrefixes: ["intake.", "goal."],
     items: [{ key: "function_hypothesis", label: "Function of behavior identified (or none)" }],
     context: { goals: true, safetyFlags: true },
-    intakeFrom: ["behavior_intervention_plan"],
+    intakeFields: [
+      "aggression",
+      "aggression_frequency",
+      "self_injury",
+      "tantrums",
+      "transitions_difficulty",
+      "bolting",
+      "pica",
+    ],
   },
   {
     key: "skill_goals",
@@ -433,7 +457,14 @@ export const LEGACY_SECTIONS: SectionDef[] = [
       },
     ],
     context: { goals: true },
-    intakeFrom: ["skill_acquisition_goals"],
+    intakeFields: [
+      "primary_concerns",
+      "feeding_concerns",
+      "toileting_status",
+      "communication_modes",
+      "independent_community",
+      "caregiver_priorities",
+    ],
   },
   {
     key: "behavior_goals",
@@ -446,7 +477,7 @@ export const LEGACY_SECTIONS: SectionDef[] = [
       { key: "bip_strategies", label: "Antecedent, replacement, and consequence strategies described" },
     ],
     context: { goals: true },
-    intakeFrom: ["behavior_reduction_goals"],
+    intakeFields: ["aggression", "aggression_frequency", "self_injury", "tantrums"],
   },
   {
     key: "caregiver",
@@ -456,7 +487,7 @@ export const LEGACY_SECTIONS: SectionDef[] = [
     valuePrefixes: ["goal.", "caregiver.", "auth.97156"],
     items: [{ key: "caregiver_goals_two", label: "At least two caregiver goals" }],
     context: { goals: true },
-    intakeFrom: ["caregiver_training_goals"],
+    intakeFields: ["caregiver_priorities", "caregiver_training_availability"],
   },
   {
     key: "services",
@@ -469,7 +500,7 @@ export const LEGACY_SECTIONS: SectionDef[] = [
       { key: "schedule_fits", label: "Recommended hours fit the family's availability (or explained)" },
     ],
     context: { goals: true },
-    intakeFrom: ["service_recommendations"],
+    intakeFields: ["caregiver_training_availability", "availability"],
   },
   {
     key: "coordination",
@@ -480,7 +511,7 @@ export const LEGACY_SECTIONS: SectionDef[] = [
     items: [
       { key: "providers_contacted", label: "Other providers and school coordination documented (or none)" },
     ],
-    intakeFrom: ["coordination_of_care"],
+    intakeFields: ["school_placement", "has_iep", "other_therapies"],
   },
   {
     key: "crisis",
@@ -493,7 +524,20 @@ export const LEGACY_SECTIONS: SectionDef[] = [
       { key: "emergency_contacts", label: "Emergency contacts and procedures documented" },
     ],
     context: { safetyFlags: true },
-    intakeFrom: ["crisis_plan"],
+    intakeFields: [
+      "medications",
+      "severe_allergy",
+      "epipen",
+      "inhaler",
+      "seizures",
+      "self_injury",
+      "bolting",
+      "overnight_wandering",
+      "pica",
+      "transportation_risks",
+      "independent_community",
+      "suicidal_behavior",
+    ],
   },
   {
     key: "transition",
@@ -506,7 +550,7 @@ export const LEGACY_SECTIONS: SectionDef[] = [
       { key: "fade_plan", label: "Fade plan tied to goals" },
     ],
     context: { goals: true },
-    intakeFrom: [],
+    intakeFields: [],
   },
 ];
 
@@ -516,6 +560,12 @@ export const SECTION_BY_KEY = new Map<string, SectionDef>(
 
 /** Intake section keys a section collects answers for. */
 export const intakeKeysFor = (def: SectionDef): string[] => def.intakeFrom ?? [def.key];
+
+/** Whether an intake field (by id and the sections it feeds) belongs to this section. */
+export const sectionTakesField = (def: SectionDef, field: { id: string; feeds_sections: string[] }) =>
+  def.intakeFields
+    ? def.intakeFields.includes(field.id)
+    : field.feeds_sections.some((k) => intakeKeysFor(def).includes(k));
 
 /** A plan created with the eleven-section structure. */
 export const isLegacyPlan = (sectionKeys: string[]) => sectionKeys.includes("identifying");
@@ -562,5 +612,7 @@ export const PLAN_TOPICS: Record<string, { current: SectionKey[]; legacy: Legacy
 export function sectionsForTopic(topic: string, planSectionKeys: string[]): string[] | undefined {
   const t = PLAN_TOPICS[topic];
   if (!t) return undefined;
-  return isLegacyPlan(planSectionKeys) ? t.legacy : t.current;
+  const keys = isLegacyPlan(planSectionKeys) ? t.legacy : t.current;
+  // No section covers it in this structure: unknown, so callers fall back to a manual check.
+  return keys.length ? keys : undefined;
 }

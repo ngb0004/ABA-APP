@@ -77,6 +77,10 @@ export const slug = (s: string) =>
 const usDate = (d: Day) => `${d.slice(5, 7)}/${d.slice(8, 10)}/${d.slice(0, 4)}`;
 const fmt = (n: number) => String(Math.round(n * 10) / 10);
 
+/** Unit shown after a goal's values. */
+export const measureUnit = (measure: string) =>
+  measure === "percent" ? "%" : measure === "frequency" ? " per session" : " min";
+
 export function goalKeyKind(measure: string) {
   return measure === "percent" ? "pct" : "rate";
 }
@@ -370,7 +374,7 @@ export function buildSourcedContext(b: ClientData, asOf: Day): SourcedContext {
     const gHref = `${clientHref}/goals#goal-${n}`;
     const pts = g.dataPoints.map((p) => ({ date: toDay(p.date), value: p.value }));
     const kind = goalKeyKind(g.measure);
-    const unit = g.measure === "percent" ? "%" : g.measure === "frequency" ? " per session" : " min";
+    const unit = measureUnit(g.measure);
     const src = (description: string) => ({ kind: "goal_data_point", id: g.id, description, href: gHref });
     // A locked baseline (recorded and dated by the BCBA) wins over the computed one.
     const locked = g.baselineLockedAt && g.baselineValue !== null && g.baselineDate;

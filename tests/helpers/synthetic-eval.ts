@@ -50,4 +50,5 @@ export const fullPlan = (
   })),
   includesEvaluationDate: true,
   allApprovedByBcba: true,
+  goalsHaveData: true,
 });

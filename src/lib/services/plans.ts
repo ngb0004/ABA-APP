@@ -19,7 +19,7 @@ import { lineDiff } from "../plan/diff";
 import { goalGraphSvg } from "../plan/graphs";
 import { exportBlockers, runPresubmissionAudit } from "../plan/presubmission";
 import {
-  intakeKeysFor,
+  sectionTakesField,
   SECTIONS,
   SECTION_BY_KEY,
   sectionDone,
@@ -50,7 +50,6 @@ export function requiredItemsFor(
 ): RequiredItem[] {
   const def = SECTION_BY_KEY.get(sectionKey);
   if (!def) throw new HttpError(404, "Unknown section");
-  const intakeKeys = intakeKeysFor(def);
   const items: RequiredItem[] = [];
   for (const i of def.items.filter((x) => !x.reauthOnly || planType === "reauth"))
     items.push({
@@ -60,9 +59,7 @@ export function requiredItemsFor(
       auto: false,
       note: stored[i.key]?.note,
     });
-  for (const f of INTAKE_FIELDS.filter(
-    (x) => x.feeds_sections.some((k) => intakeKeys.includes(k)) && x.sensitivity !== "restricted",
-  )) {
+  for (const f of INTAKE_FIELDS.filter((x) => sectionTakesField(def, x) && x.sensitivity !== "restricted")) {
     const a = answers[f.id];
     const key = `intake:${f.id}`;
     const auto = a ? (isNa(a) ? "none" : "answered") : null;
@@ -238,11 +235,11 @@ export async function draftSection(ctx: OrgCtx, planId: string, key: string, asO
     const sourced = buildSourcedContext(b, asOf);
     const names = pseudonymNames(b.client);
     const answers = (b.intake?.answers ?? {}) as IntakeAnswers;
-    const intakeKeys = intakeKeysFor(def);
     const sectionAnswers = Object.fromEntries(
-      Object.entries(answers).filter(([id]) =>
-        INTAKE_FIELDS.find((f) => f.id === id)?.feeds_sections.some((k) => intakeKeys.includes(k)),
-      ),
+      Object.entries(answers).filter(([id]) => {
+        const f = INTAKE_FIELDS.find((x) => x.id === id);
+        return !!f && sectionTakesField(def, f);
+      }),
     );
     const payload: Record<string, unknown> = {
       task: "draft_section",
@@ -477,7 +474,11 @@ export async function reopenSection(ctx: OrgCtx, planId: string, key: string) {
     await tx.planSection.update({
       where: { id: section.id },
       data: {
-        state: section.content.trim() ? "edited" : "draft",
+        // Untouched AI text stays a draft: "edited" means the BCBA changed it.
+        state:
+          !section.content.trim() || (section.aiDraft !== null && section.content === section.aiDraft)
+            ? "draft"
+            : "edited",
         approvedAt: null,
         approvedById: null,
         items: items as Prisma.InputJsonValue,
@@ -590,8 +591,9 @@ export async function lockGoalBaseline(ctx: OrgCtx, goalId: string) {
     if (value === null || pts.length < BASELINE_POINTS)
       throw new HttpError(422, "Record at least three data points before locking the baseline");
     const date = pts[BASELINE_POINTS - 1]!.date;
-    await tx.goal.update({
-      where: { id: goalId },
+    // Conditional update: a concurrent lock makes this match nothing (409), never trips the trigger.
+    const r = await tx.goal.updateMany({
+      where: { id: goalId, baselineLockedAt: null },
       data: {
         baselineValue: value,
         baselineDate: new Date(`${date}T00:00:00Z`),
@@ -599,6 +601,7 @@ export async function lockGoalBaseline(ctx: OrgCtx, goalId: string) {
         baselineLockedById: ctx.userId,
       },
     });
+    if (r.count === 0) throw new HttpError(409, "This goal's baseline is already locked");
     await audit(tx, { action: "goal:lock_baseline", entityType: "Goal", entityId: goalId, meta: { date } });
     return { value, date };
   });

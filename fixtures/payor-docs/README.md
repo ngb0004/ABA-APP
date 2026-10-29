@@ -11,4 +11,5 @@ and Aetna, kept here only so tests run without network access. They contain no c
 Synthetic fixtures written for the tests (not payor publications):
 
 - synthetic-handbook.pdf: stands in for an official document with no public copy (uploaded by a BCBA)
+- synthetic-handbook-corrected.pdf: the same synthetic handbook with a corrected title, for re-upload tests
 - synthetic-client-letter.pdf: a fictional letter with made-up client details; uploads like it must be rejected

@@ -40,28 +40,69 @@ const norm = (s: string) =>
     .trim();
 
 /** Generic document matching (not payor-specific): attachment kinds and titles, plus plan-generated documents. */
-export function documentPresent(doc: string, ctx: EvalContext): { present: boolean; how: string } {
+export function documentPresent(
+  doc: string,
+  ctx: EvalContext,
+): { present: boolean; how: string; documentDate?: Day | null } {
   const n = norm(doc);
   const kindFor: [RegExp, string][] = [
-    [/\bdiagnostic evaluation\b/, "diagnostic_evaluation"],
+    [
+      /\bdiagnostic (?:re)?evaluation\b|\b(?:asd|autism)\b.*\bdiagnosis\b|\bdiagnosis\b.*\b(?:clinician|provider)\b/,
+      "diagnostic_evaluation",
+    ],
     [/\biep\b/, "iep"],
     [/\bifsp\b/, "ifsp"],
   ];
   for (const [re, kind] of kindFor) {
     if (re.test(n)) {
       const hit = ctx.attachments.find((a) => a.kind === kind);
-      if (hit) return { present: true, how: `attachment "${hit.title}"` };
+      if (hit) return { present: true, how: `attachment "${hit.title}"`, documentDate: hit.documentDate };
     }
   }
   if (/\bplan of care\b|\btreatment plan\b/.test(n) && ctx.plan)
     return { present: true, how: "treatment plan in this packet" };
-  if (/\bupdated data\b/.test(n) && ctx.plan?.type === "reauth")
-    return { present: true, how: "reauth plan with progress graphs" };
+  // The packet itself carries progress data and a line graph per goal on reauthorizations.
+  if (
+    /\bupdated data\b|\bgraphs?\b/.test(n) &&
+    ctx.plan?.type === "reauth" &&
+    ctx.plan.goalsHaveData !== false
+  )
+    return { present: true, how: "reauth plan with per-goal progress graphs" };
   const hit = ctx.attachments.find(
     (a) => norm(a.title) === n || norm(a.title).includes(n) || n.includes(norm(a.title)),
   );
-  if (hit && norm(hit.title).length > 3) return { present: true, how: `attachment "${hit.title}"` };
+  if (hit && norm(hit.title).length > 3)
+    return { present: true, how: `attachment "${hit.title}"`, documentDate: hit.documentDate };
   return { present: false, how: "" };
+}
+
+/** Events the app records on the client; any other event a rule names is a manual check. */
+/** Roles that supervise; their own direct sessions are not technician sessions. */
+const SUPERVISOR_ROLES = ["BCBA", "BCBA-D"];
+
+export const RECORDED_EVENTS = [
+  "bcba_transfer",
+  "insurance_changed_to_umr",
+  "plan_is_aetna_better_health_medicaid",
+];
+
+/** Events the app can work out from its own records (undefined when it cannot tell). */
+function derivedEvent(event: string, p: Record<string, unknown>, ctx: EvalContext): boolean | undefined {
+  if (event === "initial_evaluation")
+    return ctx.plan
+      ? ctx.plan.type === "initial"
+      : ctx.authorization
+        ? ctx.authorization.kind === "initial"
+        : undefined;
+  if (event === "telehealth_service")
+    return ctx.sessions.length ? ctx.sessions.some((x) => !x.inPerson) : undefined;
+  if (event === "break_in_treatment") {
+    const limit = num(p.threshold_calendar_days_gt);
+    if (limit === undefined || ctx.sessions.length < 2) return undefined;
+    const days = [...new Set(ctx.sessions.map((x) => x.date))].sort();
+    return days.some((d, i) => i > 0 && diffDays(d, days[i - 1]!) > limit);
+  }
+  return undefined;
 }
 
 function dailyHours(ctx: EvalContext, code?: string) {
@@ -96,28 +137,76 @@ const EVALUATORS: Record<RuleType, Evaluator> = {
         evidence: [str(p.note) ?? "Attach it if this applies to the request"],
       };
     }
+    let applicabilityUnknown = false;
     if (when === "if_applicable") {
-      const applicable = /ifsp/i.test(doc)
+      // Only conditions the app tracks decide applicability; anything else is the BCBA's call.
+      const tracked = /ifsp/i.test(doc)
         ? ctx.client.ageYears < 3
-        : /iep/i.test(doc)
+        : /\biep\b/i.test(doc)
           ? ctx.client.hasIep
-          : true;
-      if (!applicable) return NA(`${doc}: not applicable to this client`);
+          : undefined;
+      if (tracked === false) return NA(`${doc}: not applicable to this client`);
+      applicabilityUnknown = tracked === undefined;
     }
-    const { present, how } = documentPresent(doc, ctx);
+    const checklist = (Array.isArray(p.must_include) ? (p.must_include as string[]) : []).map(
+      (x) => `Manual check: document includes ${x}`,
+    );
+    // A rule listing acceptable tools is met only by one of them, never by any diagnostic evaluation.
+    const options = Array.isArray(p.options) ? (p.options as string[]) : [];
+    if (options.length) {
+      const match = ctx.attachments.find((a) => options.some((o) => norm(a.title).includes(norm(o))));
+      return match
+        ? { status: "pass", message: `${doc}: present`, evidence: [`attachment "${match.title}"`] }
+        : {
+            status: "warn",
+            message: `${doc}: confirm one of ${options.join(", ")} is attached (manual check)`,
+            evidence: [str(p.note) ?? "Attach the assessment tool result"],
+          };
+    }
+    const { present, how, documentDate } = documentPresent(doc, ctx);
     const age = num(p.max_age_months_before_effective);
+    if (present && age !== undefined) {
+      // Requested effective date: the day after the authorization being renewed ends.
+      const effective = ctx.authorization ? addDays(ctx.authorization.endDate, 1) : null;
+      if (!documentDate || !effective)
+        return {
+          status: "warn",
+          message: `${doc}: present; confirm it is no more than ${age} months older than the requested effective date (manual check)`,
+          evidence: [how],
+        };
+      return documentDate >= addMonths(effective, -age)
+        ? { status: "pass", message: `${doc}: present and current`, evidence: [how, `Dated ${documentDate}`] }
+        : {
+            status: "fail",
+            message: `${doc}: dated ${documentDate}, more than ${age} months before the requested effective date ${effective}`,
+            evidence: [how],
+          };
+    }
     if (present)
-      return {
-        status: "pass",
-        message: `${doc}: present`,
-        evidence: [
-          how,
-          age !== undefined
-            ? `Must be no more than ${age} months older than the requested effective date`
-            : "",
-        ].filter(Boolean),
-      };
+      return checklist.length
+        ? {
+            status: "warn",
+            message: `${doc}: present; confirm its contents (manual check)`,
+            evidence: [how, ...checklist],
+          }
+        : { status: "pass", message: `${doc}: present`, evidence: [how] };
     if (p.optional === true) return NA(`${doc}: optional, not attached`);
+    const alt = str(p.alternative);
+    if (alt)
+      return {
+        status: "warn",
+        message: `${doc}: not attached; acceptable alternative: ${alt} (manual check)`,
+        evidence: [
+          str(p.note) ?? `Attach the document, or confirm the record documents: ${alt}`,
+          ...checklist,
+        ],
+      };
+    if (applicabilityUnknown)
+      return {
+        status: "warn",
+        message: `${doc}: required if applicable (manual check)`,
+        evidence: [str(p.note) ?? "Attach it if this applies to the client", ...checklist],
+      };
     return {
       status: "fail",
       message: `${doc}: missing`,
@@ -153,8 +242,6 @@ const EVALUATORS: Record<RuleType, Evaluator> = {
   supervision_ratio(p, ctx) {
     const range = authRange(ctx);
     if (!range) return NA("No authorization");
-    const months = supervisionByMonth(ctx.sessions, range);
-    if (!months.length) return NA("No complete months of service yet");
     const evidence: string[] = [];
     let failed = false;
     const minPct =
@@ -188,6 +275,9 @@ const EVALUATORS: Record<RuleType, Evaluator> = {
         evidence: [`Authorized: ${fmt(per10)} h ${SUPERVISION_CODE} per 10 h ${DIRECT_CODE}`],
       };
     }
+    // Delivered-session checks need at least one complete month of service.
+    const months = supervisionByMonth(ctx.sessions, range);
+    if (!months.length) return NA("No complete months of service yet");
     for (const m of months) {
       if (minPct !== undefined) {
         if (perTech) {
@@ -279,28 +369,38 @@ const EVALUATORS: Record<RuleType, Evaluator> = {
 
   concurrent_billing(p, ctx) {
     const codes = Array.isArray(p.codes) ? (p.codes as string[]) : [];
-    if (p.allowed !== false)
-      return {
-        status: "pass",
-        message: codes.length
-          ? `${codes.join(" and ")} may be billed together`
-          : "Concurrent billing allowed",
-        evidence: [str(p.condition)].filter((x): x is string => !!x),
-      };
+    const overlaps = () => {
+      if (codes.length < 2) return [];
+      const [a, b] = codes as [string, string];
+      const out: string[] = [];
+      for (const x of ctx.sessions.filter((s) => s.cptCode === a))
+        for (const y of ctx.sessions.filter((s) => s.cptCode === b)) {
+          if (x.date !== y.date) continue;
+          const xs = x.startMinute ?? 0;
+          const ys = y.startMinute ?? 0;
+          if (xs < ys + y.units * 15 && ys < xs + x.units * 15) out.push(`${x.date}: ${a} and ${b} overlap`);
+        }
+      return out;
+    };
+    if (p.allowed !== false) {
+      const condition = str(p.condition);
+      const label = codes.length
+        ? `${codes.join(" and ")} may be billed together`
+        : "Concurrent billing allowed";
+      if (!condition) return { status: "pass", message: label };
+      // Allowed only under a condition the records cannot show: overlapping sessions need a human look.
+      const found = overlaps();
+      return found.length
+        ? {
+            status: "warn",
+            message: `${label} only if: ${condition}. Confirm these sessions (manual check)`,
+            evidence: found.slice(0, 10),
+          }
+        : { status: "pass", message: `${label} (only if: ${condition}); no overlapping sessions` };
+    }
     if (codes.length < 2) return guidance(p, "Concurrent billing restriction", ["allowed"]);
     const [a, b] = codes as [string, string];
-    const conflicts: string[] = [];
-    const sa = ctx.sessions.filter((s) => s.cptCode === a);
-    const sb = ctx.sessions.filter((s) => s.cptCode === b);
-    for (const x of sa) {
-      for (const y of sb) {
-        if (x.date !== y.date) continue;
-        const xs = x.startMinute ?? 0;
-        const ys = y.startMinute ?? 0;
-        if (xs < ys + y.units * 15 && ys < xs + x.units * 15)
-          conflicts.push(`${x.date}: ${a} and ${b} overlap`);
-      }
-    }
+    const conflicts = overlaps();
     return conflicts.length
       ? { status: "fail", message: `${a} and ${b} billed concurrently`, evidence: conflicts.slice(0, 10) }
       : { status: "pass", message: `No concurrent ${a}/${b} billing` };
@@ -449,16 +549,29 @@ const EVALUATORS: Record<RuleType, Evaluator> = {
   },
 
   outcome_measure_schedule(p, ctx) {
-    if (!has(p, ["initial", "every_6_months"])) return guidance(p, "Outcome measures");
-    const needed =
-      ctx.plan?.type === "initial" || ctx.authorization?.kind === "initial"
-        ? ((p.initial as string[] | undefined) ?? [])
-        : ((p.every_6_months as string[] | undefined) ?? []);
-    if (!needed.length) return NA("No outcome measures due");
-    const sixMonthsAgo = addMonths(ctx.asOf, -6);
+    if (!has(p, ["initial", "every_6_months", "annually", "every_2_years"]))
+      return guidance(p, "Outcome measures");
+    const list = (k: string) => (Array.isArray(p[k]) ? (p[k] as string[]) : []);
+    // Each measure is due within its cadence; a measure listed under several cadences takes the shortest.
+    const due = new Map<string, { cutoff: Day; cadence: string }>();
+    if (ctx.plan?.type === "initial" || ctx.authorization?.kind === "initial")
+      for (const m of list("initial"))
+        due.set(m, { cutoff: addMonths(ctx.asOf, -6), cadence: "at baseline" });
+    else
+      for (const [k, months, cadence] of [
+        ["every_2_years", 24, "every two years"],
+        ["annually", 12, "every year"],
+        ["every_6_months", 6, "every six months"],
+      ] as const)
+        for (const m of list(k)) {
+          // Free-text cadence entries ("two_year_review") are not measures to find in attachments.
+          if (/review/i.test(m)) continue;
+          due.set(m, { cutoff: addMonths(ctx.asOf, -months), cadence });
+        }
+    if (!due.size) return NA("No outcome measures due");
     const missing: string[] = [];
     const evidence: string[] = [];
-    for (const m of needed) {
+    for (const [m, { cutoff, cadence }] of due) {
       const alts = m.split(/\s+or\s+/i).map((x) => norm(x.replace(/_/g, " ").replace(/\(.*?\)/g, "")));
       const hit = ctx.attachments.find(
         (a) =>
@@ -469,10 +582,10 @@ const EVALUATORS: Record<RuleType, Evaluator> = {
               (!alt.includes("parent") || norm(a.title).includes("parent")) &&
               (!alt.includes("teacher") || /teacher|bcba/.test(norm(a.title))),
           ) &&
-          (a.documentDate ?? "") >= sixMonthsAgo,
+          (a.documentDate ?? "") >= cutoff,
       );
       if (hit) evidence.push(`${m}: ${hit.title} (${hit.documentDate})`);
-      else missing.push(m);
+      else missing.push(`${m} (${cadence})`);
     }
     if (p.full_publisher_report_required === true)
       evidence.push("Full publisher report required for each measure");
@@ -487,8 +600,12 @@ const EVALUATORS: Record<RuleType, Evaluator> = {
         ? (p.must_be_any_of as string[])
         : [str(p.must_be) ?? "RBT"];
       const label = anyOf.join(" or ");
+      // A supervising BCBA delivering direct service is not a technician.
       const bad = ctx.sessions.filter(
-        (s) => s.cptCode === DIRECT_CODE && !anyOf.includes(s.providerRole ?? ""),
+        (s) =>
+          s.cptCode === DIRECT_CODE &&
+          !SUPERVISOR_ROLES.includes(s.providerRole ?? "") &&
+          !anyOf.includes(s.providerRole ?? ""),
       );
       return bad.length
         ? {
@@ -511,13 +628,25 @@ const EVALUATORS: Record<RuleType, Evaluator> = {
 
   event_trigger(p, ctx) {
     const events = Array.isArray(p.events) ? (p.events as string[]) : [str(p.event) ?? ""];
-    const event = events.find((e) => ctx.client.events.includes(e));
-    if (!event) return NA(`Event "${events.join(" / ")}" has not occurred`);
+    const derived = events.map((e) => derivedEvent(e, p, ctx));
+    let event = events.find((e, i) => ctx.client.events.includes(e) || derived[i] === true);
+    if (!event) {
+      // Only an event the app records or can work out may be ruled out; any other is the BCBA's call.
+      const knowable = events.every((e, i) => RECORDED_EVENTS.includes(e) || derived[i] === false);
+      if (knowable) return NA(`Event "${events.join(" / ")}" has not occurred`);
+      return guidance(p, `If "${events.join(" / ")}" applies`, ["event", "events"]);
+    }
+    event = event.replace(/_/g, " ");
     const req = str(p.requires) ?? "";
     if (!req) return guidance(p, `Event "${event}"`, ["event", "events"]);
     const { present, how } = documentPresent(req, ctx);
-    return present
-      ? { status: "pass", message: `${req}: present`, evidence: [how] }
+    if (present) return { status: "pass", message: `${req}: present`, evidence: [how] };
+    return p.warn_only === true
+      ? {
+          status: "warn",
+          message: `Event "${event}": ${req} recommended`,
+          evidence: [str(p.recommendation) ?? ""].filter(Boolean),
+        }
       : { status: "fail", message: `Event "${event}" requires: ${req}` };
   },
 
@@ -525,11 +654,15 @@ const EVALUATORS: Record<RuleType, Evaluator> = {
     const evidence: string[] = [];
     const must = Array.isArray(p.must_include) ? (p.must_include as string[]) : [];
     const known = Object.keys(p).filter(
-      (k) => !["must_include", "must_include_if_applicable", "signed_by"].includes(k),
+      (k) => !["must_include", "must_include_if_applicable", "signed_by", "when"].includes(k),
     );
     const ifApplicable = Array.isArray(p.must_include_if_applicable)
       ? (p.must_include_if_applicable as string[])
       : [];
+    const when = str(p.when);
+    if (when === "reauth" && ctx.plan?.type !== "reauth" && ctx.authorization?.kind !== "reauth")
+      return NA("Only required for reauthorization requests");
+    if (when && when !== "reauth") return guidance(p, `Applies when ${when.replace(/_/g, " ")}`, ["when"]);
     if (!ctx.plan) {
       if (must.length || p.signed_by) return { status: "fail", message: "No plan yet", evidence: [] };
     }

@@ -226,6 +226,10 @@ export async function buildEvalContext(
     : client.authorizations[0];
   const sessions = auth ? await tx.serviceSession.findMany({ where: { authorizationId: auth.id } }) : [];
   const diagnoses = await tx.diagnosis.findMany({ where: { clientId } });
+  const goals = await tx.goal.findMany({
+    where: { clientId },
+    select: { _count: { select: { dataPoints: true } } },
+  });
   const primary = client.payors.find((p) => p.priority === "primary") ?? client.payors[0];
   const offices = (org.settings as { offices?: { state: string; address: string }[] }).offices ?? [];
   const ctx: EvalContext = {
@@ -281,6 +285,7 @@ export async function buildEvalContext(
                 )?.includes(s.key) && s.content.trim().length > 0,
             ),
           allApprovedByBcba: plan.sections.length > 0 && plan.sections.every((s) => sectionDone(s.state)),
+          goalsHaveData: goals.length > 0 && goals.every((g) => g._count.dataPoints > 0),
         }
       : null,
     offices,

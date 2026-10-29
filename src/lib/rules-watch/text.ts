@@ -73,6 +73,18 @@ const WORDS: Record<string, number> = {
 };
 
 /** Payors often spell numbers out ("one to two hours per ten hours", "six-month"); read them as digits for the number check. */
+/** Credentials a rule enforces (must_be, must_be_any_of, supervised_by) that the quote does not name. */
+export function credentialsMissingFromQuote(params: unknown, quote: string): string[] {
+  const p = (params ?? {}) as Record<string, unknown>;
+  const wanted = [p.must_be, p.must_be_any_of, p.supervised_by]
+    .flatMap((v) => (Array.isArray(v) ? v : [v]))
+    .filter((v): v is string => typeof v === "string" && /^[A-Za-z-]{2,12}$/.test(v));
+  const q = normalizeText(quote);
+  return [...new Set(wanted)].filter(
+    (c) => !new RegExp(`(^|[^A-Za-z])${c.replace(/-/g, "\\-")}($|[^A-Za-z])`).test(q),
+  );
+}
+
 export function digitsForNumberWords(text: string): string {
   return text
     .replace(
@@ -119,9 +131,10 @@ export function htmlToText(html: string): string {
  * (a letter, a filled-in form) is rejected before anything is stored.
  */
 const CLIENT_RECORD_PATTERNS: RegExp[] = [
-  /\b(?:date of birth|dob|birth ?date)\s*[:#]?\s*\d{1,2}[/-]\d{1,2}[/-]\d{2,4}/i,
+  /\b(?:date of birth|dob|birth ?date)\s*[:#]?\s*(?:\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}|\d{4}-\d{1,2}-\d{1,2}|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4}|\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4})/i,
   /\b(?:member|subscriber|patient|beneficiary|client|medicaid)\s*(?:id|number|no\.?|#)\s*[:#]\s*[A-Z]{0,4}\d[A-Z0-9-]{5,}/i,
-  /\b(?:patient|client|member|beneficiary|child'?s?|subscriber)\s*name\s*:\s*[A-Z][a-z]+\s+[A-Z][a-z]+/,
+  // Label in any case, then a name: two capitalized (or all-caps) words.
+  /\b(?:[Pp]atient|[Cc]lient|[Mm]ember|[Bb]eneficiary|[Cc]hild|[Ss]ubscriber|[Pp]articipant|[Ss]tudent|PATIENT|CLIENT|MEMBER|BENEFICIARY|CHILD|SUBSCRIBER|PARTICIPANT|STUDENT)(?:'?[Ss])?\s*(?:[Ff]ull\s+|FULL\s+)?(?:[Nn]ame|NAME)\s*:\s*[A-Z][A-Za-z'-]+\s+[A-Z][A-Za-z'-]+/,
 ];
 export function looksLikeClientRecord(text: string): boolean {
   const t = normalizeText(text);

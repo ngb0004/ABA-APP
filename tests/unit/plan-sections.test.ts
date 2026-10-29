@@ -29,8 +29,13 @@ describe("plan structure", () => {
       expect(f.feeds_sections.length, f.id).toBeGreaterThan(0);
       for (const k of f.feeds_sections) expect(current, `${f.id} → ${k}`).toContain(k);
     }
-    // Legacy sections still collect intake answers through the current keys.
-    for (const s of LEGACY_SECTIONS) for (const k of intakeKeysFor(s)) expect(current).toContain(k);
+    // Legacy sections keep the exact intake fields they had, so their required items never change.
+    const ids = INTAKE_FIELDS.map((f) => f.id);
+    for (const s of LEGACY_SECTIONS) for (const id of s.intakeFields ?? []) expect(ids).toContain(id);
+    expect(LEGACY_SECTIONS.find((s) => s.key === "background")!.intakeFields).not.toContain(
+      "other_therapies",
+    );
+    for (const s of SECTIONS) for (const k of intakeKeysFor(s)) expect(current).toContain(k);
   });
 
   it("restricted intake fields only feed sections the AI never sees them in", () => {
@@ -47,6 +52,8 @@ describe("plan structure", () => {
     expect(sectionsForTopic("crisis_plan", current)).toEqual(["crisis_plan"]);
     expect(sectionsForTopic("crisis_plan", legacy)).toEqual(["crisis"]);
     expect(sectionsForTopic("not_a_topic", current)).toBeUndefined();
+    // No section covers telehealth readiness in the old structure: unknown, not vacuously present.
+    expect(sectionsForTopic("telehealth_readiness", legacy)).toBeUndefined();
   });
 
   it("covers every section topic the seeded payor rules require", () => {

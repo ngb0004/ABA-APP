@@ -12,7 +12,7 @@ import {
   unresolvedPlaceholders,
 } from "../goals/checks";
 import type { RuleResult } from "../payors/types";
-import type { PlanBundle } from "./context";
+import { goalKeyKind, type PlanBundle } from "./context";
 import { dataGaps, flatProgress } from "./progress";
 import { SECTION_BY_KEY, sectionDone, sectionsForTopic, type SectionCondition } from "./sections";
 
@@ -208,9 +208,14 @@ export function runPresubmissionAudit(
       .join("\n");
     const missing = b.goals
       .filter((g) => g.category !== "caregiver" && g.progressStatus !== "new")
-      .filter(
-        (g) => !(text.includes(`goal.${g.ordinal}.baseline_`) && text.includes(`goal.${g.ordinal}.current_`)),
-      );
+      .filter((g) => {
+        // The exact value tokens; goal.N.baseline_date is a date, not a baseline value.
+        const kind = goalKeyKind(g.measure);
+        return !(
+          text.includes(`{{goal.${g.ordinal}.baseline_${kind}}}`) &&
+          text.includes(`{{goal.${g.ordinal}.current_${kind}}}`)
+        );
+      });
     push({
       id: "progress.summary",
       category: "Progress",
@@ -260,6 +265,8 @@ export function runPresubmissionAudit(
   }
   const unsourced: string[] = [];
   for (const s of b.plan.sections) {
+    // Not-applicable sections are left out of the packet, so their kept text is not checked.
+    if (s.state === "not_applicable") continue;
     const v = validateBcbaText(s.content, sourced);
     if (!v.ok)
       push({

@@ -137,6 +137,13 @@ export function GoalRecordEditor({
 }) {
   const router = useRouter();
   const [g, setG] = useState(goal);
+  // Raw text while typing, so commas survive; split into settings on blur and save.
+  const [settingsText, setSettingsText] = useState(goal.settings.join(", "));
+  const splitSettings = (t: string) =>
+    t
+      .split(",")
+      .map((x) => x.trim())
+      .filter(Boolean);
   const [msg, setMsg] = useState<string | null>(null);
   const dis = !canWrite;
   return (
@@ -172,17 +179,10 @@ export function GoalRecordEditor({
       <label>Settings (comma separated)</label>
       <input
         disabled={dis}
-        value={g.settings.join(", ")}
+        value={settingsText}
         placeholder="home, clinic"
-        onChange={(e) =>
-          setG({
-            ...g,
-            settings: e.target.value
-              .split(",")
-              .map((x) => x.trim())
-              .filter(Boolean),
-          })
-        }
+        onChange={(e) => setSettingsText(e.target.value)}
+        onBlur={() => setG({ ...g, settings: splitSettings(settingsText) })}
       />
       <label>Barriers to progress and actions taken</label>
       <textarea
@@ -196,12 +196,14 @@ export function GoalRecordEditor({
           className="secondary"
           data-testid={`save-goal-record-${goal.ordinal}`}
           onClick={async () => {
+            const current = { ...g, settings: splitSettings(settingsText) };
             const changed = Object.fromEntries(
-              (Object.keys(g) as (keyof typeof g)[])
+              (Object.keys(current) as (keyof typeof current)[])
                 .filter(
-                  (k) => k !== "id" && k !== "ordinal" && JSON.stringify(g[k]) !== JSON.stringify(goal[k]),
+                  (k) =>
+                    k !== "id" && k !== "ordinal" && JSON.stringify(current[k]) !== JSON.stringify(goal[k]),
                 )
-                .map((k) => [k, g[k]]),
+                .map((k) => [k, current[k]]),
             );
             if (!Object.keys(changed).length) return setMsg("No changes");
             const r = await send(`/api/goals/${goal.id}`, "PATCH", changed);

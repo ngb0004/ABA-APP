@@ -4,7 +4,7 @@
  * so rule evidence (keyed by lineage) and document snapshots are preserved;
  * a document's watch state (health, last checked) is never reset here.
  */
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import type { Tx } from "../db";
 import { sid } from "../stable-id";
 import { loadPayorSeed, resolvePayorRules } from "./load";
@@ -28,20 +28,30 @@ export async function syncPayorLibrary(tx: Tx, orgId: string, seed: PayorSeed = 
       const old = await tx.payorDocument.findFirst({ where: { orgId, key: { in: doc.formerly } } });
       if (old) await tx.payorDocument.update({ where: { id: old.id }, data: { key } });
     }
+    const loc = locatorFor(doc);
     const data = {
       name: doc.name,
       version: doc.version,
-      url: doc.url,
+      url: doc.url ?? null,
       effectiveDate: doc.effective_date ? day(doc.effective_date) : null,
-      locator: (locatorFor(doc) ?? undefined) as Prisma.InputJsonValue | undefined,
+      // A document that loses its public copy must stop being watched (and become uploadable).
+      locator: loc ? (loc as Prisma.InputJsonValue) : Prisma.DbNull,
       secondary: doc.secondary ?? false,
     };
-    const row = await tx.payorDocument.upsert({
+    const existing = await tx.payorDocument.findUnique({
       where: { orgId_key: { orgId, key } },
-      create: { id: sid(`${orgId}:doc:${key}`), orgId, key, ...data },
-      update: data,
       select: { id: true },
     });
+    let row: { id: string };
+    if (existing)
+      row = await tx.payorDocument.update({ where: { id: existing.id }, data, select: { id: true } });
+    else {
+      // A renamed row keeps the id derived from its old key; never collide with it.
+      let id = sid(`${orgId}:doc:${key}`);
+      for (let n = 2; await tx.payorDocument.findUnique({ where: { id }, select: { id: true } }); n++)
+        id = sid(`${orgId}:doc:${key}:${n}`);
+      row = await tx.payorDocument.create({ data: { id, orgId, key, ...data }, select: { id: true } });
+    }
     docIds[key] = row.id;
   }
 

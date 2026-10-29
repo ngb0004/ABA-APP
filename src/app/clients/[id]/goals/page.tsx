@@ -3,6 +3,7 @@ import { ActionButton, Html } from "@/components/actions";
 import { FlatExplanation, GoalEditor, GoalRecordEditor } from "@/components/goal-editor";
 import { Status } from "@/components/status";
 import { toDay } from "@/lib/dates";
+import { measureUnit } from "@/lib/plan/context";
 import { can } from "@/lib/permissions";
 import { goalsView } from "@/lib/services/goals";
 import { asOfToday, requirePageCtx, uuidParam } from "@/lib/server/page-session";
@@ -94,7 +95,7 @@ export default async function GoalsPage({ params }: { params: Promise<{ id: stri
           <p className="muted" data-testid={`baseline-${g.ordinal}`}>
             Baseline:{" "}
             {g.baselineLockedAt && g.baselineValue !== null
-              ? `${g.baselineValue}${g.measure === "percent" ? "%" : ""}, recorded ${toDay(g.baselineDate!)} and locked`
+              ? `${Math.round(g.baselineValue * 10) / 10}${measureUnit(g.measure)}, recorded ${toDay(g.baselineDate!)} and locked`
               : "not locked (the mean of the first three data points is used until it is locked)"}
           </p>
           {!g.baselineLockedAt && can(ctx.role, "goal:approve") && g.dataPoints.length >= 3 && (

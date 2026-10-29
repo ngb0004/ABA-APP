@@ -9,7 +9,13 @@ import {
   type EvidenceState,
   type SnapshotState,
 } from "@/lib/rules-watch/status";
-import { htmlToText, normalizeText, numbersMissingFromQuote, quoteAppears } from "@/lib/rules-watch/text";
+import {
+  htmlToText,
+  looksLikeClientRecord,
+  normalizeText,
+  numbersMissingFromQuote,
+  quoteAppears,
+} from "@/lib/rules-watch/text";
 
 async function gaText() {
   const { extractText, getDocumentProxy } = await import("unpdf");
@@ -362,5 +368,26 @@ describe("related changes for checklist-only rules", () => {
     });
     expect(t).toMatchObject({ status: "stale", tier: "T5" });
     expect(t.reasons[0]).toMatch(/in-person supervision/);
+  });
+});
+
+describe("client-record screening for uploads", () => {
+  it("catches common labels and date formats, and leaves payor prose alone", () => {
+    for (const t of [
+      "Patient Name: Jane Doe",
+      "CLIENT NAME: JANE DOE",
+      "Member Name: Jane Doe",
+      "DOB: 2019-03-04",
+      "Date of Birth: March 4, 2019",
+      "Birth date 4 Mar 2019",
+      "Member ID: ZZT0000000",
+    ])
+      expect(looksLikeClientRecord(t), t).toBe(true);
+    for (const t of [
+      "The member name and date of birth must appear on every page.",
+      "Enter the member ID from the card.",
+      "Member Name: ______________",
+    ])
+      expect(looksLikeClientRecord(t), t).toBe(false);
   });
 });

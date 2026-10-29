@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 import { loadPayorSeed, resolvePayorRules } from "@/lib/payors/load";
 import { evaluateRule, evaluateRules } from "@/lib/payors/evaluate";
 import { RULE_TYPES, type Rule } from "@/lib/payors/types";
-import { numbersMissingFromQuote, quoteIsSubstantial } from "@/lib/rules-watch/text";
+import {
+  credentialsMissingFromQuote,
+  numbersMissingFromQuote,
+  quoteIsSubstantial,
+} from "@/lib/rules-watch/text";
 import { client, evalContextFor, fullPlan } from "../helpers/synthetic-eval";
 
 const seed = loadPayorSeed();
@@ -47,6 +51,7 @@ describe("seed loader", () => {
         expect(seed.documents[r.source!]?.secondary ?? false).toBe(false);
         expect(quoteIsSubstantial(r.quote), r.quote).toBe(true);
         expect(numbersMissingFromQuote(r.params, r.quote), r.quote).toEqual([]);
+        expect(credentialsMissingFromQuote(r.params, r.quote), r.quote).toEqual([]);
         expect(r.page, r.quote).toBeDefined();
       }
     expect(quoted).toBeGreaterThan(80);
@@ -342,5 +347,186 @@ describe("rule types (evaluated as verified)", () => {
     const r = evaluateRule(verified(find("cigna_evernorth", "submission_channel")), ctx2);
     expect(r.status).toBe("pass");
     expect(r.message).toMatch(/ABA@Evernorth.com/);
+  });
+});
+
+describe("review fixes: rules the app cannot fully decide warn instead of failing or passing", () => {
+  const byDoc = (k: string, re: RegExp) =>
+    verified(find(k, "required_document", (r) => re.test(String(r.params.doc))));
+  const att = (kind: string, title: string, documentDate: string | null = "2026-10-01") => ({
+    kind,
+    title,
+    documentDate,
+  });
+
+  it("if-applicable documents the app cannot judge are a manual check", () => {
+    const r = evaluateRule(byDoc("ga_medicaid", /hospitalization/i), ctx1);
+    expect(r.status).toBe("warn");
+    expect(r.message).toMatch(/if applicable \(manual check\)/);
+  });
+
+  it("checks authorized supervision on an initial request with no sessions yet", () => {
+    const r = verified(find("aetna", "supervision_ratio", (x) => x.params.basis === "authorization"));
+    const ctx = {
+      ...ctx2,
+      sessions: [],
+      authorization: {
+        ...ctx2.authorization!,
+        units: [
+          { cptCode: "97153", approvedUnits: 100, unitBasis: "week" as const },
+          { cptCode: "97155", approvedUnits: 5, unitBasis: "week" as const },
+        ],
+      },
+    };
+    expect(evaluateRule(r, ctx).status).toBe("fail");
+  });
+
+  it("the packet's own per-goal graphs satisfy Georgia's line-graph requirement on a reauth", () => {
+    const r = byDoc("ga_medicaid", /line graphs/i);
+    expect(evaluateRule(r, ctx2).status).toBe("pass");
+    const noData = { ...ctx2, plan: { ...ctx2.plan!, goalsHaveData: false } };
+    expect(evaluateRule(r, noData).status).toBe("fail");
+  });
+
+  it("checks a document's age against the requested effective date", () => {
+    const rule = verified({
+      ...byDoc("ga_medicaid", /updated data/i),
+      params: { doc: "Progress data export", when: "reauth", max_age_months_before_effective: 2 },
+    });
+    const end = ctx2.authorization!.endDate;
+    const withDoc = (date: string | null) => ({
+      ...ctx2,
+      attachments: [...ctx2.attachments, att("other", "Progress data export", date)],
+    });
+    expect(evaluateRule(rule, withDoc(end)).status).toBe("pass");
+    expect(evaluateRule(rule, withDoc("2025-01-01")).status).toBe("fail");
+    expect(evaluateRule(rule, withDoc(null)).status).toBe("warn");
+    // The plan's own updated data has no single date: the BCBA confirms it.
+    expect(evaluateRule(byDoc("ga_medicaid", /updated data/i), ctx2).status).toBe("warn");
+  });
+
+  it("a diagnosis rule matches the diagnostic evaluation and lists what to confirm", () => {
+    const r = evaluateRule(byDoc("cigna_evernorth", /independently licensed/i), ctx2);
+    expect(r.status).toBe("warn");
+    expect(r.evidence.some((e) => /diagnostician name/.test(e))).toBe(true);
+    expect(r.evidence[0]).toMatch(/attachment/);
+  });
+
+  it("an acceptable alternative turns a missing document into a manual check", () => {
+    const r = evaluateRule(byDoc("aetna", /release for communication/i), { ...ctx2, attachments: [] });
+    expect(r.status).toBe("warn");
+    expect(r.message).toMatch(/alternative/);
+  });
+
+  it("a rule listing acceptable tools is not met by any diagnostic evaluation", () => {
+    const r = byDoc("tricare_east", /Validated ASD assessment/i);
+    const dxOnly = { ...ctx3, attachments: [att("diagnostic_evaluation", "Diagnostic evaluation")] };
+    expect(evaluateRule(r, dxOnly).status).toBe("warn");
+    const withTool = { ...dxOnly, attachments: [...dxOnly.attachments, att("other", "ADOS-2 report")] };
+    expect(evaluateRule(r, withTool).status).toBe("pass");
+  });
+
+  it("events: works out what it can from the records, asks about the rest", () => {
+    const brk = verified(
+      find("cigna_evernorth", "event_trigger", (x) => x.params.event === "break_in_treatment"),
+    );
+    const s = { cptCode: "97153", units: 4, inPerson: true, providerRole: "RBT" };
+    const gap = {
+      ...ctx2,
+      sessions: [
+        { ...s, date: "2026-06-01" },
+        { ...s, date: "2026-09-01" },
+      ],
+    };
+    const steady = {
+      ...ctx2,
+      sessions: [
+        { ...s, date: "2026-09-01" },
+        { ...s, date: "2026-09-08" },
+      ],
+    };
+    expect(evaluateRule(brk, gap).status).toBe("warn"); // occurred; its actions are a manual check
+    expect(evaluateRule(brk, steady).status).toBe("n/a");
+    const unknown = verified(
+      find("ga_medicaid", "event_trigger", (x) => x.params.event === "additional_units_requested"),
+    );
+    expect(evaluateRule(unknown, ctx1).status).toBe("warn");
+    // Recorded events are still ruled out when absent.
+    expect(
+      evaluateRule(
+        verified(find("amerigroup", "event_trigger", (x) => x.params.event === "bcba_transfer")),
+        ctx1,
+      ).status,
+    ).toBe("n/a");
+  });
+
+  it("outcome measures due annually are checked on a reauth", () => {
+    const r = verified(
+      find(
+        "tricare_east",
+        "outcome_measure_schedule",
+        (x) => x.source.key === "tricare_east_provider_handbook_2026",
+      ),
+    );
+    const om = (title: string, date: string) => att("outcome_measure", title, date);
+    const ctx = (vinelandDate: string) => ({
+      ...ctx3,
+      attachments: [
+        om("PDDBI parent", "2026-09-01"),
+        om("PSI", "2026-09-01"),
+        om("SRS-2", "2026-09-01"),
+        om("Vineland-3", vinelandDate),
+      ],
+    });
+    expect(evaluateRule(r, ctx("2026-03-01")).status).toBe("pass");
+    const late = evaluateRule(r, ctx("2025-04-01"));
+    expect(late.status).toBe("fail");
+    expect(late.message).toMatch(/Vineland-3 \(every year\)/);
+  });
+
+  it("plan content that applies only to reauths or school services is gated", () => {
+    const reauthOnly = verified(find("ga_medicaid", "plan_content", (x) => x.params.when === "reauth"));
+    expect(evaluateRule(reauthOnly, ctx1).status).toBe("n/a");
+    const school = verified(
+      find("ga_medicaid", "plan_content", (x) => x.params.when === "school_based_services"),
+    );
+    expect(evaluateRule(school, { ...ctx1, plan: null }).status).toBe("warn");
+  });
+
+  it("billing allowed only under a condition flags overlapping sessions for a look", () => {
+    const r = verified(find("bcbs_ga_anthem", "concurrent_billing"));
+    const s = { date: "2026-10-01", units: 4, inPerson: true, startMinute: 600 };
+    const overlap = {
+      ...ctx2,
+      sessions: [
+        { ...s, cptCode: "97153" },
+        { ...s, cptCode: "97155" },
+      ],
+    };
+    expect(evaluateRule(r, overlap).status).toBe("warn");
+    expect(evaluateRule(r, { ...ctx2, sessions: [] }).status).toBe("pass");
+  });
+
+  it("a BCBA delivering direct service is not a technician", () => {
+    const r = verified(find("ga_medicaid", "staff_credential", (x) => x.params.role === "technician"));
+    const at = (providerRole: string) =>
+      evaluateRule(r, {
+        ...ctx1,
+        sessions: [{ cptCode: "97153", date: "2026-10-01", units: 4, inPerson: true, providerRole }],
+      }).status;
+    expect(at("BCBA")).toBe("pass");
+    expect(at("BCaBA")).toBe("fail");
+  });
+
+  it("a verification quote must name every credential the rule enforces", () => {
+    expect(
+      credentialsMissingFromQuote(
+        { must_be_any_of: ["RBT", "ABAT"] },
+        "Registered Behavior Technicians (RBT)",
+      ),
+    ).toEqual(["ABAT"]);
+    expect(credentialsMissingFromQuote({ supervised_by: ["BCBA-D"] }, "supervised by a BCBA/BCBA-D")).toEqual(
+      [],
+    );
   });
 });

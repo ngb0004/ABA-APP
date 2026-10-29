@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { MockProvider, setLlmProvider } from "@/lib/ai";
 import { withOrg } from "@/lib/db";
 import { buildSourcedContext, loadPlanBundle } from "@/lib/plan/context";
 import { runPresubmissionAudit } from "@/lib/plan/presubmission";
@@ -7,6 +8,7 @@ import { evaluateClientRules } from "@/lib/services/payors";
 import {
   approveSection,
   createPlan,
+  draftSection,
   editSection,
   lockGoalBaseline,
   markSectionNotApplicable,
@@ -83,6 +85,47 @@ describe("conditional sections", () => {
   });
 });
 
+describe("not-applicable sections keep their text out of the way", () => {
+  it("their text is not checked, and reopening untouched AI text returns it to draft", async () => {
+    setLlmProvider(new MockProvider());
+    try {
+      const plan = await createPlan(bcba, clientId("client1"), "initial");
+      await draftSection(bcba, plan.id, "group_goals", AS_OF);
+      await markSectionNotApplicable(bcba, plan.id, "group_goals", "No group sessions");
+      await reopenSection(bcba, plan.id, "group_goals");
+      const s = (await planView(bcba, plan.id, AS_OF)).sections.find((x) => x.key === "group_goals")!;
+      expect(s.state).toBe("draft");
+      // Text with a placeholder in a section marked not applicable does not block export.
+      await editSection(bcba, plan.id, "school_plan", "Targets for [X] at school.", AS_OF);
+      await markSectionNotApplicable(bcba, plan.id, "school_plan", "Home services only");
+      expect((await auditFor(plan.id)).some((c) => c.id === "sections.placeholder.school_plan")).toBe(false);
+    } finally {
+      setLlmProvider(null);
+    }
+  });
+});
+
+describe("progress summaries", () => {
+  it("need the baseline value, not just the baseline date", async () => {
+    const plan = await createPlan(bcba, clientId("client2"), "reauth");
+    const v = await planView(bcba, plan.id, AS_OF);
+    const kind = (m: string) => (m === "percent" ? "pct" : "rate");
+    const goals = v.goals.filter((g) => g.category !== "caregiver" && g.progressStatus !== "new");
+    const dated = v.sourced.some((x) => x.key === `goal.${goals[0]!.ordinal}.baseline_date`);
+    expect(dated).toBe(true);
+    const text = goals
+      .map(
+        (g) =>
+          `Since {{goal.${g.ordinal}.baseline_date}}, now {{goal.${g.ordinal}.current_${kind(g.measure)}}}.`,
+      )
+      .join("\n");
+    await editSection(bcba, plan.id, "skill_acquisition_goals", text, AS_OF);
+    expect((await auditFor(plan.id)).find((c) => c.id === "progress.summary")).toMatchObject({
+      status: "fail",
+    });
+  });
+});
+
 describe("plans created with the eleven-section structure", () => {
   it("still open, map payor topics into their own sections, and approve", async () => {
     const plan = await createPlan(bcba, clientId("client1"), "initial");
@@ -104,6 +147,8 @@ describe("plans created with the eleven-section structure", () => {
     const bg = v.sections.find((s) => s.key === "background")!;
     expect(bg.items.some((i) => i.key === "payor:medications")).toBe(true);
     expect(bg.items.some((i) => i.key.startsWith("intake:"))).toBe(true);
+    // Its intake items are the ones it always had.
+    expect(bg.items.some((i) => i.key === "intake:other_therapies")).toBe(false);
     await editSection(bcba, plan.id, "coordination", "Coordinated with the pediatrician.", AS_OF);
     for (const i of v.sections.find((s) => s.key === "coordination")!.items.filter((x) => x.status === null))
       await setSectionItem(bcba, plan.id, "coordination", i.key, "answered");
