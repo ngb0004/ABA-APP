@@ -98,9 +98,17 @@ function derivedEvent(event: string, p: Record<string, unknown>, ctx: EvalContex
     return ctx.sessions.length ? ctx.sessions.some((x) => !x.inPerson) : undefined;
   if (event === "break_in_treatment") {
     const limit = num(p.threshold_calendar_days_gt);
-    if (limit === undefined || ctx.sessions.length < 2) return undefined;
-    const days = [...new Set(ctx.sessions.map((x) => x.date))].sort();
-    return days.some((d, i) => i > 0 && diffDays(d, days[i - 1]!) > limit);
+    if (limit === undefined || !ctx.authorization) return undefined;
+    // Gaps between sessions, from the authorization start to the first, and from the last to today.
+    const days = [...new Set(ctx.sessions.map((x) => x.date).filter((d) => d <= ctx.asOf))].sort();
+    const points = [
+      ctx.authorization.startDate,
+      ...days,
+      ctx.asOf < ctx.authorization.endDate ? ctx.asOf : ctx.authorization.endDate,
+    ];
+    if (points.some((d, i) => i > 0 && diffDays(d, points[i - 1]!) > limit)) return true;
+    // Sessions before this authorization are not loaded, so only a first authorization can be ruled out.
+    return ctx.authorization.kind === "initial" ? false : undefined;
   }
   return undefined;
 }
@@ -154,14 +162,25 @@ const EVALUATORS: Record<RuleType, Evaluator> = {
     // A rule listing acceptable tools is met only by one of them, never by any diagnostic evaluation.
     const options = Array.isArray(p.options) ? (p.options as string[]) : [];
     if (options.length) {
-      const match = ctx.attachments.find((a) => options.some((o) => norm(a.title).includes(norm(o))));
-      return match
-        ? { status: "pass", message: `${doc}: present`, evidence: [`attachment "${match.title}"`] }
-        : {
-            status: "warn",
-            message: `${doc}: confirm one of ${options.join(", ")} is attached (manual check)`,
-            evidence: [str(p.note) ?? "Attach the assessment tool result"],
-          };
+      // Whole words only: "STAT" is a tool, "statement" is not.
+      const match = ctx.attachments.find((a) =>
+        options.some((o) => ` ${norm(a.title)} `.includes(` ${norm(o)} `)),
+      );
+      const dxNeeded = /\bdiagnostic evaluation\b/.test(norm(doc));
+      const dx = dxNeeded ? ctx.attachments.find((a) => a.kind === "diagnostic_evaluation") : undefined;
+      if (match && (!dxNeeded || dx))
+        return {
+          status: "pass",
+          message: `${doc}: present`,
+          evidence: [`attachment "${match.title}"`, ...(dx ? [`attachment "${dx.title}"`] : [])],
+        };
+      return {
+        status: "warn",
+        message: match
+          ? `${doc}: ${match.title} attached; confirm the diagnostic evaluation (manual check)`
+          : `${doc}: confirm one of ${options.join(", ")} is attached (manual check)`,
+        evidence: [str(p.note) ?? "Attach the assessment tool result"],
+      };
     }
     const { present, how, documentDate } = documentPresent(doc, ctx);
     const age = num(p.max_age_months_before_effective);

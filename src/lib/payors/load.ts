@@ -56,11 +56,7 @@ export function resolvePayorRules(seed: PayorSeed, payorKey: string, seen = new 
     return {
       id: `${payorKey}#${i}`,
       payorKey,
-      // Fingerprint with the document's original key, so renaming a document keeps its rules' evidence.
-      lineageKey: ruleFingerprint(payorKey, {
-        ...r,
-        source: r.source ? (doc?.formerly?.[0] ?? r.source) : null,
-      }),
+      lineageKey: ruleFingerprint(payorKey, r),
       type: r.type,
       params: r.params,
       verified: r.verified,

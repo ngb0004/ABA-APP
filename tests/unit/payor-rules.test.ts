@@ -424,6 +424,10 @@ describe("review fixes: rules the app cannot fully decide warn instead of failin
     expect(evaluateRule(r, dxOnly).status).toBe("warn");
     const withTool = { ...dxOnly, attachments: [...dxOnly.attachments, att("other", "ADOS-2 report")] };
     expect(evaluateRule(r, withTool).status).toBe("pass");
+    // Whole words only, and the diagnostic evaluation is still required.
+    const statement = { ...dxOnly, attachments: [...dxOnly.attachments, att("other", "Parent statement")] };
+    expect(evaluateRule(r, statement).status).toBe("warn");
+    expect(evaluateRule(r, { ...ctx3, attachments: [att("other", "STAT results")] }).status).toBe("warn");
   });
 
   it("events: works out what it can from the records, asks about the rest", () => {
@@ -431,22 +435,21 @@ describe("review fixes: rules the app cannot fully decide warn instead of failin
       find("cigna_evernorth", "event_trigger", (x) => x.params.event === "break_in_treatment"),
     );
     const s = { cptCode: "97153", units: 4, inPerson: true, providerRole: "RBT" };
-    const gap = {
-      ...ctx2,
-      sessions: [
-        { ...s, date: "2026-06-01" },
-        { ...s, date: "2026-09-01" },
-      ],
+    const auth = {
+      ...ctx2.authorization!,
+      kind: "initial" as const,
+      startDate: "2026-08-20",
+      endDate: "2027-02-19",
     };
-    const steady = {
-      ...ctx2,
-      sessions: [
-        { ...s, date: "2026-09-01" },
-        { ...s, date: "2026-09-08" },
-      ],
-    };
+    const weekly = ["2026-08-24", "2026-09-14", "2026-10-05", "2026-10-26"].map((date) => ({ ...s, date }));
+    const steady = { ...ctx2, authorization: auth, sessions: weekly };
+    const gap = { ...steady, sessions: [weekly[0]!] }; // nothing since August: a break in progress
     expect(evaluateRule(brk, gap).status).toBe("warn"); // occurred; its actions are a manual check
     expect(evaluateRule(brk, steady).status).toBe("n/a");
+    // Sessions before a reauth's start are not loaded, so the app cannot rule a break out.
+    expect(evaluateRule(brk, { ...steady, authorization: { ...auth, kind: "reauth" as const } }).status).toBe(
+      "warn",
+    );
     const unknown = verified(
       find("ga_medicaid", "event_trigger", (x) => x.params.event === "additional_units_requested"),
     );

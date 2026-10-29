@@ -368,6 +368,13 @@ describe("uploads: audit and edition dates", () => {
     await expect(uploadOfficialCopy(bcba, doc.id, { data: Buffer.from("nope") })).rejects.toMatchObject({
       status: 422,
     });
+    for (const effectiveDate of ["2026-13-01", "2026-00-10", "2026-02-30"])
+      await expect(
+        uploadOfficialCopy(bcba, doc.id, {
+          data: readFileSync("fixtures/payor-docs/synthetic-handbook.pdf"),
+          effectiveDate,
+        }),
+      ).rejects.toMatchObject({ status: 422 });
     expect(await count("source:upload_rejected", doc.id)).toBe(before + 2);
     const rows = await withOrg(bcba, (tx) =>
       tx.auditEvent.findMany({ where: { action: "source:upload_rejected", entityId: doc.id } }),
@@ -419,9 +426,11 @@ describe("document renames (run last: they change document rows)", () => {
       for (const r of [...p.rules, ...p.extra_rules])
         if (r.source === "evernorth_aba_pa_928213d") r.source = "evernorth_v2";
     await withOrg(bcba, (tx) => syncPayorLibrary(tx, org.id, renamed));
+    // The rule's lineage includes its source key; its evidence is carried over to the new lineage.
     const after = await channel();
-    expect(after.lineageKey).toBe(before.lineageKey);
+    expect(after.lineageKey).not.toBe(before.lineageKey);
     expect(after.verified).toBe(true);
+    expect(after.trust!.verifiedAt).toBe(before.trust!.verifiedAt);
     // A later library that uses the old key again gets a new row instead of a primary-key clash.
     await withOrg(bcba, (tx) => syncPayorLibrary(tx, org.id, julySeed()));
     const reused = await withOrg(bcba, (tx) =>

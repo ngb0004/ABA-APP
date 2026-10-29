@@ -7,7 +7,8 @@
 import { Prisma } from "@prisma/client";
 import type { Tx } from "../db";
 import { sid } from "../stable-id";
-import { loadPayorSeed, resolvePayorRules } from "./load";
+import { audit } from "../audit";
+import { loadPayorSeed, resolvePayorRules, ruleFingerprint } from "./load";
 import type { Locator, PayorSeed } from "./types";
 
 const day = (d: string) => new Date(`${d}T00:00:00Z`);
@@ -15,6 +16,53 @@ const day = (d: string) => new Date(`${d}T00:00:00Z`);
 export function locatorFor(doc: PayorSeed["documents"][string]): Locator | null {
   if (doc.locator) return doc.locator;
   return doc.url ? { kind: "direct", url: doc.url } : null;
+}
+
+/**
+ * A rule's lineage includes its source key, so a renamed document gives its rules new lineages.
+ * Evidence is append-only: copy each rule's evidence to the new lineage (same dates, so nothing
+ * lasts longer than it would have), and record that it was carried over.
+ */
+async function carryEvidence(tx: Tx, orgId: string, seed: PayorSeed, oldKey: string, newKey: string) {
+  let carried = 0;
+  for (const p of seed.payors)
+    for (const r of [...p.rules, ...p.extra_rules]) {
+      if (r.source !== newKey) continue;
+      const from = ruleFingerprint(p.id, { ...r, source: oldKey });
+      const to = ruleFingerprint(p.id, r);
+      if (await tx.ruleEvidence.findFirst({ where: { orgId, lineageKey: to }, select: { id: true } }))
+        continue;
+      const rows = await tx.ruleEvidence.findMany({
+        where: { orgId, lineageKey: from },
+        orderBy: { createdAt: "asc" },
+      });
+      if (!rows.length) continue;
+      await tx.ruleEvidence.createMany({
+        data: rows.map((e) => ({
+          orgId: e.orgId,
+          lineageKey: to,
+          kind: e.kind,
+          tier: e.tier,
+          channel: e.channel,
+          documentId: e.documentId,
+          snapshotId: e.snapshotId,
+          section: e.section,
+          quote: e.quote,
+          textSha256: e.textSha256,
+          reference: e.reference,
+          reviewerId: e.reviewerId,
+          createdAt: e.createdAt,
+          note: [e.note, `Carried over when ${oldKey} was renamed ${newKey}`].filter(Boolean).join(". "),
+        })),
+      });
+      carried += rows.length;
+    }
+  if (carried)
+    await audit(tx, {
+      action: "payor_document:renamed",
+      entityType: "PayorDocument",
+      meta: { from: oldKey, to: newKey, evidenceCarried: carried },
+    });
 }
 
 export async function syncPayorLibrary(tx: Tx, orgId: string, seed: PayorSeed = loadPayorSeed()) {
@@ -26,7 +74,10 @@ export async function syncPayorLibrary(tx: Tx, orgId: string, seed: PayorSeed = 
       !(await tx.payorDocument.findUnique({ where: { orgId_key: { orgId, key } } }))
     ) {
       const old = await tx.payorDocument.findFirst({ where: { orgId, key: { in: doc.formerly } } });
-      if (old) await tx.payorDocument.update({ where: { id: old.id }, data: { key } });
+      if (old) {
+        await tx.payorDocument.update({ where: { id: old.id }, data: { key } });
+        await carryEvidence(tx, orgId, seed, old.key, key);
+      }
     }
     const loc = locatorFor(doc);
     const data = {

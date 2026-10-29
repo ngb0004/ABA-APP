@@ -54,8 +54,8 @@ export const SeedSchema = z.object({
         locator: LocatorSchema.optional(),
         secondary: z.boolean().optional(),
         /**
-         * Earlier keys for this document, oldest first: sync renames the stored row (keeping its
-         * fetched copies), and rules keep the lineage they had under the oldest key.
+         * Earlier keys for this document: sync renames the stored row (keeping its fetched
+         * copies) and carries its rules' evidence over to their new lineage.
          */
         formerly: z.array(z.string()).optional(),
       }),

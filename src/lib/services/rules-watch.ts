@@ -172,9 +172,16 @@ export async function uploadOfficialCopy(
   if (input.data.subarray(0, 5).toString() !== "%PDF-")
     throw await reject(422, "not_pdf", "Upload the payor's PDF file.");
   const effectiveDate = input.effectiveDate?.trim() || null;
+  // "2026-13-01" is an invalid Date: check before formatting it, which would throw.
+  const parsed = effectiveDate ? new Date(`${effectiveDate}T00:00:00Z`) : null;
   if (
     effectiveDate &&
-    !(ISO_DAY.test(effectiveDate) && toDay(new Date(`${effectiveDate}T00:00:00Z`)) === effectiveDate)
+    !(
+      ISO_DAY.test(effectiveDate) &&
+      parsed &&
+      !Number.isNaN(parsed.getTime()) &&
+      toDay(parsed) === effectiveDate
+    )
   )
     throw new HttpError(422, "Effective date must be a date (YYYY-MM-DD)");
   let text: string;

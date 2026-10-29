@@ -133,10 +133,23 @@ export function htmlToText(html: string): string {
 const CLIENT_RECORD_PATTERNS: RegExp[] = [
   /\b(?:date of birth|dob|birth ?date)\s*[:#]?\s*(?:\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}|\d{4}-\d{1,2}-\d{1,2}|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4}|\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4})/i,
   /\b(?:member|subscriber|patient|beneficiary|client|medicaid)\s*(?:id|number|no\.?|#)\s*[:#]\s*[A-Z]{0,4}\d[A-Z0-9-]{5,}/i,
-  // Label in any case, then a name: two capitalized (or all-caps) words.
-  /\b(?:[Pp]atient|[Cc]lient|[Mm]ember|[Bb]eneficiary|[Cc]hild|[Ss]ubscriber|[Pp]articipant|[Ss]tudent|PATIENT|CLIENT|MEMBER|BENEFICIARY|CHILD|SUBSCRIBER|PARTICIPANT|STUDENT)(?:'?[Ss])?\s*(?:[Ff]ull\s+|FULL\s+)?(?:[Nn]ame|NAME)\s*:\s*[A-Z][A-Za-z'-]+\s+[A-Z][A-Za-z'-]+/,
 ];
+/** A name label (any case) followed by two words; the words are checked in code below. */
+const NAME_LABEL =
+  /\b(?:patient|client|member|beneficiary|child|subscriber|participant|student)(?:'?s)?\s*(?:full\s+)?name\s*:\s*([A-Za-z][A-Za-z'-]*)\s+([A-Za-z][A-Za-z'-]*)(\s*[:,])?/gi;
+/** Words that start the next field of a blank form, never a person's name. */
+const FORM_WORDS = new Set(
+  "member patient client subscriber beneficiary parent guardian caregiver date birth dob id number no phone address signature gender sex age group plan policy last first middle name of the and or".split(
+    " ",
+  ),
+);
+const looksLikeName = (w: string) => /^[A-Z]/.test(w) && !FORM_WORDS.has(w.toLowerCase());
+
 export function looksLikeClientRecord(text: string): boolean {
   const t = normalizeText(text);
-  return CLIENT_RECORD_PATTERNS.some((re) => re.test(t));
+  if (CLIENT_RECORD_PATTERNS.some((re) => re.test(t))) return true;
+  // "Patient Name: Jane Doe" or "CLIENT NAME: JANE DOE", but not a blank form's "Member Name: Member ID:".
+  for (const m of t.matchAll(NAME_LABEL))
+    if (looksLikeName(m[1]!) && looksLikeName(m[2]!) && !m[3]) return true;
+  return false;
 }
