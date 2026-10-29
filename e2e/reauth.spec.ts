@@ -12,9 +12,9 @@ test("Client 2 reauth: AI draft with source links, letter upload, export blocked
   const planId = page.url().split("/plans/")[1]!;
 
   // Draft one section with the (mocked) LLM, approve it, and see the source link on a number.
-  const assessment = page.getByTestId("section-assessment");
-  await assessment.getByTestId("draft-assessment").click();
-  await expect(assessment.getByTestId("state-assessment")).toHaveText("draft");
+  const assessment = page.getByTestId("section-assessment_results");
+  await assessment.getByTestId("draft-assessment_results").click();
+  await expect(assessment.getByTestId("state-assessment_results")).toHaveText("draft");
   const total = assessment.locator('a.sourced[data-key="score.total.admin2"]');
   await expect(total).toBeVisible();
   await expect(total).toHaveAttribute(
@@ -23,8 +23,8 @@ test("Client 2 reauth: AI draft with source links, letter upload, export blocked
   );
   await expect(total).toHaveAttribute("href", `/clients/${clientId}/vbmapp#admin-2`);
   // Approval is blocked while required items are open.
-  await assessment.getByTestId("approve-assessment").click();
-  await expect(assessment.getByTestId("error-assessment")).toContainText("Required items");
+  await assessment.getByTestId("approve-assessment_results").click();
+  await expect(assessment.getByTestId("error-assessment_results")).toContainText("Required items");
   const items = assessment.locator("tr").filter({ has: page.locator("input[type=radio]") });
   const n = await items.count();
   for (let i = 0; i < n; i++) {
@@ -34,8 +34,8 @@ test("Client 2 reauth: AI draft with source links, letter upload, export blocked
       await expect(row.locator("input[type=radio]:checked")).toHaveCount(1);
     }
   }
-  await assessment.getByTestId("approve-assessment").click();
-  await expect(assessment.getByTestId("state-assessment")).toHaveText("approved");
+  await assessment.getByTestId("approve-assessment_results").click();
+  await expect(assessment.getByTestId("state-assessment_results")).toHaveText("approved");
   await total.click();
   await expect(page).toHaveURL(new RegExp(`/clients/${clientId}/vbmapp#admin-2$`));
 
@@ -65,23 +65,36 @@ test("Client 2 reauth: AI draft with source links, letter upload, export blocked
   // Finish the plan: draft, document progress, explain the flat goal, approve goals and each section one at a time.
   const view = await page.request.get(`/plans/${planId}`);
   expect(view.ok()).toBeTruthy();
+  // Every section except the ones handled separately: assessment (approved above), the progress
+  // summary, the BCBA-written attestation, and the three conditional sections.
   const keys = [
-    "identifying",
-    "background",
-    "behavior",
-    "behavior_goals",
-    "caregiver",
-    "services",
-    "coordination",
-    "crisis",
-    "transition",
+    "client_information",
+    "diagnosis_and_referral",
+    "biopsychosocial",
+    "direct_observation",
+    "goal_summary",
+    "behavior_intervention_plan",
+    "behavior_reduction_goals",
+    "caregiver_training_goals",
+    "generalization_maintenance",
+    "coordination_of_care",
+    "transition_fade_plan",
+    "discharge_criteria",
+    "crisis_plan",
+    "barriers_to_treatment",
+    "medical_necessity",
+    "service_recommendations",
+    "anticipated_schedule",
   ];
   for (const k of keys) await api(page, "POST", `/api/plans/${planId}/sections/${k}/draft`);
+  await api(page, "PUT", `/api/plans/${planId}/sections/signatures_attestation`, {
+    content: "Signed by the supervising BCBA.",
+  });
   const summary = [1, 2, 3, 4, 5, 7]
     .map((g) => `Goal ${g}: from {{goal.${g}.baseline_pct}} to {{goal.${g}.current_pct}}.`)
     .concat(["Goal 6: from {{goal.6.baseline_rate}} to {{goal.6.current_rate}}."])
     .join("\n");
-  await api(page, "PUT", `/api/plans/${planId}/sections/skill_goals`, { content: summary });
+  await api(page, "PUT", `/api/plans/${planId}/sections/skill_acquisition_goals`, { content: summary });
   await page.goto(`/clients/${clientId}/goals`);
   const flatBox = page.locator("textarea[data-testid^=flat-explanation-]");
   await flatBox.fill("Plateau after a curriculum change; added visual supports and increased trials.");
@@ -92,7 +105,14 @@ test("Client 2 reauth: AI draft with source links, letter upload, export blocked
     await expect(page.getByTestId(`approve-goal-${g}`)).toHaveCount(0);
   }
   await page.goto(`/plans/${planId}`);
-  for (const k of [...keys, "skill_goals"]) {
+  // Conditional sections that do not apply are marked so by the BCBA, with a reason.
+  page.on("dialog", (d) => void d.accept("Not requested for this authorization"));
+  for (const k of ["group_goals", "school_plan", "telehealth_readiness"]) {
+    const section = page.getByTestId(`section-${k}`);
+    await section.getByTestId(`na-button-${k}`).click();
+    await expect(section.getByTestId(`state-${k}`)).toHaveText("not applicable");
+  }
+  for (const k of [...keys, "signatures_attestation", "skill_acquisition_goals"]) {
     const section = page.getByTestId(`section-${k}`);
     const rows = section.locator("tr").filter({ has: page.locator("input[type=radio]") });
     const count = await rows.count();

@@ -38,7 +38,8 @@ Each question lists the default the build uses today. Defaults are the safer cho
 
 ## Treatment plan structure
 
-20. **Eleven sections.** `docs/SPEC.md` ("Treatment plan structure") was not in the build brief. *Default:* a provisional structure covering every GA Medicaid `plan_content` topic: identifying information, background, assessment, behavior assessment, skill acquisition goals and progress, behavior reduction and BIP, caregiver training, service recommendations and medical necessity, coordination of care, crisis and safety plan, transition and discharge. Replace with the spec's list. (`src/lib/plan/sections.ts`)
+20. **Plan structure (answered by the payor documents review).** Plans now have 23 sections built from what GA Medicaid, Cigna/Evernorth, Aetna, TRICARE, and four state templates ask for (`src/lib/plan/sections.ts`). Plans created before the change keep their eleven sections, so nothing already exported changes. *Default:* the group, school, and telehealth sections are conditional: the BCBA marks each one not applicable, with a reason. Export is blocked if the group section is marked not applicable while group codes (97154/97157/97158) are authorized; remote sessions on record raise a warning for telehealth.
+20a. **Goal records.** Each goal now records its date introduced, projected mastery date, status (new, in progress, mastered, on hold, discontinued), settings, and barriers. *Default:* the baseline is locked from the mean of the goal's first three data points, dated by the third, and can never change once locked; until it is locked, the computed mean is used and the audit warns. Changing a goal's dates returns it to draft; changing its status or barriers does not. Should the BCBA be able to choose a different baseline window before locking?
 
 ## Payor rule verification (Rules Watch)
 
@@ -52,7 +53,7 @@ Each question lists the default the build uses today. Defaults are the safer cho
 25. **Aetna: how to request ABA authorization?** The office manual (6/26) says to call the number on the member's card; the newer GR-69017-4 form (effective 2026-08-01) says initial requests start on Availity. *Default:* unverified warning naming both.
 26. **TRICARE technicians: RBT only, or also ABAT/BCAT?** The checklist says RBT; the Humana Military FAQ lists QABA (ABAT) and BICC (BCAT) among accepted boards, subject to the TRICARE Operations Manual and state law. *Default:* warn only.
 27. **TRICARE "report due 14 days after assessment".** No official document found states this; the only 14-day figure is the FAQ's window for completing 97151. Is the checklist rule right?
-28. **Plan structure:** should the app move to the 23-section structure in the review (with payor-specific order and conditional school, group, and telehealth sections)?
+28. **Plan structure:** moved to the 23-section structure (see 20). Payor-specific section order is not implemented yet; every payor gets the same order.
 
 ## Uploaded payor documents
 

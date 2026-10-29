@@ -15,9 +15,11 @@ test("an RBT session gets 403 on approve and sees no plan controls or restricted
   await login(page, "rbt@sample-practice.test");
   await openClient(page, "Charlie Testchild");
   await expect(page.getByTestId("new-reauth-plan")).toHaveCount(0);
-  const res = await page.request.post(`/api/plans/${planId}/sections/assessment/approve`);
+  const res = await page.request.post(`/api/plans/${planId}/sections/assessment_results/approve`);
   expect(res.status()).toBe(403);
-  expect((await page.request.post(`/api/plans/${planId}/sections/assessment/draft`)).status()).toBe(403);
+  expect((await page.request.post(`/api/plans/${planId}/sections/assessment_results/draft`)).status()).toBe(
+    403,
+  );
   await page.goto(`/clients/${clientId}/intake`);
   await expect(page.getByText("restricted: BCBA only")).toHaveCount(0);
   await expect(page.getByRole("link", { name: "Audit log" })).toHaveCount(0);

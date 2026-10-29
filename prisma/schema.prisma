@@ -514,6 +514,20 @@ model Goal {
   status                     String    @default("draft") // draft | approved
   /// Required before export when progress is flat over 8+ weeks.
   flatExplanation            String?
+  /// When the goal was first taught.
+  introducedAt               DateTime? @db.Date
+  projectedMasteryDate       DateTime? @db.Date
+  /// new | in_progress | mastered | on_hold | discontinued
+  progressStatus             String    @default("in_progress")
+  /// Baseline recorded from the goal's own data and locked by the BCBA; never changes once locked.
+  baselineValue              Float?
+  baselineDate               DateTime? @db.Date
+  baselineLockedAt           DateTime?
+  baselineLockedById         String?   @db.Uuid
+  /// Barriers to progress on this goal and what was done about them.
+  barriers                   String    @default("")
+  /// Settings the goal is taught in, e.g. ["home", "clinic"].
+  settings                   Json      @default("[]")
   approvedById               String?   @db.Uuid
   approvedAt                 DateTime?
 

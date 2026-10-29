@@ -94,7 +94,7 @@ See `docs/GOAL_FORMAT.md`.
 - [x] Duplicate-rationale check: flag near-identical rationale text across goals in one plan (a known audit finding)
 
 ## Phase 8: Treatment plan builder + numeric firewall
-- [x] Plan types: `initial` and `reauth`. Eleven sections, per `docs/SPEC.md` "Treatment plan structure."
+- [x] Plan types: `initial` and `reauth`. Twenty-three sections (three conditional), from the payor documents review; older plans keep the provisional eleven.
 - [x] Each section has required items (from the intake schema and payor `plan_content` rules). Each item is answered or explicitly "none."
 - [x] **Numeric firewall:**
   1. Build a context of sourced values (`score.L1.mand.admin2`, `auth.97153.units_per_week`, `goal.3.baseline_pct`, …), each with a source pointer.
@@ -159,7 +159,7 @@ All phases 0–11 are implemented with their acceptance criteria as automated te
 | 11 | `e2e/*` across all 3 clients; `docs/HIPAA_DEPLOYMENT.md`; `tests/integration/log-scrub.test.ts`; `pnpm audit` clean |
 
 Deviations and notes:
-- `docs/SPEC.md` was not in the brief (manual download step). The eleven plan sections are provisional; see `docs/QUESTIONS_FOR_BCBA.md` #20.
+- `docs/SPEC.md` was not in the brief (manual download step). The plan now uses a 23-section structure derived from the payor documents review (`docs/PAYOR_DOCUMENTS_REVIEW.md`); plans created with the provisional eleven sections keep them. See `docs/QUESTIONS_FOR_BCBA.md` #20. Tests: `tests/unit/plan-sections.test.ts`, `tests/integration/plan-structure.test.ts`.
 - `pnpm db:up` falls back to a local Postgres 16 when no Docker daemon is running. `pnpm db:reset` drops and recreates the schema itself and refuses any database other than local `aba`, `aba_test`, or `aba_e2e`.
 - Barrier/Transition grids: interface and TODO only (`src/lib/vbmapp/other-grids.ts`), as specified.
 - Payor PDF form filling: placeholder page naming the official form with its link, as specified.

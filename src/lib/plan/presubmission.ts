@@ -14,6 +14,10 @@ import {
 import type { RuleResult } from "../payors/types";
 import type { PlanBundle } from "./context";
 import { dataGaps, flatProgress } from "./progress";
+import { SECTION_BY_KEY, sectionDone, sectionsForTopic, type SectionCondition } from "./sections";
+
+/** Authorized codes that mean a conditional section applies. Group codes are standard CPT, not payor rules. */
+const GROUP_CODES = ["97154", "97157", "97158"];
 
 export type CheckStatus = "pass" | "warn" | "fail";
 export type AuditCheck = {
@@ -122,6 +126,23 @@ export function runPresubmissionAudit(
         message: `Goal ${g.ordinal}: unresolved placeholders ${ph.join(", ")}`,
         goalId: g.id,
       });
+    // Dated goal records: when a goal was introduced and when mastery is expected.
+    const missingDates = [
+      !g.introducedAt && "date introduced",
+      !g.projectedMasteryDate && g.progressStatus !== "mastered" && g.progressStatus !== "discontinued"
+        ? "projected mastery date"
+        : null,
+      !g.baselineLockedAt && "locked baseline",
+    ].filter((x): x is string => !!x);
+    if (missingDates.length)
+      push({
+        id: `goals.record.${g.ordinal}`,
+        category: "Goals",
+        status: "warn",
+        message: `Goal ${g.ordinal}: no ${missingDates.join(", ")}`,
+        goalId: g.id,
+        action: "Complete the goal record on the goals page",
+      });
     if (g.status !== "approved")
       push({
         id: `goals.approved.${g.ordinal}`,
@@ -175,10 +196,18 @@ export function runPresubmissionAudit(
 
   // ---- Progress summaries
   if (b.plan.type === "reauth") {
-    const s = b.plan.sections.find((x) => x.key === "skill_goals");
-    const text = s?.content ?? "";
+    // Skill and behavior progress may be summarized in their own sections (or the one legacy section).
+    const keys = b.plan.sections.map((x) => x.key);
+    const summaryKeys = new Set([
+      ...(sectionsForTopic("progress_summary", keys) ?? []),
+      ...(sectionsForTopic("behavior_progress_summary", keys) ?? []),
+    ]);
+    const text = b.plan.sections
+      .filter((x) => summaryKeys.has(x.key))
+      .map((x) => x.content)
+      .join("\n");
     const missing = b.goals
-      .filter((g) => g.category !== "caregiver")
+      .filter((g) => g.category !== "caregiver" && g.progressStatus !== "new")
       .filter(
         (g) => !(text.includes(`goal.${g.ordinal}.baseline_`) && text.includes(`goal.${g.ordinal}.current_`)),
       );
@@ -194,7 +223,7 @@ export function runPresubmissionAudit(
   }
 
   // ---- Sections and numbers
-  const unapproved = b.plan.sections.filter((s) => s.state !== "approved");
+  const unapproved = b.plan.sections.filter((s) => !sectionDone(s.state));
   push({
     id: "sections.approved",
     category: "Sections",
@@ -204,6 +233,31 @@ export function runPresubmissionAudit(
       : "All sections approved by the BCBA",
     details: unapproved.map((s) => s.title),
   });
+  // Conditional sections marked not applicable while the record says they apply.
+  const applies: Record<SectionCondition, { detected: boolean; why: string; status: CheckStatus }> = {
+    group: {
+      detected: !!b.auth?.units.some((u) => GROUP_CODES.includes(u.cptCode) && u.approvedUnits > 0),
+      why: "group codes are on the authorization",
+      status: "fail",
+    },
+    telehealth: {
+      detected: b.sessions.some((s) => !s.inPerson),
+      why: "sessions were delivered remotely",
+      status: "warn",
+    },
+    school: { detected: false, why: "", status: "warn" },
+  };
+  for (const s of b.plan.sections) {
+    const cond = SECTION_BY_KEY.get(s.key)?.condition;
+    if (!cond || s.state !== "not_applicable" || !applies[cond].detected) continue;
+    push({
+      id: `sections.condition.${s.key}`,
+      category: "Sections",
+      status: applies[cond].status,
+      message: `${s.title} is marked not applicable, but ${applies[cond].why}`,
+      action: "Reopen the section and complete it, or confirm it does not apply",
+    });
+  }
   const unsourced: string[] = [];
   for (const s of b.plan.sections) {
     const v = validateBcbaText(s.content, sourced);
@@ -243,7 +297,13 @@ export function runPresubmissionAudit(
       "97155": [b.goals.length > 0, "goals whose protocols are modified under supervision"],
       "97156": [hasData((c) => c === "caregiver"), "caregiver goals with data"],
       "97151": [
-        (b.plan.sections.find((x) => x.key === "assessment")?.content ?? "").trim().length > 0,
+        b.plan.sections.some(
+          (x) =>
+            sectionsForTopic(
+              "assessment_results",
+              b.plan.sections.map((y) => y.key),
+            )?.includes(x.key) && x.content.trim().length > 0,
+        ),
         "an assessment section",
       ],
     };

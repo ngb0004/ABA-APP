@@ -5,7 +5,10 @@ export type Point = { date: Day; value: number };
 
 const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : NaN);
 
-export function baseline(points: Point[], n = 3): number | null {
+/** Data points averaged for a computed baseline. */
+export const BASELINE_POINTS = 3;
+
+export function baseline(points: Point[], n = BASELINE_POINTS): number | null {
   const s = [...points].sort((a, b) => a.date.localeCompare(b.date)).slice(0, n);
   return s.length ? Math.round(mean(s.map((p) => p.value)) * 10) / 10 : null;
 }

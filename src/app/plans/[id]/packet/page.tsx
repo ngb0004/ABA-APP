@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { sectionDone } from "@/lib/plan/sections";
 import { ActionButton, UploadForm } from "@/components/actions";
 import { DEMO_SAMPLES } from "@/lib/demo";
 import { AuditPanel } from "@/components/audit-panel";
@@ -15,7 +16,7 @@ export default async function PacketPage({ params }: { params: Promise<{ id: str
   const asOf = asOfToday();
   const [pv, plan] = await Promise.all([packetView(ctx, id, asOf), planView(ctx, id, asOf)]);
   const b = pv.bundle;
-  const unapproved = plan.sections.filter((s) => s.state !== "approved").length;
+  const unapproved = plan.sections.filter((s) => !sectionDone(s.state)).length;
   const blocked = unapproved > 0 || plan.blockers.length > 0;
   return (
     <>

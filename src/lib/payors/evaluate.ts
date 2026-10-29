@@ -7,6 +7,7 @@
 import { addDays, addMonths, diffDays, type Day } from "../dates";
 import { supervisionByMonth, DIRECT_CODE, SUPERVISION_CODE } from "../supervision";
 import { authWeeks } from "../utilization";
+import { sectionsForTopic } from "../plan/sections";
 import type { EvalContext } from "./context";
 import type { Rule, RuleResult, RuleStatus, RuleType } from "./types";
 
@@ -62,26 +63,6 @@ export function documentPresent(doc: string, ctx: EvalContext): { present: boole
   if (hit && norm(hit.title).length > 3) return { present: true, how: `attachment "${hit.title}"` };
   return { present: false, how: "" };
 }
-
-/** Plan-content topics mapped to our section taxonomy. */
-const TOPIC_SECTIONS: Record<string, string[]> = {
-  background: ["background"],
-  medications: ["background"],
-  parent_concerns: ["background"],
-  assessment_results: ["assessment"],
-  skill_goals: ["skill_goals"],
-  behavior_goals: ["behavior_goals"],
-  caregiver_goals: ["caregiver"],
-  goals: ["skill_goals", "behavior_goals"],
-  coordination_of_care: ["coordination"],
-  care_coordination: ["coordination"],
-  transition_plan: ["transition"],
-  transition_fade_plan_tied_to_goals: ["transition"],
-  discharge_criteria: ["transition"],
-  discharge_plan: ["transition"],
-  crisis_plan: ["crisis"],
-  generalization_to_caregivers: ["caregiver"],
-};
 
 function dailyHours(ctx: EvalContext, code?: string) {
   const byDay = new Map<Day, number>();
@@ -559,7 +540,7 @@ const EVALUATORS: Record<RuleType, Evaluator> = {
         if (!ctx.plan?.includesEvaluationDate) missing.push("evaluation date");
         continue;
       }
-      const keys = TOPIC_SECTIONS[topic];
+      const keys = sectionsForTopic(topic, ctx.plan?.sections.map((s) => s.key) ?? []);
       if (!keys) {
         evidence.push(`Manual check: "${topic.replace(/_/g, " ")}"`);
         manual++;

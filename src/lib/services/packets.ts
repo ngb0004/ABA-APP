@@ -13,7 +13,9 @@ import { goalGraphSvg } from "../plan/graphs";
 import type { RuleResult } from "../payors/types";
 import { renderMilestonesGridSvg } from "../vbmapp/grid-svg";
 import { evaluateClientRules } from "./payors";
-import { assertExportable } from "./plans";
+import { GOAL_STATUS_LABEL, type GoalStatus } from "../plan/context";
+import { sectionDone } from "../plan/sections";
+import { assertExportable, NOT_APPLICABLE_ITEM } from "./plans";
 import { loadPlanBundle } from "../plan/context";
 
 export type ChecklistItem = {
@@ -31,7 +33,7 @@ export function buildChecklist(
   done: Record<string, boolean>,
 ): ChecklistItem[] {
   const items: ChecklistItem[] = [];
-  const approved = b.plan.sections.every((s) => s.state === "approved");
+  const approved = b.plan.sections.every((s) => sectionDone(s.state));
   items.push({
     key: "auto:plan",
     label: "Treatment plan (all sections approved)",
@@ -133,6 +135,30 @@ export async function setChecklistDone(ctx: OrgCtx, planId: string, key: string,
   });
 }
 
+function notApplicableReason(items: unknown): string | null {
+  return (items as Record<string, { note?: string }> | null)?.[NOT_APPLICABLE_ITEM]?.note ?? null;
+}
+
+/** Dates, status, baseline, settings, and barriers from the goal record (system-filled, never AI). */
+function goalRecordTable(g: PlanBundle["goals"][number]): string {
+  const d = (x: Date | null) => (x ? toDay(x) : "not recorded");
+  const rows: [string, string][] = [
+    ["Status", GOAL_STATUS_LABEL[g.progressStatus as GoalStatus] ?? g.progressStatus],
+    ["Date introduced", d(g.introducedAt)],
+    ["Projected mastery", d(g.projectedMasteryDate)],
+    [
+      "Baseline",
+      g.baselineLockedAt && g.baselineValue !== null
+        ? `${Math.round(g.baselineValue * 10) / 10}${g.measure === "percent" ? "%" : ""} (recorded ${d(g.baselineDate)})`
+        : "not locked",
+    ],
+  ];
+  const settings = (g.settings as string[] | null) ?? [];
+  if (settings.length) rows.push(["Settings", settings.join(", ")]);
+  if (g.barriers.trim()) rows.push(["Barriers", g.barriers]);
+  return `<table class="goal-record">${rows.map(([k, v]) => `<tr><th>${k}</th><td>${esc(v)}</td></tr>`).join("")}</table>`;
+}
+
 const esc = (s: string) =>
   s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
@@ -148,20 +174,21 @@ export function packetHtml(b: PlanBundle, results: RuleResult[], asOf: Day): str
     return renderTokens(t, sourced, "html");
   };
   const sections = b.plan.sections
-    .map(
-      (s) =>
-        `<section><h2>${s.ordinal}. ${esc(s.title)}</h2>${render(s.content)
-          .split(/\n{2,}/)
-          .map((p) => `<p>${p.replace(/\n/g, "<br>")}</p>`)
-          .join(
-            "",
-          )}<p class="meta">Approved by BCBA ${s.approvedAt ? toDay(s.approvedAt) : ""}</p></section>`,
+    .map((s) =>
+      s.state === "not_applicable"
+        ? `<section><h2>${s.ordinal}. ${esc(s.title)}</h2><p>Not applicable to this request${notApplicableReason(s.items) ? `: ${esc(notApplicableReason(s.items)!)}` : ""}.</p></section>`
+        : `<section><h2>${s.ordinal}. ${esc(s.title)}</h2>${render(s.content)
+            .split(/\n{2,}/)
+            .map((p) => `<p>${p.replace(/\n/g, "<br>")}</p>`)
+            .join(
+              "",
+            )}<p class="meta">Approved by BCBA ${s.approvedAt ? toDay(s.approvedAt) : ""}</p></section>`,
     )
     .join("");
   const goals = b.goals
     .map(
       (g) =>
-        `<div class="goal"><h3>Goal ${g.ordinal}: ${esc(g.domain)}</h3><p>${render(g.objective)}</p><p class="rationale"><em>Medical necessity:</em> ${render(g.rationale)}</p>${g.flatExplanation ? `<p><em>Progress note:</em> ${esc(g.flatExplanation)}</p>` : ""}${goalGraphSvg({ title: `Goal ${g.ordinal}: ${g.domain}`, measure: g.measure, points: g.dataPoints.map((p) => ({ date: toDay(p.date), value: p.value })), phaseChanges: g.phaseChanges.map((p) => ({ date: toDay(p.date), label: p.label })), masteryPct: g.masteryAccuracyPct })}</div>`,
+        `<div class="goal"><h3>Goal ${g.ordinal}: ${esc(g.domain)}</h3><p>${render(g.objective)}</p><p class="rationale"><em>Medical necessity:</em> ${render(g.rationale)}</p>${goalRecordTable(g)}${g.flatExplanation ? `<p><em>Progress note:</em> ${esc(g.flatExplanation)}</p>` : ""}${goalGraphSvg({ title: `Goal ${g.ordinal}: ${g.domain}`, measure: g.measure, points: g.dataPoints.map((p) => ({ date: toDay(p.date), value: p.value })), phaseChanges: g.phaseChanges.map((p) => ({ date: toDay(p.date), label: p.label })), masteryPct: g.masteryAccuracyPct })}</div>`,
     )
     .join("");
   const latest = b.administrations.at(-1);

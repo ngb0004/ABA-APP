@@ -321,7 +321,7 @@ describe("rule types (evaluated as verified)", () => {
       ...ctx1,
       plan: {
         ...ctx1.plan!,
-        sections: ctx1.plan!.sections.filter((s) => s.key !== "crisis"),
+        sections: ctx1.plan!.sections.filter((s) => s.key !== "crisis_plan"),
         allApprovedByBcba: false,
       },
     };
@@ -329,6 +329,14 @@ describe("rule types (evaluated as verified)", () => {
     expect(res.status).toBe("fail");
     expect(res.message).toMatch(/crisis plan/);
     expect(res.message).toMatch(/BCBA/);
+    // Plans written with the eleven-section structure are checked against their own sections.
+    const legacy = { ...ctx1, plan: fullPlan("initial", "legacy") };
+    expect(evaluateRule(r, legacy).message).toMatch(/manual check/);
+    const legacyPartial = {
+      ...legacy,
+      plan: { ...legacy.plan!, sections: legacy.plan!.sections.filter((s) => s.key !== "crisis") },
+    };
+    expect(evaluateRule(r, legacyPartial).message).toMatch(/crisis plan/);
   });
   it("submission_channel: informational pass with the channel", () => {
     const r = evaluateRule(verified(find("cigna_evernorth", "submission_channel")), ctx2);

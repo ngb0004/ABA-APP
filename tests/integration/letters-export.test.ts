@@ -9,6 +9,7 @@ import {
   createPlan,
   draftSection,
   editSection,
+  markSectionNotApplicable,
   planView,
   setSectionItem,
   updateGoal,
@@ -79,8 +80,12 @@ describe("reauth packet export", () => {
     let v = await planView(bcba, plan.id, AS_OF);
     expect(v.goals).toHaveLength(9);
     for (const s of v.sections) {
-      if (s.key === "skill_goals") continue;
-      await draftSection(bcba, plan.id, s.key, AS_OF);
+      if (s.key === "skill_acquisition_goals") continue;
+      if (s.conditional)
+        await markSectionNotApplicable(bcba, plan.id, s.key, "Not requested for this period");
+      else if (s.bcbaOnly)
+        await editSection(bcba, plan.id, s.key, "Written and signed by the supervising BCBA.", AS_OF);
+      else await draftSection(bcba, plan.id, s.key, AS_OF);
     }
     const goals = v.goals;
     const summary = goals
@@ -90,7 +95,7 @@ describe("reauth packet export", () => {
           `Goal ${g.ordinal}: from {{goal.${g.ordinal}.baseline_${g.measure === "percent" ? "pct" : "rate"}}} to {{goal.${g.ordinal}.current_${g.measure === "percent" ? "pct" : "rate"}}}.`,
       )
       .join("\n");
-    await editSection(bcba, plan.id, "skill_goals", summary, AS_OF);
+    await editSection(bcba, plan.id, "skill_acquisition_goals", summary, AS_OF);
     for (const g of goals) {
       if (g.ordinal === 3)
         await updateGoal(bcba, g.id, { flatExplanation: "Plateau explained; procedure revised." });
@@ -98,6 +103,7 @@ describe("reauth packet export", () => {
     }
     v = await planView(bcba, plan.id, AS_OF);
     for (const s of v.sections) {
+      if (s.state === "not_applicable") continue;
       for (const i of s.items.filter((x) => x.status === null))
         await setSectionItem(bcba, plan.id, s.key, i.key, "answered");
       // One section approved at a time; there is no approve-all.

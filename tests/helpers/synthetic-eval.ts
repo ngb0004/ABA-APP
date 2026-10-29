@@ -1,3 +1,4 @@
+import { LEGACY_SECTIONS, SECTIONS } from "@/lib/plan/sections";
 import { ageYears } from "@/lib/dates";
 import type { EvalContext } from "@/lib/payors/context";
 import { buildDataset, type SynClient } from "../../seed/synthetic/dataset";
@@ -37,21 +38,16 @@ export function evalContextFor(
   };
 }
 
-export const fullPlan = (type: "initial" | "reauth"): EvalContext["plan"] => ({
+export const fullPlan = (
+  type: "initial" | "reauth",
+  structure: "current" | "legacy" = "current",
+): EvalContext["plan"] => ({
   type,
-  sections: [
-    "identifying",
-    "background",
-    "assessment",
-    "behavior",
-    "skill_goals",
-    "behavior_goals",
-    "caregiver",
-    "services",
-    "coordination",
-    "crisis",
-    "transition",
-  ].map((key) => ({ key, state: "approved", hasContent: true })),
+  sections: (structure === "current" ? SECTIONS : LEGACY_SECTIONS).map((s) => ({
+    key: s.key,
+    state: "approved",
+    hasContent: true,
+  })),
   includesEvaluationDate: true,
   allApprovedByBcba: true,
 });

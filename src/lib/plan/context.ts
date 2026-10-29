@@ -11,6 +11,16 @@ import type { IntakeAnswers } from "../intake/schema";
 import { computeUtilization, type UnitBasis } from "../utilization";
 import { baseline, current, flatProgress } from "./progress";
 
+export const GOAL_STATUSES = ["new", "in_progress", "mastered", "on_hold", "discontinued"] as const;
+export type GoalStatus = (typeof GOAL_STATUSES)[number];
+export const GOAL_STATUS_LABEL: Record<GoalStatus, string> = {
+  new: "new",
+  in_progress: "in progress",
+  mastered: "mastered",
+  on_hold: "on hold",
+  discontinued: "discontinued",
+};
+
 export async function loadPlanBundle(tx: Tx, planId: string) {
   const plan = await tx.plan.findUniqueOrThrow({
     where: { id: planId },
@@ -362,7 +372,9 @@ export function buildSourcedContext(b: ClientData, asOf: Day): SourcedContext {
     const kind = goalKeyKind(g.measure);
     const unit = g.measure === "percent" ? "%" : g.measure === "frequency" ? " per session" : " min";
     const src = (description: string) => ({ kind: "goal_data_point", id: g.id, description, href: gHref });
-    const bl = baseline(pts);
+    // A locked baseline (recorded and dated by the BCBA) wins over the computed one.
+    const locked = g.baselineLockedAt && g.baselineValue !== null && g.baselineDate;
+    const bl = locked ? g.baselineValue : baseline(pts);
     const cur = current(pts);
     const fp = flatProgress(pts, g.measure, asOf);
     const trend = fp.flat
@@ -376,8 +388,44 @@ export function buildSourcedContext(b: ClientData, asOf: Day): SourcedContext {
         label: `Goal ${n} (${g.domain}) baseline`,
         value: bl,
         display: `${fmt(bl)}${unit}`,
-        source: src(`Mean of the first three data points for goal ${n}`),
+        source: locked
+          ? {
+              kind: "goal",
+              id: g.id,
+              field: "baselineValue",
+              description: `Goal ${n} baseline, locked ${usDate(toDay(g.baselineDate!))}`,
+              href: gHref,
+            }
+          : src(`Mean of the first three data points for goal ${n}`),
       });
+    if (locked)
+      add({
+        key: `goal.${n}.baseline_date`,
+        label: `Goal ${n} (${g.domain}) baseline date`,
+        value: toDay(g.baselineDate!),
+        display: usDate(toDay(g.baselineDate!)),
+        source: {
+          kind: "goal",
+          id: g.id,
+          field: "baselineDate",
+          description: `Goal ${n} baseline date`,
+          href: gHref,
+        },
+      });
+    for (const [field, key, label] of [
+      ["introducedAt", "introduced", "date introduced"],
+      ["projectedMasteryDate", "projected_mastery", "projected mastery date"],
+    ] as const) {
+      const d = g[field];
+      if (d)
+        add({
+          key: `goal.${n}.${key}`,
+          label: `Goal ${n} (${g.domain}) ${label}`,
+          value: toDay(d),
+          display: usDate(toDay(d)),
+          source: { kind: "goal", id: g.id, field, description: `Goal ${n} ${label}`, href: gHref },
+        });
+    }
     if (cur !== null)
       add({
         key: `goal.${n}.current_${kind}`,
@@ -423,6 +471,30 @@ export function buildSourcedContext(b: ClientData, asOf: Day): SourcedContext {
       source: gsrc("masteryInstructors"),
     });
   }
+
+  // Goal counts by status, for the goal summary.
+  const goalsHref = `${clientHref}/goals`;
+  const counts: [string, string, number][] = [
+    ["total", "Number of goals", b.goals.length],
+    ...GOAL_STATUSES.map((st): [string, string, number] => [
+      st,
+      `Number of goals ${GOAL_STATUS_LABEL[st]}`,
+      b.goals.filter((g) => g.progressStatus === st).length,
+    ]),
+  ];
+  for (const [k, label, v] of counts)
+    add({
+      key: `goals.count.${k}`,
+      label,
+      value: v,
+      display: String(v),
+      source: {
+        kind: "goal_records",
+        id: c.id,
+        description: "Count of goal records by status",
+        href: goalsHref,
+      },
+    });
 
   const answers = (b.intake?.answers ?? {}) as IntakeAnswers;
   const avail = availableHoursPerWeek(answers);

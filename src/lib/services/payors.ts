@@ -2,6 +2,7 @@ import type { Tx } from "../db";
 import { ageYears, toDay, type Day } from "../dates";
 import type { EvalContext } from "../payors/context";
 import { evaluateRules } from "../payors/evaluate";
+import { sectionDone, sectionsForTopic } from "../plan/sections";
 import type { Rule, RuleType } from "../payors/types";
 import type { RevisionRow } from "../rules-watch/parsers";
 import { computeTrust, relatedChanges, type SnapshotState } from "../rules-watch/status";
@@ -272,8 +273,14 @@ export async function buildEvalContext(
           })),
           includesEvaluationDate:
             diagnoses.some((d) => d.evaluationDate) &&
-            plan.sections.some((s) => s.key === "assessment" && s.content.trim().length > 0),
-          allApprovedByBcba: plan.sections.length > 0 && plan.sections.every((s) => s.state === "approved"),
+            plan.sections.some(
+              (s) =>
+                sectionsForTopic(
+                  "evaluation_date",
+                  plan.sections.map((x) => x.key),
+                )?.includes(s.key) && s.content.trim().length > 0,
+            ),
+          allApprovedByBcba: plan.sections.length > 0 && plan.sections.every((s) => sectionDone(s.state)),
         }
       : null,
     offices,

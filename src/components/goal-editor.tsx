@@ -110,3 +110,115 @@ export function FlatExplanation({ goalId, initial }: { goalId: string; initial: 
     </div>
   );
 }
+
+const STATUSES = [
+  ["new", "New"],
+  ["in_progress", "In progress"],
+  ["mastered", "Mastered"],
+  ["on_hold", "On hold"],
+  ["discontinued", "Discontinued"],
+] as const;
+
+/** Dates, status, barriers, and settings: the parts of a goal record payors ask for besides the goal itself. */
+export function GoalRecordEditor({
+  goal,
+  canWrite,
+}: {
+  goal: {
+    id: string;
+    ordinal: number;
+    introducedAt: string | null;
+    projectedMasteryDate: string | null;
+    progressStatus: string;
+    barriers: string;
+    settings: string[];
+  };
+  canWrite: boolean;
+}) {
+  const router = useRouter();
+  const [g, setG] = useState(goal);
+  const [msg, setMsg] = useState<string | null>(null);
+  const dis = !canWrite;
+  return (
+    <div data-testid={`goal-record-${goal.ordinal}`}>
+      <div className="row">
+        <label>Status</label>
+        <select
+          disabled={dis}
+          value={g.progressStatus}
+          onChange={(e) => setG({ ...g, progressStatus: e.target.value })}
+        >
+          {STATUSES.map(([v, l]) => (
+            <option key={v} value={v}>
+              {l}
+            </option>
+          ))}
+        </select>
+        <label>Introduced</label>
+        <input
+          type="date"
+          disabled={dis}
+          value={g.introducedAt ?? ""}
+          onChange={(e) => setG({ ...g, introducedAt: e.target.value || null })}
+        />
+        <label>Projected mastery</label>
+        <input
+          type="date"
+          disabled={dis}
+          value={g.projectedMasteryDate ?? ""}
+          onChange={(e) => setG({ ...g, projectedMasteryDate: e.target.value || null })}
+        />
+      </div>
+      <label>Settings (comma separated)</label>
+      <input
+        disabled={dis}
+        value={g.settings.join(", ")}
+        placeholder="home, clinic"
+        onChange={(e) =>
+          setG({
+            ...g,
+            settings: e.target.value
+              .split(",")
+              .map((x) => x.trim())
+              .filter(Boolean),
+          })
+        }
+      />
+      <label>Barriers to progress and actions taken</label>
+      <textarea
+        disabled={dis}
+        style={{ minHeight: 50, fontFamily: "inherit" }}
+        value={g.barriers}
+        onChange={(e) => setG({ ...g, barriers: e.target.value })}
+      />
+      {canWrite && (
+        <button
+          className="secondary"
+          data-testid={`save-goal-record-${goal.ordinal}`}
+          onClick={async () => {
+            const changed = Object.fromEntries(
+              (Object.keys(g) as (keyof typeof g)[])
+                .filter(
+                  (k) => k !== "id" && k !== "ordinal" && JSON.stringify(g[k]) !== JSON.stringify(goal[k]),
+                )
+                .map((k) => [k, g[k]]),
+            );
+            if (!Object.keys(changed).length) return setMsg("No changes");
+            const r = await send(`/api/goals/${goal.id}`, "PATCH", changed);
+            setMsg(
+              r.ok
+                ? "introducedAt" in changed || "projectedMasteryDate" in changed
+                  ? "Saved. Changing dates returns the goal to draft."
+                  : "Saved"
+                : String(r.data.error),
+            );
+            router.refresh();
+          }}
+        >
+          Save goal record
+        </button>
+      )}
+      {msg && <span className="muted"> {msg}</span>}
+    </div>
+  );
+}

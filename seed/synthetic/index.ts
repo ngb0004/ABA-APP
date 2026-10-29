@@ -5,7 +5,8 @@
 import { Prisma, PrismaClient } from "@prisma/client";
 import { hashPassword } from "../../src/lib/auth/local";
 import { withOrg, type Tx } from "../../src/lib/db";
-import { toDay, type Day } from "../../src/lib/dates";
+import { addMonths, toDay, type Day } from "../../src/lib/dates";
+import { baseline, BASELINE_POINTS } from "../../src/lib/plan/progress";
 import { loadGoalBank } from "../../src/lib/goals/bank";
 import { masteryDefaults, tokenizeMastery } from "../../src/lib/goals/tokenize";
 import { syncPayorLibrary } from "../../src/lib/payors/library";
@@ -236,6 +237,7 @@ async function seedClient(
         rationalePattern: goal.rationalePattern,
         rationale: goal.rationale,
         baselineSource: { kind: "datapoints", window: "first_3" },
+        ...goalRecord(goal.dataPoints),
         replacementForGoalId: goal.replacementFor
           ? c.goals.find((x) => x.ordinal === goal.replacementFor)!.id
           : null,
@@ -274,6 +276,23 @@ async function seedClient(
         })),
       });
   }
+}
+
+/** Dates, status, and a locked baseline, all taken from the goal's own synthetic data. */
+function goalRecord(points: { date: Day; value: number }[]) {
+  const sorted = [...points].sort((x, y) => x.date.localeCompare(y.date));
+  const first = sorted[0];
+  const third = sorted[BASELINE_POINTS - 1];
+  const bl = baseline(sorted);
+  return {
+    progressStatus: first ? "in_progress" : "new",
+    introducedAt: first ? d(first.date) : null,
+    projectedMasteryDate: first ? d(addMonths(first.date, 6)) : null,
+    settings: ["home"],
+    ...(third && bl !== null
+      ? { baselineValue: bl, baselineDate: d(third.date), baselineLockedAt: d(third.date) }
+      : {}),
+  };
 }
 
 export async function seedAll(asOf: Day = toDay(new Date())) {

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Html } from "@/components/actions";
 import { AuditPanel } from "@/components/audit-panel";
 import { SectionCard } from "@/components/section-editor";
+import { sectionDone } from "@/lib/plan/sections";
 import { can } from "@/lib/permissions";
 import { planView } from "@/lib/services/plans";
 import { asOfToday, requirePageCtx, uuidParam } from "@/lib/server/page-session";
@@ -12,7 +13,7 @@ export default async function PlanPage({ params }: { params: Promise<{ id: strin
   const v = await planView(ctx, id, asOfToday());
   const b = v.bundle;
   const tokens = v.sourced.map((t) => ({ key: t.key, label: t.label, display: t.display }));
-  const approved = v.sections.filter((s) => s.state === "approved").length;
+  const approved = v.sections.filter((s) => sectionDone(s.state)).length;
   return (
     <>
       <p>
@@ -52,6 +53,8 @@ export default async function PlanPage({ params }: { params: Promise<{ id: strin
             content: s.content,
             items: s.items,
             bcbaOnly: s.bcbaOnly,
+            conditional: s.conditional,
+            notApplicableReason: s.notApplicableReason,
           }}
           tokens={tokens}
           canDraft={can(ctx.role, "section:draft")}

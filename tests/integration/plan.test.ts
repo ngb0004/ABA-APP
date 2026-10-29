@@ -38,9 +38,9 @@ async function auditFor(pid: string) {
 }
 
 describe("plan creation", () => {
-  it("creates eleven sections, attaches goals, and records payor document versions", async () => {
+  it("creates the 23 sections, attaches goals, and records payor document versions", async () => {
     const v = await planView(bcba, planId, AS_OF);
-    expect(v.sections).toHaveLength(11);
+    expect(v.sections).toHaveLength(23);
     expect(v.sections.every((s) => s.state === "draft")).toBe(true);
     expect(v.goals).toHaveLength(9);
     const docs = v.bundle.plan.payorDocVersions as { name: string; version: string }[];
@@ -54,7 +54,7 @@ describe("AI drafting through the single LLM module", () => {
   it("drafts with tokens only, audits the call, and never sends identifiers or restricted fields", async () => {
     const mock = new MockProvider();
     setLlmProvider(mock);
-    const r = await draftSection(bcba, planId, "assessment", AS_OF);
+    const r = await draftSection(bcba, planId, "assessment_results", AS_OF);
     expect(r.text).toMatch(/\{\{client\.name\}\}/);
     expect(r.text).toMatch(/\{\{score\.total\.admin2\}\}/);
     const sent = mock.calls.map((c) => c.system + c.user).join("\n");
@@ -76,7 +76,7 @@ describe("AI drafting through the single LLM module", () => {
     );
     expect(rows[0]!.meta).toMatchObject({
       model: "mock-model",
-      section: "assessment",
+      section: "assessment_results",
       outcome: "ok",
       attempt: 1,
     });
@@ -86,7 +86,9 @@ describe("AI drafting through the single LLM module", () => {
 
   it("rejects digits, retries once, then surfaces the error to the BCBA", async () => {
     setLlmProvider(new MockProvider(["[Client] scored 92 points.", "Still has 3 numbers."]));
-    await expect(draftSection(bcba, planId, "background", AS_OF)).rejects.toBeInstanceOf(AiFirewallError);
+    await expect(draftSection(bcba, planId, "biopsychosocial", AS_OF)).rejects.toBeInstanceOf(
+      AiFirewallError,
+    );
     const rows = await withOrg(bcba, (tx) =>
       tx.auditEvent.findMany({ where: { action: "ai:call" }, orderBy: { createdAt: "desc" }, take: 2 }),
     );
@@ -103,11 +105,11 @@ describe("AI drafting through the single LLM module", () => {
         "[Client] is authorized for {{auth.97153.hours_per_week}} hours weekly.",
       ]),
     );
-    const r = await draftSection(bcba, planId, "services", AS_OF);
+    const r = await draftSection(bcba, planId, "service_recommendations", AS_OF);
     expect(r.attempts).toBe(2);
     expect(r.text).toBe("{{client.name}} is authorized for {{auth.97153.hours_per_week}} hours weekly.");
     const v = await planView(bcba, planId, AS_OF);
-    const html = v.sections.find((s) => s.key === "services")!.html;
+    const html = v.sections.find((s) => s.key === "service_recommendations")!.html;
     expect(html).toContain('data-key="auth.97153.hours_per_week"');
     expect(html).toContain(">40<");
     expect(html).toMatch(/title="Approved 97153 hours per week. Source: Authorization SYN-AUTH-2002, 97153/);
@@ -116,22 +118,24 @@ describe("AI drafting through the single LLM module", () => {
 
 describe("section workflow", () => {
   it("RBT cannot approve (403); BCBA cannot approve with open required items (422)", async () => {
-    await expect(approveSection(ctxAs("RBT"), planId, "assessment", AS_OF)).rejects.toBeInstanceOf(
+    await expect(approveSection(ctxAs("RBT"), planId, "assessment_results", AS_OF)).rejects.toBeInstanceOf(
       ForbiddenError,
     );
     await expect(
-      approveSection(ctxAs("AUTH_COORDINATOR"), planId, "assessment", AS_OF),
+      approveSection(ctxAs("AUTH_COORDINATOR"), planId, "assessment_results", AS_OF),
     ).rejects.toMatchObject({ status: 403 });
-    await expect(approveSection(bcba, planId, "assessment", AS_OF)).rejects.toMatchObject({ status: 422 });
+    await expect(approveSection(bcba, planId, "assessment_results", AS_OF)).rejects.toMatchObject({
+      status: 422,
+    });
   });
 
   it("draft → edited → approved, storing the AI-vs-final diff", async () => {
     setLlmProvider(new MockProvider());
-    await draftSection(bcba, planId, "assessment", AS_OF);
+    await draftSection(bcba, planId, "assessment_results", AS_OF);
     await editSection(
       bcba,
       planId,
-      "assessment",
+      "assessment_results",
       "{{client.name}} completed the VB-MAPP on {{vbmapp.admin2.date}} with a total of {{score.total.admin2}}.",
       AS_OF,
     );
@@ -139,27 +143,31 @@ describe("section workflow", () => {
       await setSectionItem(
         bcba,
         planId,
-        "assessment",
+        "assessment_results",
         item,
         item === "isolated_scores_verified" ? "none" : "answered",
       );
     const v0 = await planView(bcba, planId, AS_OF);
-    const open = v0.sections.find((s) => s.key === "assessment")!.items.filter((i) => i.status === null);
-    for (const i of open) await setSectionItem(bcba, planId, "assessment", i.key, "answered");
-    const s = await approveSection(bcba, planId, "assessment", AS_OF);
+    const open = v0.sections
+      .find((s) => s.key === "assessment_results")!
+      .items.filter((i) => i.status === null);
+    for (const i of open) await setSectionItem(bcba, planId, "assessment_results", i.key, "answered");
+    const s = await approveSection(bcba, planId, "assessment_results", AS_OF);
     expect(s.state).toBe("approved");
     const revs = await withOrg(bcba, (tx) =>
       tx.planSectionRevision.findMany({ where: { sectionId: s.id }, orderBy: { createdAt: "asc" } }),
     );
     expect(revs.map((r) => r.kind)).toEqual(expect.arrayContaining(["ai_draft", "edit", "approve"]));
     expect(revs.find((r) => r.kind === "approve")!.diff).toMatch(/^[-+] /m);
-    await expect(editSection(bcba, planId, "assessment", "x", AS_OF)).rejects.toMatchObject({ status: 409 });
+    await expect(editSection(bcba, planId, "assessment_results", "x", AS_OF)).rejects.toMatchObject({
+      status: 409,
+    });
   });
 
   it("rejects unknown tokens in BCBA edits", async () => {
-    await expect(editSection(bcba, planId, "background", "Score {{made.up}}", AS_OF)).rejects.toBeInstanceOf(
-      HttpError,
-    );
+    await expect(
+      editSection(bcba, planId, "biopsychosocial", "Score {{made.up}}", AS_OF),
+    ).rejects.toBeInstanceOf(HttpError);
   });
 });
 

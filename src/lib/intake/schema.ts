@@ -5,6 +5,7 @@
  */
 import { z } from "zod";
 import type { Sensitivity } from "../sensitivity";
+import type { SectionKey } from "../plan/sections";
 
 export const LIKERT = ["never", "rarely", "sometimes", "often", "always"] as const;
 export const INTENSITY = ["mild", "moderate", "severe"] as const;
@@ -31,19 +32,6 @@ export type FieldType =
   | "prior_evaluation_table"
   | "availability_grid";
 
-export type SectionKey =
-  | "identifying"
-  | "background"
-  | "assessment"
-  | "behavior"
-  | "skill_goals"
-  | "behavior_goals"
-  | "caregiver"
-  | "services"
-  | "coordination"
-  | "crisis"
-  | "transition";
-
 export type IntakeField = {
   id: string;
   label: string;
@@ -68,7 +56,7 @@ export const INTAKE_FIELDS: IntakeField[] = [
     type: "text",
     group: "Background",
     sensitivity: "sensitive",
-    feeds_sections: ["background", "skill_goals"],
+    feeds_sections: ["biopsychosocial", "skill_acquisition_goals"],
   }),
   f({
     id: "diagnosis_date",
@@ -76,7 +64,7 @@ export const INTAKE_FIELDS: IntakeField[] = [
     type: "date",
     group: "Background",
     sensitivity: "sensitive",
-    feeds_sections: ["background"],
+    feeds_sections: ["diagnosis_and_referral"],
   }),
   f({
     id: "diagnosing_provider_type",
@@ -84,7 +72,7 @@ export const INTAKE_FIELDS: IntakeField[] = [
     type: "select",
     group: "Background",
     sensitivity: "normal",
-    feeds_sections: ["background"],
+    feeds_sections: ["diagnosis_and_referral"],
     options: ["Developmental pediatrician", "Psychologist", "Psychiatrist", "Neurologist", "Other"],
   }),
   f({
@@ -93,7 +81,7 @@ export const INTAKE_FIELDS: IntakeField[] = [
     type: "medication_table",
     group: "Medical",
     sensitivity: "sensitive",
-    feeds_sections: ["background", "crisis"],
+    feeds_sections: ["biopsychosocial", "crisis_plan"],
   }),
   f({
     id: "severe_allergy",
@@ -101,7 +89,7 @@ export const INTAKE_FIELDS: IntakeField[] = [
     type: "yes_no",
     group: "Medical",
     sensitivity: "sensitive",
-    feeds_sections: ["crisis"],
+    feeds_sections: ["crisis_plan"],
     safetyFlag: "Severe allergy",
   }),
   f({
@@ -110,7 +98,7 @@ export const INTAKE_FIELDS: IntakeField[] = [
     type: "yes_no",
     group: "Medical",
     sensitivity: "sensitive",
-    feeds_sections: ["crisis"],
+    feeds_sections: ["crisis_plan"],
     safetyFlag: "Epi-pen",
   }),
   f({
@@ -119,7 +107,7 @@ export const INTAKE_FIELDS: IntakeField[] = [
     type: "yes_no",
     group: "Medical",
     sensitivity: "sensitive",
-    feeds_sections: ["crisis"],
+    feeds_sections: ["crisis_plan"],
     safetyFlag: "Inhaler",
   }),
   f({
@@ -128,7 +116,7 @@ export const INTAKE_FIELDS: IntakeField[] = [
     type: "yes_no",
     group: "Medical",
     sensitivity: "sensitive",
-    feeds_sections: ["background", "crisis"],
+    feeds_sections: ["biopsychosocial", "crisis_plan"],
     safetyFlag: "Seizures",
   }),
   f({
@@ -137,7 +125,7 @@ export const INTAKE_FIELDS: IntakeField[] = [
     type: "likert",
     group: "Medical",
     sensitivity: "normal",
-    feeds_sections: ["background"],
+    feeds_sections: ["biopsychosocial"],
     options: LIKERT,
   }),
   f({
@@ -146,7 +134,7 @@ export const INTAKE_FIELDS: IntakeField[] = [
     type: "yes_no",
     group: "Medical",
     sensitivity: "normal",
-    feeds_sections: ["background", "skill_goals"],
+    feeds_sections: ["biopsychosocial", "skill_acquisition_goals"],
   }),
   f({
     id: "toileting_status",
@@ -154,7 +142,7 @@ export const INTAKE_FIELDS: IntakeField[] = [
     type: "select",
     group: "Daily living",
     sensitivity: "normal",
-    feeds_sections: ["skill_goals"],
+    feeds_sections: ["skill_acquisition_goals"],
     options: [
       "Not toilet trained",
       "Trained with frequent accidents",
@@ -168,7 +156,7 @@ export const INTAKE_FIELDS: IntakeField[] = [
     type: "checklist",
     group: "Communication",
     sensitivity: "normal",
-    feeds_sections: ["background", "skill_goals"],
+    feeds_sections: ["biopsychosocial", "skill_acquisition_goals"],
     options: [
       "Vocal words",
       "Vocal approximations",
@@ -186,7 +174,7 @@ export const INTAKE_FIELDS: IntakeField[] = [
     type: "intensity",
     group: "Behavior",
     sensitivity: "normal",
-    feeds_sections: ["behavior", "behavior_goals"],
+    feeds_sections: ["behavior_intervention_plan", "behavior_reduction_goals"],
     options: INTENSITY,
   }),
   f({
@@ -195,7 +183,7 @@ export const INTAKE_FIELDS: IntakeField[] = [
     type: "frequency_duration",
     group: "Behavior",
     sensitivity: "normal",
-    feeds_sections: ["behavior", "behavior_goals"],
+    feeds_sections: ["behavior_intervention_plan", "behavior_reduction_goals"],
   }),
   f({
     id: "self_injury",
@@ -203,7 +191,7 @@ export const INTAKE_FIELDS: IntakeField[] = [
     type: "intensity",
     group: "Behavior",
     sensitivity: "normal",
-    feeds_sections: ["behavior", "behavior_goals", "crisis"],
+    feeds_sections: ["behavior_intervention_plan", "behavior_reduction_goals", "crisis_plan"],
     options: INTENSITY,
   }),
   f({
@@ -212,7 +200,7 @@ export const INTAKE_FIELDS: IntakeField[] = [
     type: "frequency_duration",
     group: "Behavior",
     sensitivity: "normal",
-    feeds_sections: ["behavior", "behavior_goals"],
+    feeds_sections: ["behavior_intervention_plan", "behavior_reduction_goals"],
   }),
   f({
     id: "transitions_difficulty",
@@ -220,7 +208,7 @@ export const INTAKE_FIELDS: IntakeField[] = [
     type: "likert",
     group: "Behavior",
     sensitivity: "normal",
-    feeds_sections: ["behavior"],
+    feeds_sections: ["behavior_intervention_plan"],
     options: LIKERT,
   }),
   // Safety
@@ -230,7 +218,7 @@ export const INTAKE_FIELDS: IntakeField[] = [
     type: "yes_no",
     group: "Safety",
     sensitivity: "normal",
-    feeds_sections: ["behavior", "crisis"],
+    feeds_sections: ["behavior_intervention_plan", "crisis_plan"],
     safetyFlag: "Bolting / elopement",
   }),
   f({
@@ -239,7 +227,7 @@ export const INTAKE_FIELDS: IntakeField[] = [
     type: "yes_no",
     group: "Safety",
     sensitivity: "normal",
-    feeds_sections: ["crisis"],
+    feeds_sections: ["crisis_plan"],
     safetyFlag: "Overnight wandering",
   }),
   f({
@@ -248,7 +236,7 @@ export const INTAKE_FIELDS: IntakeField[] = [
     type: "yes_no",
     group: "Safety",
     sensitivity: "normal",
-    feeds_sections: ["behavior", "crisis"],
+    feeds_sections: ["behavior_intervention_plan", "crisis_plan"],
     safetyFlag: "Pica",
   }),
   f({
@@ -257,7 +245,7 @@ export const INTAKE_FIELDS: IntakeField[] = [
     type: "checklist",
     group: "Safety",
     sensitivity: "normal",
-    feeds_sections: ["crisis"],
+    feeds_sections: ["crisis_plan"],
     options: [
       "Unbuckles seat belt",
       "Opens car door while moving",
@@ -272,7 +260,7 @@ export const INTAKE_FIELDS: IntakeField[] = [
     type: "text",
     group: "School",
     sensitivity: "normal",
-    feeds_sections: ["background", "coordination"],
+    feeds_sections: ["biopsychosocial", "coordination_of_care", "school_plan"],
   }),
   f({
     id: "has_iep",
@@ -280,7 +268,7 @@ export const INTAKE_FIELDS: IntakeField[] = [
     type: "yes_no",
     group: "School",
     sensitivity: "normal",
-    feeds_sections: ["coordination"],
+    feeds_sections: ["coordination_of_care", "school_plan"],
   }),
   f({
     id: "prior_evaluations",
@@ -288,7 +276,7 @@ export const INTAKE_FIELDS: IntakeField[] = [
     type: "prior_evaluation_table",
     group: "Prior services",
     sensitivity: "sensitive",
-    feeds_sections: ["background", "assessment"],
+    feeds_sections: ["diagnosis_and_referral", "assessment_results"],
   }),
   f({
     id: "other_therapies",
@@ -296,7 +284,7 @@ export const INTAKE_FIELDS: IntakeField[] = [
     type: "checklist",
     group: "Prior services",
     sensitivity: "normal",
-    feeds_sections: ["coordination"],
+    feeds_sections: ["biopsychosocial", "coordination_of_care"],
     options: ["Speech therapy", "Occupational therapy", "Physical therapy", "Feeding therapy", "Counseling"],
   }),
   // Adolescent-only
@@ -306,7 +294,7 @@ export const INTAKE_FIELDS: IntakeField[] = [
     type: "yes_no",
     group: "Adolescent",
     sensitivity: "normal",
-    feeds_sections: ["skill_goals", "crisis"],
+    feeds_sections: ["skill_acquisition_goals", "crisis_plan"],
     minAge: 12,
   }),
   f({
@@ -315,7 +303,7 @@ export const INTAKE_FIELDS: IntakeField[] = [
     type: "yes_no",
     group: "Adolescent",
     sensitivity: "restricted",
-    feeds_sections: ["background"],
+    feeds_sections: ["biopsychosocial"],
     minAge: 12,
   }),
   // Restricted: never sent to the AI. The BCBA writes these statements.
@@ -325,7 +313,7 @@ export const INTAKE_FIELDS: IntakeField[] = [
     type: "yes_no",
     group: "Family (restricted)",
     sensitivity: "restricted",
-    feeds_sections: ["background"],
+    feeds_sections: ["biopsychosocial"],
   }),
   f({
     id: "suicidal_behavior",
@@ -333,7 +321,7 @@ export const INTAKE_FIELDS: IntakeField[] = [
     type: "yes_no",
     group: "Family (restricted)",
     sensitivity: "restricted",
-    feeds_sections: ["crisis"],
+    feeds_sections: ["crisis_plan"],
   }),
   f({
     id: "family_psychiatric_history",
@@ -341,7 +329,7 @@ export const INTAKE_FIELDS: IntakeField[] = [
     type: "yes_no",
     group: "Family (restricted)",
     sensitivity: "restricted",
-    feeds_sections: ["background"],
+    feeds_sections: ["biopsychosocial"],
   }),
   f({
     id: "custody_arrangement",
@@ -349,7 +337,7 @@ export const INTAKE_FIELDS: IntakeField[] = [
     type: "select",
     group: "Family (restricted)",
     sensitivity: "restricted",
-    feeds_sections: ["identifying"],
+    feeds_sections: ["client_information", "signatures_attestation"],
     options: ["Joint legal custody", "Sole legal custody", "Legal guardian (non-parent)", "State custody"],
   }),
   // Caregiver and scheduling
@@ -359,7 +347,7 @@ export const INTAKE_FIELDS: IntakeField[] = [
     type: "text",
     group: "Caregiver",
     sensitivity: "normal",
-    feeds_sections: ["caregiver", "skill_goals"],
+    feeds_sections: ["caregiver_training_goals", "skill_acquisition_goals"],
   }),
   f({
     id: "caregiver_training_availability",
@@ -367,7 +355,7 @@ export const INTAKE_FIELDS: IntakeField[] = [
     type: "yes_no",
     group: "Caregiver",
     sensitivity: "normal",
-    feeds_sections: ["caregiver", "services"],
+    feeds_sections: ["caregiver_training_goals", "service_recommendations"],
   }),
   f({
     id: "availability",
@@ -375,7 +363,7 @@ export const INTAKE_FIELDS: IntakeField[] = [
     type: "availability_grid",
     group: "Scheduling",
     sensitivity: "normal",
-    feeds_sections: ["services"],
+    feeds_sections: ["service_recommendations", "anticipated_schedule"],
   }),
 ];
 

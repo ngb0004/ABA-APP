@@ -17,6 +17,9 @@ export function SectionCard(props: {
     content: string;
     items: Item[];
     bcbaOnly: boolean;
+    /** Conditional sections (group, school, telehealth) can be marked not applicable. */
+    conditional?: boolean;
+    notApplicableReason?: string | null;
   };
   tokens: { key: string; label: string; display: string }[];
   canDraft: boolean;
@@ -34,7 +37,9 @@ export function SectionCard(props: {
   const [local, setLocal] = useState<Record<string, "answered" | "none">>({});
   const items = s.items.map((i) => ({ ...i, status: local[i.key] ?? i.status }));
   const base = `/api/plans/${planId}/sections/${s.key}`;
-  const approved = s.state === "approved";
+  const na = s.state === "not_applicable";
+  // Approved and not-applicable sections are closed until reopened.
+  const approved = s.state === "approved" || na;
   const openItems = items.filter((i) => i.status === null).length;
 
   async function call(label: string, url: string, method: string, body?: unknown) {
@@ -59,11 +64,15 @@ export function SectionCard(props: {
     <div className="panel" id={`section-${s.key}`} data-testid={`section-${s.key}`}>
       <h2 style={{ marginTop: 0 }}>
         {s.ordinal}. {s.title}{" "}
-        <span className={`badge ${s.state}`} data-testid={`state-${s.key}`}>
-          {s.state}
+        <span className={`badge ${na ? "na" : s.state}`} data-testid={`state-${s.key}`}>
+          {na ? "not applicable" : s.state}
         </span>
       </h2>
-      {s.content.trim() ? (
+      {na ? (
+        <p className="muted" data-testid={`na-${s.key}`}>
+          Not applicable to this request{s.notApplicableReason ? `: ${s.notApplicableReason}` : ""}.
+        </p>
+      ) : s.content.trim() ? (
         <Html
           className="section-body"
           html={s.html
@@ -124,40 +133,42 @@ export function SectionCard(props: {
           </button>
         </div>
       )}
-      <details open={!approved && openItems > 0}>
-        <summary>
-          Required items ({items.length - openItems}/{items.length} resolved)
-        </summary>
-        <table>
-          <tbody>
-            {items.map((i) => (
-              <tr key={i.key}>
-                <td>
-                  {i.label}
-                  {i.auto && <span className="muted"> (from intake)</span>}
-                </td>
-                <td style={{ whiteSpace: "nowrap" }}>
-                  {(["answered", "none"] as const).map((st) => (
-                    <label key={st} style={{ display: "inline", fontWeight: 400, marginRight: 8 }}>
-                      <input
-                        type="radio"
-                        name={`${s.key}-${i.key}`}
-                        checked={i.status === st}
-                        disabled={approved || !props.canEdit}
-                        onChange={() => {
-                          setLocal((l) => ({ ...l, [i.key]: st }));
-                          void call("item", `${base}/items`, "POST", { itemKey: i.key, status: st });
-                        }}
-                      />{" "}
-                      {st === "answered" ? "Addressed" : "None"}
-                    </label>
-                  ))}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </details>
+      {!na && (
+        <details open={!approved && openItems > 0}>
+          <summary>
+            Required items ({items.length - openItems}/{items.length} resolved)
+          </summary>
+          <table>
+            <tbody>
+              {items.map((i) => (
+                <tr key={i.key}>
+                  <td>
+                    {i.label}
+                    {i.auto && <span className="muted"> (from intake)</span>}
+                  </td>
+                  <td style={{ whiteSpace: "nowrap" }}>
+                    {(["answered", "none"] as const).map((st) => (
+                      <label key={st} style={{ display: "inline", fontWeight: 400, marginRight: 8 }}>
+                        <input
+                          type="radio"
+                          name={`${s.key}-${i.key}`}
+                          checked={i.status === st}
+                          disabled={approved || !props.canEdit}
+                          onChange={() => {
+                            setLocal((l) => ({ ...l, [i.key]: st }));
+                            void call("item", `${base}/items`, "POST", { itemKey: i.key, status: st });
+                          }}
+                        />{" "}
+                        {st === "answered" ? "Addressed" : "None"}
+                      </label>
+                    ))}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </details>
+      )}
       <div className="row" style={{ marginTop: 8 }}>
         {props.canApprove && !approved && (
           <button
@@ -166,6 +177,19 @@ export function SectionCard(props: {
             onClick={() => call("approve", `${base}/approve`, "POST")}
           >
             Approve this section
+          </button>
+        )}
+        {props.canApprove && !approved && s.conditional && (
+          <button
+            className="secondary"
+            data-testid={`na-button-${s.key}`}
+            disabled={!!busy}
+            onClick={() => {
+              const reason = window.prompt("Why does this section not apply to this request?");
+              if (reason?.trim()) void call("na", `${base}/not-applicable`, "POST", { reason });
+            }}
+          >
+            Not applicable…
           </button>
         )}
         {props.canApprove && approved && (

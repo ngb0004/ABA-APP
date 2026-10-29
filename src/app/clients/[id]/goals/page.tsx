@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { ActionButton, Html } from "@/components/actions";
-import { FlatExplanation, GoalEditor } from "@/components/goal-editor";
+import { FlatExplanation, GoalEditor, GoalRecordEditor } from "@/components/goal-editor";
 import { Status } from "@/components/status";
+import { toDay } from "@/lib/dates";
 import { can } from "@/lib/permissions";
 import { goalsView } from "@/lib/services/goals";
 import { asOfToday, requirePageCtx, uuidParam } from "@/lib/server/page-session";
@@ -90,6 +91,29 @@ export default async function GoalsPage({ params }: { params: Promise<{ id: stri
             Data: {g.dataCollection || "not set"} · Mastery: {g.masteryAccuracyPct}% across{" "}
             {g.masteryConsecutiveSessions} sessions with {g.masteryInstructors} people
           </p>
+          <p className="muted" data-testid={`baseline-${g.ordinal}`}>
+            Baseline:{" "}
+            {g.baselineLockedAt && g.baselineValue !== null
+              ? `${g.baselineValue}${g.measure === "percent" ? "%" : ""}, recorded ${toDay(g.baselineDate!)} and locked`
+              : "not locked (the mean of the first three data points is used until it is locked)"}
+          </p>
+          {!g.baselineLockedAt && can(ctx.role, "goal:approve") && g.dataPoints.length >= 3 && (
+            <ActionButton url={`/api/goals/${g.id}/baseline`} testId={`lock-baseline-${g.ordinal}`} secondary>
+              Lock baseline from the first three data points
+            </ActionButton>
+          )}
+          <GoalRecordEditor
+            canWrite={can(ctx.role, "goal:write")}
+            goal={{
+              id: g.id,
+              ordinal: g.ordinal,
+              introducedAt: g.introducedAt ? toDay(g.introducedAt) : null,
+              projectedMasteryDate: g.projectedMasteryDate ? toDay(g.projectedMasteryDate) : null,
+              progressStatus: g.progressStatus,
+              barriers: g.barriers,
+              settings: (g.settings as string[] | null) ?? [],
+            }}
+          />
           {g.flat && <div className="alert warn">No improvement over the last 8 weeks.</div>}
           {g.flat && can(ctx.role, "goal:write") && (
             <FlatExplanation goalId={g.id} initial={g.flatExplanation} />

@@ -13,11 +13,19 @@ import { intakeForAi, pseudonymNames, safetyFlags } from "../intake/derive";
 import { INTAKE_FIELDS, isNa, type IntakeAnswers } from "../intake/schema";
 import { HttpError } from "../log";
 import { requirePermission } from "../permissions";
-import { buildSourcedContext, loadPlanBundle, type PlanBundle } from "../plan/context";
+import { buildSourcedContext, loadPlanBundle, type GoalStatus, type PlanBundle } from "../plan/context";
+import { baseline, BASELINE_POINTS } from "../plan/progress";
 import { lineDiff } from "../plan/diff";
 import { goalGraphSvg } from "../plan/graphs";
 import { exportBlockers, runPresubmissionAudit } from "../plan/presubmission";
-import { SECTIONS, SECTION_BY_KEY } from "../plan/sections";
+import {
+  intakeKeysFor,
+  SECTIONS,
+  SECTION_BY_KEY,
+  sectionDone,
+  sectionsForTopic,
+  type SectionDef,
+} from "../plan/sections";
 import type { RuleResult } from "../payors/types";
 import { renderMilestonesGridSvg } from "../vbmapp/grid-svg";
 import { evaluateClientRules, loadRules } from "./payors";
@@ -31,28 +39,18 @@ export type RequiredItem = {
   note?: string;
 };
 
-const PAYOR_TOPIC_SECTION: Record<string, string> = {
-  background: "background",
-  goals: "skill_goals",
-  coordination_of_care: "coordination",
-  care_coordination: "coordination",
-  transition_plan: "transition",
-  transition_fade_plan_tied_to_goals: "transition",
-  discharge_criteria: "transition",
-  discharge_plan: "transition",
-  crisis_plan: "crisis",
-  generalization_to_caregivers: "caregiver",
-  evaluation_date: "assessment",
-};
-
 export function requiredItemsFor(
   sectionKey: string,
   planType: string,
   answers: IntakeAnswers,
   rules: { type: string; params: Record<string, unknown>; source: { name: string | null } }[],
   stored: Record<string, ItemState>,
+  /** Every section key in the plan: decides which structure a payor topic maps into. */
+  planSectionKeys: string[] = SECTIONS.map((x) => x.key),
 ): RequiredItem[] {
-  const def = SECTION_BY_KEY.get(sectionKey as never)!;
+  const def = SECTION_BY_KEY.get(sectionKey);
+  if (!def) throw new HttpError(404, "Unknown section");
+  const intakeKeys = intakeKeysFor(def);
   const items: RequiredItem[] = [];
   for (const i of def.items.filter((x) => !x.reauthOnly || planType === "reauth"))
     items.push({
@@ -63,7 +61,7 @@ export function requiredItemsFor(
       note: stored[i.key]?.note,
     });
   for (const f of INTAKE_FIELDS.filter(
-    (x) => x.feeds_sections.includes(def.key) && x.sensitivity !== "restricted",
+    (x) => x.feeds_sections.some((k) => intakeKeys.includes(k)) && x.sensitivity !== "restricted",
   )) {
     const a = answers[f.id];
     const key = `intake:${f.id}`;
@@ -77,7 +75,8 @@ export function requiredItemsFor(
   }
   for (const r of rules.filter((x) => x.type === "plan_content")) {
     for (const topic of (r.params.must_include as string[] | undefined) ?? []) {
-      if (PAYOR_TOPIC_SECTION[topic] !== def.key) continue;
+      // A payor topic is answered in the first section that covers it.
+      if (sectionsForTopic(topic, planSectionKeys)?.[0] !== def.key) continue;
       const key = `payor:${topic}`;
       if (items.some((x) => x.key === key)) continue;
       items.push({
@@ -170,8 +169,11 @@ export async function planView(ctx: OrgCtx, planId: string, asOf: Day) {
         answers,
         rules,
         (s.items ?? {}) as Record<string, ItemState>,
+        b.plan.sections.map((x) => x.key),
       ),
-      bcbaOnly: SECTION_BY_KEY.get(s.key as never)?.bcbaOnly ?? false,
+      bcbaOnly: SECTION_BY_KEY.get(s.key)?.bcbaOnly ?? false,
+      conditional: !!SECTION_BY_KEY.get(s.key)?.condition,
+      notApplicableReason: ((s.items ?? {}) as Record<string, ItemState>)[NOT_APPLICABLE_ITEM]?.note ?? null,
     }));
     const goals = b.goals.map((g) => ({
       ...g,
@@ -225,20 +227,21 @@ Write two or three short paragraphs of plain clinical prose. No headings, lists,
 
 export async function draftSection(ctx: OrgCtx, planId: string, key: string, asOf: Day) {
   requirePermission(ctx.role, "section:draft");
-  const def = SECTION_BY_KEY.get(key as never);
+  const def = SECTION_BY_KEY.get(key);
   if (!def) throw new HttpError(404, "Unknown section");
   if (def.bcbaOnly) throw new HttpError(400, "This section is written by the BCBA");
   return withOrg(ctx, async (tx) => {
     const b = await loadPlanBundle(tx, planId);
     const section = b.plan.sections.find((s) => s.key === key)!;
-    if (section.state === "approved")
-      throw new HttpError(409, "Section is approved. Reopen it before drafting again.");
+    if (!section) throw new HttpError(404, "Unknown section");
+    assertOpen(section.state, "drafting again");
     const sourced = buildSourcedContext(b, asOf);
     const names = pseudonymNames(b.client);
     const answers = (b.intake?.answers ?? {}) as IntakeAnswers;
+    const intakeKeys = intakeKeysFor(def);
     const sectionAnswers = Object.fromEntries(
       Object.entries(answers).filter(([id]) =>
-        INTAKE_FIELDS.find((f) => f.id === id)?.feeds_sections.includes(def.key),
+        INTAKE_FIELDS.find((f) => f.id === id)?.feeds_sections.some((k) => intakeKeys.includes(k)),
       ),
     );
     const payload: Record<string, unknown> = {
@@ -250,21 +253,22 @@ export async function draftSection(ctx: OrgCtx, planId: string, key: string, asO
       availableValues: sourced.forModel(["client.name", "caregiver.primary", ...def.valuePrefixes]),
       intake: intakeForAi(sectionAnswers as IntakeAnswers, names),
     };
-    if (
-      ["skill_goals", "behavior_goals", "caregiver", "transition", "behavior", "services"].includes(def.key)
-    )
-      payload.goals = b.goals.map((g) => ({
-        goalNumber: `goal.${g.ordinal}`,
-        domain: g.domain,
-        category: g.category,
-        measure: g.measure,
-        objective: g.objective,
-        trend:
-          sourced.get(`goal.${g.ordinal}.current_${g.measure === "percent" ? "pct" : "rate"}`)?.facts ?? [],
-      }));
-    if (def.key === "crisis" || def.key === "behavior")
-      payload.staffSafetyFlags = safetyFlags(answers).map((f) => f.label);
-    if (def.key === "assessment") {
+    const goalsFor = def.context?.goals;
+    if (goalsFor)
+      payload.goals = b.goals
+        .filter((g) => goalsFor === true || goalsFor.includes(g.category))
+        .map((g) => ({
+          goalNumber: `goal.${g.ordinal}`,
+          domain: g.domain,
+          category: g.category,
+          measure: g.measure,
+          objective: g.objective,
+          status: g.progressStatus,
+          trend:
+            sourced.get(`goal.${g.ordinal}.current_${g.measure === "percent" ? "pct" : "rate"}`)?.facts ?? [],
+        }));
+    if (def.context?.safetyFlags) payload.staffSafetyFlags = safetyFlags(answers).map((f) => f.label);
+    if (def.context?.isolatedScores) {
       const flags = b.administrations.flatMap((a) =>
         (a.flags as { code: string; level?: number; domain?: string }[])
           .filter((f) => f.code === "isolated_score")
@@ -308,14 +312,19 @@ export async function draftSection(ctx: OrgCtx, planId: string, key: string, asO
 
 // ---------------------------------------------------------------- edit / items / approve
 
+function assertOpen(state: string, doing: string) {
+  if (state === "approved") throw new HttpError(409, `Section is approved. Reopen it before ${doing}.`);
+  if (state === "not_applicable")
+    throw new HttpError(409, `Section is marked not applicable. Reopen it before ${doing}.`);
+}
+
 export async function editSection(ctx: OrgCtx, planId: string, key: string, content: string, asOf: Day) {
   requirePermission(ctx.role, "section:edit");
   return withOrg(ctx, async (tx) => {
     const b = await loadPlanBundle(tx, planId);
     const section = b.plan.sections.find((s) => s.key === key);
     if (!section) throw new HttpError(404, "Unknown section");
-    if (section.state === "approved")
-      throw new HttpError(409, "Section is approved. Reopen it before editing.");
+    assertOpen(section.state, "editing");
     const v = validateBcbaText(content, buildSourcedContext(b, asOf));
     if (!v.ok)
       throw new HttpError(
@@ -351,8 +360,7 @@ export async function setSectionItem(
   requirePermission(ctx.role, "section:edit");
   return withOrg(ctx, async (tx) => {
     const section = await tx.planSection.findUniqueOrThrow({ where: { planId_key: { planId, key } } });
-    if (section.state === "approved")
-      throw new HttpError(409, "Section is approved. Reopen it before changing items.");
+    assertOpen(section.state, "changing items");
     const items = { ...((section.items ?? {}) as Record<string, ItemState>) };
     if (status === null) delete items[itemKey];
     else items[itemKey] = { status, ...(note ? { note } : {}) };
@@ -370,6 +378,7 @@ export async function approveSection(ctx: OrgCtx, planId: string, key: string, a
     const section = b.plan.sections.find((s) => s.key === key);
     if (!section) throw new HttpError(404, "Unknown section");
     if (section.state === "approved") return section;
+    assertOpen(section.state, "approving");
     const problems: string[] = [];
     if (!section.content.trim()) problems.push("Section has no content");
     const v = validateBcbaText(section.content, buildSourcedContext(b, asOf));
@@ -383,6 +392,7 @@ export async function approveSection(ctx: OrgCtx, planId: string, key: string, a
       (b.intake?.answers ?? {}) as IntakeAnswers,
       rules,
       (section.items ?? {}) as Record<string, ItemState>,
+      b.plan.sections.map((x) => x.key),
     );
     const open = items.filter((i) => i.status === null);
     if (open.length)
@@ -412,13 +422,66 @@ export async function approveSection(ctx: OrgCtx, planId: string, key: string, a
   });
 }
 
+/** Where the BCBA's reason for "not applicable" is kept on the section. */
+export const NOT_APPLICABLE_ITEM = "_not_applicable";
+
+/** A conditional section (group, school, telehealth) that does not apply to this request. BCBA only. */
+export async function markSectionNotApplicable(ctx: OrgCtx, planId: string, key: string, reason: string) {
+  requirePermission(ctx.role, "section:approve");
+  const def: SectionDef | undefined = SECTION_BY_KEY.get(key);
+  if (!def?.condition) throw new HttpError(422, "Only conditional sections can be marked not applicable");
+  const why = reason.trim();
+  if (!why) throw new HttpError(422, "Say why this section does not apply");
+  return withOrg(ctx, async (tx) => {
+    const section = await tx.planSection.findUniqueOrThrow({ where: { planId_key: { planId, key } } });
+    if (section.state === "not_applicable") return section;
+    if (section.state === "approved")
+      throw new HttpError(409, "Section is approved. Reopen it before marking it not applicable.");
+    const updated = await tx.planSection.update({
+      where: { id: section.id },
+      data: {
+        state: "not_applicable",
+        approvedById: ctx.userId,
+        approvedAt: new Date(),
+        items: {
+          ...((section.items ?? {}) as Record<string, ItemState>),
+          [NOT_APPLICABLE_ITEM]: { status: "answered", note: why.slice(0, 500) },
+        } as Prisma.InputJsonValue,
+      },
+    });
+    await tx.planSectionRevision.create({
+      data: {
+        orgId: ctx.orgId,
+        sectionId: section.id,
+        kind: "not_applicable",
+        content: section.content,
+        userId: ctx.userId,
+      },
+    });
+    await audit(tx, {
+      action: "section:not_applicable",
+      entityType: "PlanSection",
+      entityId: section.id,
+      meta: { planId, key },
+    });
+    return updated;
+  });
+}
+
 export async function reopenSection(ctx: OrgCtx, planId: string, key: string) {
   requirePermission(ctx.role, "section:approve");
   return withOrg(ctx, async (tx) => {
     const section = await tx.planSection.findUniqueOrThrow({ where: { planId_key: { planId, key } } });
+    const items = { ...((section.items ?? {}) as Record<string, ItemState>) };
+    delete items[NOT_APPLICABLE_ITEM];
     await tx.planSection.update({
       where: { id: section.id },
-      data: { state: "edited", approvedAt: null, approvedById: null },
+      data: {
+        state: section.content.trim() ? "edited" : "draft",
+        approvedAt: null,
+        approvedById: null,
+        items: items as Prisma.InputJsonValue,
+      },
     });
     await tx.planSectionRevision.create({
       data: {
@@ -459,21 +522,46 @@ export async function updateGoal(
     masteryAccuracyPct?: number;
     masteryConsecutiveSessions?: number;
     masteryInstructors?: number;
+    introducedAt?: Day | null;
+    projectedMasteryDate?: Day | null;
+    progressStatus?: GoalStatus;
+    barriers?: string;
+    settings?: string[];
   },
 ) {
   requirePermission(ctx.role, "goal:write");
   return withOrg(ctx, async (tx) => {
-    // Changing what the goal says sends it back for approval; a flat-progress explanation does not.
+    // Changing what the goal says (including its dates) sends it back for approval;
+    // status, barriers, settings, and a flat-progress explanation do not.
     const changesContent = [
       "objective",
       "rationale",
       "masteryAccuracyPct",
       "masteryConsecutiveSessions",
       "masteryInstructors",
+      "introducedAt",
+      "projectedMasteryDate",
     ].some((k) => k in data);
+    const day = (d: Day | null | undefined) =>
+      d === undefined ? undefined : d === null ? null : new Date(`${d}T00:00:00Z`);
+    const { introducedAt, projectedMasteryDate, ...rest } = data;
+    const intro = day(introducedAt);
+    const projected = day(projectedMasteryDate);
+    if (intro !== undefined || projected !== undefined) {
+      const g = await tx.goal.findUniqueOrThrow({ where: { id: goalId } });
+      const i = intro === undefined ? g.introducedAt : intro;
+      const pm = projected === undefined ? g.projectedMasteryDate : projected;
+      if (i && pm && pm < i)
+        throw new HttpError(422, "Projected mastery cannot be before the date introduced");
+    }
     await tx.goal.update({
       where: { id: goalId },
-      data: { ...data, ...(changesContent ? { status: "draft", approvedAt: null, approvedById: null } : {}) },
+      data: {
+        ...rest,
+        ...(intro !== undefined ? { introducedAt: intro } : {}),
+        ...(projected !== undefined ? { projectedMasteryDate: projected } : {}),
+        ...(changesContent ? { status: "draft", approvedAt: null, approvedById: null } : {}),
+      },
     });
     await audit(tx, {
       action: "goal:update",
@@ -481,6 +569,38 @@ export async function updateGoal(
       entityId: goalId,
       meta: { fields: Object.keys(data) },
     });
+  });
+}
+
+/**
+ * Lock a goal's baseline: the mean of its first three data points, dated by the
+ * third. Computed from the goal's own records and permanent once locked (a
+ * database trigger refuses any change).
+ */
+export async function lockGoalBaseline(ctx: OrgCtx, goalId: string) {
+  requirePermission(ctx.role, "goal:approve");
+  return withOrg(ctx, async (tx) => {
+    const g = await tx.goal.findUniqueOrThrow({
+      where: { id: goalId },
+      include: { dataPoints: { orderBy: { date: "asc" } } },
+    });
+    if (g.baselineLockedAt) throw new HttpError(409, "This goal's baseline is already locked");
+    const pts = g.dataPoints.map((p) => ({ date: toDay(p.date), value: p.value }));
+    const value = baseline(pts);
+    if (value === null || pts.length < BASELINE_POINTS)
+      throw new HttpError(422, "Record at least three data points before locking the baseline");
+    const date = pts[BASELINE_POINTS - 1]!.date;
+    await tx.goal.update({
+      where: { id: goalId },
+      data: {
+        baselineValue: value,
+        baselineDate: new Date(`${date}T00:00:00Z`),
+        baselineLockedAt: new Date(),
+        baselineLockedById: ctx.userId,
+      },
+    });
+    await audit(tx, { action: "goal:lock_baseline", entityType: "Goal", entityId: goalId, meta: { date } });
+    return { value, date };
   });
 }
 
@@ -495,7 +615,7 @@ export async function assertExportable(
   const sourced = buildSourcedContext(b, asOf);
   const { results } = await evaluateClientRules(tx, b.client.id, asOf, planId);
   const blockers = exportBlockers(runPresubmissionAudit(b, sourced, results, asOf));
-  const unapproved = b.plan.sections.filter((s) => s.state !== "approved");
+  const unapproved = b.plan.sections.filter((s) => !sectionDone(s.state));
   if (unapproved.length || blockers.length)
     throw new HttpError(
       409,
