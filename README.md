@@ -50,4 +50,4 @@ The AI runs on a deterministic mock by default (`LLM_PROVIDER=mock`). To draft w
 - `src/lib/plan/`: sections, sourced values, graphs, progress checks, and the pre-submission audit.
 - `src/lib/services/`: the operations behind the UI and API routes, each with a permission check.
 
-Open clinical questions and the defaults chosen: `docs/QUESTIONS_FOR_BCBA.md`. Build status: `docs/BUILD_PLAN.md`.
+Open clinical questions and the defaults chosen: `docs/QUESTIONS_FOR_BCBA.md`. Build status: `docs/BUILD_PLAN.md`. Where the product goes next: `docs/ROADMAP.md`.
