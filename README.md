@@ -29,6 +29,10 @@ Sign in with a demo account (password `synthetic-demo-only` for all), then enter
 
 The AI runs on a deterministic mock by default (`LLM_PROVIDER=mock`). To draft with Claude on synthetic data, set `LLM_PROVIDER=anthropic`, `LLM_MODEL`, and `ANTHROPIC_API_KEY` in `.env`.
 
+## Hosted demo
+
+To put the fictional-client demo online (e.g., to try it from a phone), follow `docs/DEMO_DEPLOY.md`. Demo mode requires a private password, has each user set up an authenticator app on first sign-in, and only accepts the bundled sample files as uploads.
+
 ## Commands
 
 | Command                        | What it does                                                       |

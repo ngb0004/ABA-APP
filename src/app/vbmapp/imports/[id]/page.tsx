@@ -4,10 +4,10 @@ import { ImportConfirm } from "@/components/import-confirm";
 import { can } from "@/lib/permissions";
 import { importReview } from "@/lib/services/vbmapp";
 import { renderMilestonesGridSvg } from "@/lib/vbmapp/grid-svg";
-import { requirePageCtx } from "@/lib/server/page-session";
+import { requirePageCtx, uuidParam } from "@/lib/server/page-session";
 
 export default async function ImportReviewPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
+  const id = await uuidParam(params);
   const ctx = await requirePageCtx();
   const { import: imp, parsed, preview } = await importReview(ctx, id);
   return (

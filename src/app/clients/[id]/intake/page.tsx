@@ -4,10 +4,10 @@ import { ageYears, toDay } from "@/lib/dates";
 import { applicableFields } from "@/lib/intake/schema";
 import { can } from "@/lib/permissions";
 import { clientDetail } from "@/lib/services/clients";
-import { asOfToday, requirePageCtx } from "@/lib/server/page-session";
+import { asOfToday, requirePageCtx, uuidParam } from "@/lib/server/page-session";
 
 export default async function IntakePage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
+  const id = await uuidParam(params);
   const ctx = await requirePageCtx();
   const asOf = asOfToday();
   const d = await clientDetail(ctx, id, asOf);

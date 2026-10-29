@@ -4,10 +4,10 @@ import { FlatExplanation, GoalEditor } from "@/components/goal-editor";
 import { Status } from "@/components/status";
 import { can } from "@/lib/permissions";
 import { goalsView } from "@/lib/services/goals";
-import { asOfToday, requirePageCtx } from "@/lib/server/page-session";
+import { asOfToday, requirePageCtx, uuidParam } from "@/lib/server/page-session";
 
 export default async function GoalsPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
+  const id = await uuidParam(params);
   const ctx = await requirePageCtx();
   const v = await goalsView(ctx, id, asOfToday());
   return (

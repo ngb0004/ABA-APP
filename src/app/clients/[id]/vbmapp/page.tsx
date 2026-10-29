@@ -1,15 +1,16 @@
 import Link from "next/link";
-import { Html, UploadForm } from "@/components/actions";
+import { ActionButton, Html, UploadForm } from "@/components/actions";
+import { DEMO_SAMPLES } from "@/lib/demo";
 import { withOrg } from "@/lib/db";
 import { toDay } from "@/lib/dates";
 import { can } from "@/lib/permissions";
 import { requirePermission } from "@/lib/permissions";
 import { renderMilestonesGridSvg } from "@/lib/vbmapp/grid-svg";
 import type { Flag } from "@/lib/vbmapp/parse";
-import { requirePageCtx } from "@/lib/server/page-session";
+import { requirePageCtx, uuidParam } from "@/lib/server/page-session";
 
 export default async function VbmappPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
+  const id = await uuidParam(params);
   const ctx = await requirePageCtx();
   requirePermission(ctx.role, "client:read");
   const { client, admins, pending } = await withOrg(ctx, async (tx) => ({
@@ -46,6 +47,21 @@ export default async function VbmappPage({ params }: { params: Promise<{ id: str
             redirectPrefix="/vbmapp/imports/"
             testId="vbmapp-upload"
           />
+          <div className="row" style={{ marginTop: 8 }}>
+            <span className="muted">Or load a fictional sample workbook:</span>
+            {DEMO_SAMPLES.vbmapp.map((name) => (
+              <ActionButton
+                key={name}
+                url={`/api/clients/${id}/vbmapp?sample=${name}`}
+                redirectKey="importId"
+                redirectPrefix="/vbmapp/imports/"
+                secondary
+                testId={`sample-${name}`}
+              >
+                {name}
+              </ActionButton>
+            ))}
+          </div>
           {pending.length > 0 && (
             <p>
               Pending review:{" "}

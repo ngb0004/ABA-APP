@@ -4,10 +4,10 @@ import { RuleSource, Status } from "@/components/status";
 import { toDay } from "@/lib/dates";
 import { can } from "@/lib/permissions";
 import { clientDetail } from "@/lib/services/clients";
-import { asOfToday, requirePageCtx } from "@/lib/server/page-session";
+import { asOfToday, requirePageCtx, uuidParam } from "@/lib/server/page-session";
 
 export default async function ClientPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
+  const id = await uuidParam(params);
   const ctx = await requirePageCtx();
   const d = await clientDetail(ctx, id, asOfToday());
   const c = d.client;

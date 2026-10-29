@@ -4,10 +4,10 @@ import { AuditPanel } from "@/components/audit-panel";
 import { SectionCard } from "@/components/section-editor";
 import { can } from "@/lib/permissions";
 import { planView } from "@/lib/services/plans";
-import { asOfToday, requirePageCtx } from "@/lib/server/page-session";
+import { asOfToday, requirePageCtx, uuidParam } from "@/lib/server/page-session";
 
 export default async function PlanPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
+  const id = await uuidParam(params);
   const ctx = await requirePageCtx();
   const v = await planView(ctx, id, asOfToday());
   const b = v.bundle;

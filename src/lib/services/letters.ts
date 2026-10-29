@@ -10,6 +10,7 @@ import { audit } from "../audit";
 import { withOrg, type OrgCtx } from "../db";
 import { toDay } from "../dates";
 import { pseudonymNames, pseudonymize } from "../intake/derive";
+import { assertDemoUploadAllowed } from "../demo";
 import { HttpError } from "../log";
 import { requirePermission } from "../permissions";
 
@@ -95,6 +96,7 @@ Every quote must be copied character-for-character from the letter. Do not compu
 
 export async function uploadLetter(ctx: OrgCtx, clientId: string, filename: string, data: Buffer) {
   requirePermission(ctx.role, "letter:upload");
+  assertDemoUploadAllowed(data);
   const text = await extractLetterText(filename, data);
   return withOrg(ctx, async (tx) => {
     const client = await tx.client.findUniqueOrThrow({

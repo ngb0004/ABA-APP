@@ -6,6 +6,7 @@
 import type { Prisma } from "@prisma/client";
 import { audit, sha256 } from "../audit";
 import { withOrg, type OrgCtx } from "../db";
+import { assertDemoUploadAllowed } from "../demo";
 import { HttpError } from "../log";
 import { requirePermission } from "../permissions";
 import { carryForward, totalsFromScores, type GridScore } from "../vbmapp/carry-forward";
@@ -14,6 +15,7 @@ import { parseVbmappWorkbook, type ParsedWorkbook } from "../vbmapp/parse";
 export async function uploadVbmapp(ctx: OrgCtx, clientId: string, filename: string, data: Buffer) {
   requirePermission(ctx.role, "vbmapp:import");
   if (!/\.(xlsm|xlsx)$/i.test(filename)) throw new HttpError(400, "Upload a .xlsm or .xlsx VB-MAPP workbook");
+  assertDemoUploadAllowed(data);
   let parsed: ParsedWorkbook;
   try {
     parsed = parseVbmappWorkbook(data);

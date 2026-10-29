@@ -1,6 +1,6 @@
 import "server-only";
 import { cookies } from "next/headers";
-import { redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { getSessionByToken, SESSION_COOKIE } from "../auth/session";
 import type { OrgCtx } from "../db";
 
@@ -13,3 +13,12 @@ export async function requirePageCtx(): Promise<OrgCtx & { role: NonNullable<Org
 }
 
 export { asOfToday } from "./as-of";
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Route ids are UUIDs; anything else is a 404, not a server error. */
+export async function uuidParam(params: Promise<{ id: string }>): Promise<string> {
+  const { id } = await params;
+  if (!UUID.test(id)) notFound();
+  return id;
+}

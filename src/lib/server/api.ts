@@ -4,6 +4,8 @@ import { ctxFromRequest } from "../auth/session";
 import type { OrgCtx } from "../db";
 import { HttpError, log } from "../log";
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 type Handler<P> = (req: Request, ctx: OrgCtx, params: P) => Promise<Response | unknown>;
 
 /**
@@ -15,7 +17,11 @@ export function api<P = Record<string, string>>(fn: Handler<P>) {
     try {
       if (req.method !== "GET" && req.method !== "HEAD") assertSameOrigin(req);
       const ctx = await ctxFromRequest(req);
-      const out = await fn(req, ctx, await route.params);
+      const params = await route.params;
+      // Record ids are UUIDs; anything else is a 404, not a database error.
+      for (const [k, v] of Object.entries((params ?? {}) as Record<string, unknown>))
+        if (k === "id" && (typeof v !== "string" || !UUID.test(v))) throw new HttpError(404, "Not found");
+      const out = await fn(req, ctx, params);
       return out instanceof Response ? out : NextResponse.json(out ?? { ok: true });
     } catch (e) {
       return errorResponse(e);

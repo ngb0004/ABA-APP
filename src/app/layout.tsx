@@ -3,6 +3,7 @@ import Link from "next/link";
 import { cookies } from "next/headers";
 import { getSessionByToken, SESSION_COOKIE } from "@/lib/auth/session";
 import { LogoutButton } from "@/components/actions";
+import { isDemo } from "@/lib/demo";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -17,7 +18,9 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     <html lang="en">
       <body>
         <div className="synthetic-banner">
-          v1.0 local build: synthetic data only. Do not enter real client information.
+          {isDemo()
+            ? "Demo site with fictional clients only. Never enter or upload real client information here."
+            : "v1.0 local build: synthetic data only. Do not enter real client information."}
         </div>
         <header className="top">
           <span className="brand">ABA Plan Assistant</span>

@@ -26,7 +26,7 @@ export default async function CaseloadPage() {
               <tbody>
                 {events.map((e, i) => (
                   <tr key={i}>
-                    <td>{e.date}</td>
+                    <td style={{ whiteSpace: "nowrap" }}>{e.date}</td>
                     <td>
                       <Link href={`/clients/${e.clientId}`}>{e.clientName}</Link>
                     </td>

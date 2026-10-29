@@ -44,24 +44,23 @@ const ORG_TABLES = [
 export async function seedOrg(org: SynOrg) {
   const ctx = { orgId: org.id, userId: null, role: null };
   const prisma = new PrismaClient({ datasourceUrl: process.env.DATABASE_URL });
-  // Users are global identity rows (no RLS): upsert with the known demo credentials.
+  // Hosted demo: the password comes from the host's settings (never the one in this repo),
+  // and each user sets up their own authenticator on first sign-in.
+  const demo = process.env.DEMO_MODE === "true";
+  const demoPassword = process.env.DEMO_PASSWORD ?? "";
+  if (demo && demoPassword.length < 12)
+    throw new Error("DEMO_PASSWORD (12+ characters) is required in demo mode");
+  const creds = (u: SynOrg["users"][number]) => ({
+    passwordHash: hashPassword(demo ? demoPassword : u.password),
+    totpSecret: demo ? null : u.totpSecret,
+    mfaEnabled: !demo,
+  });
+  // Users are global identity rows (no RLS): upsert with the demo credentials.
   for (const u of org.users) {
     await prisma.user.upsert({
       where: { email: u.email },
-      create: {
-        id: u.id,
-        email: u.email,
-        name: u.name,
-        passwordHash: hashPassword(u.password),
-        totpSecret: u.totpSecret,
-        mfaEnabled: true,
-      },
-      update: {
-        name: u.name,
-        passwordHash: hashPassword(u.password),
-        totpSecret: u.totpSecret,
-        mfaEnabled: true,
-      },
+      create: { id: u.id, email: u.email, name: u.name, ...creds(u) },
+      update: { name: u.name, ...creds(u) },
     });
     await prisma.authSession.deleteMany({ where: { userId: u.id } });
   }

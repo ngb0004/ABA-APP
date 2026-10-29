@@ -1,15 +1,16 @@
 import Link from "next/link";
 import { ActionButton, UploadForm } from "@/components/actions";
+import { DEMO_SAMPLES } from "@/lib/demo";
 import { AuditPanel } from "@/components/audit-panel";
 import { ChecklistToggle, ExportButton, LetterReview } from "@/components/letter-review";
 import { Status } from "@/components/status";
 import { can } from "@/lib/permissions";
 import { packetView } from "@/lib/services/packets";
 import { planView } from "@/lib/services/plans";
-import { asOfToday, requirePageCtx } from "@/lib/server/page-session";
+import { asOfToday, requirePageCtx, uuidParam } from "@/lib/server/page-session";
 
 export default async function PacketPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
+  const id = await uuidParam(params);
   const ctx = await requirePageCtx();
   const asOf = asOfToday();
   const [pv, plan] = await Promise.all([packetView(ctx, id, asOf), planView(ctx, id, asOf)]);
@@ -47,6 +48,21 @@ export default async function PacketPage({ params }: { params: Promise<{ id: str
             label="Upload a payor letter (PDF or text)"
             testId="letter-upload"
           />
+        )}
+        {can(ctx.role, "letter:upload") && (
+          <div className="row" style={{ marginTop: 8 }}>
+            <span className="muted">Or load a fictional sample letter:</span>
+            {DEMO_SAMPLES.letters.map((name) => (
+              <ActionButton
+                key={name}
+                url={`/api/plans/${id}/letters?sample=${name}`}
+                secondary
+                testId={`sample-${name}`}
+              >
+                {name}
+              </ActionButton>
+            ))}
+          </div>
         )}
         {b.letters.map((l) => (
           <LetterReview

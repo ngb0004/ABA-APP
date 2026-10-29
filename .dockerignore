@@ -1,0 +1,9 @@
+node_modules
+.next
+.next-e2e
+exports
+test-results
+playwright-report
+.env
+.git
+*.log

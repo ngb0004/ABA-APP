@@ -83,6 +83,41 @@ export async function verifyMfa(token: string, code: string): Promise<SessionInf
   };
 }
 
+/**
+ * First sign-in for a user without MFA: start TOTP enrollment. Requires a
+ * password-verified session; the session stays unusable until a code confirms.
+ */
+export async function startMfaEnrollment(token: string) {
+  const s = await getSessionByToken(token, { allowUnverified: true });
+  if (!s) return null;
+  const user = await db().user.findUniqueOrThrow({ where: { id: s.userId } });
+  if (user.mfaEnabled) throw new HttpError(409, "Authenticator already set up");
+  const r = await authProvider().beginTotpEnrollment(s.userId);
+  await audit(null, {
+    action: "auth:mfa_enroll_start",
+    entityType: "User",
+    entityId: s.userId,
+    orgId: null,
+    userId: s.userId,
+  });
+  return r;
+}
+
+/** Confirms enrollment with a first valid code, then completes sign-in. */
+export async function confirmMfaEnrollment(token: string, code: string): Promise<SessionInfo | null> {
+  const s = await getSessionByToken(token, { allowUnverified: true });
+  if (!s) return null;
+  if (!(await authProvider().confirmTotpEnrollment(s.userId, code.trim()))) return null;
+  await audit(null, {
+    action: "auth:mfa_enrolled",
+    entityType: "User",
+    entityId: s.userId,
+    orgId: null,
+    userId: s.userId,
+  });
+  return verifyMfa(token, code);
+}
+
 export async function getSessionByToken(
   token: string | undefined | null,
   opts: { allowUnverified?: boolean } = {},
