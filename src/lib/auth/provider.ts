@@ -11,9 +11,12 @@ export interface AuthProvider {
   }): Promise<{ userId: string }>;
   /** Returns the user id when the password is correct, otherwise null. */
   verifyPassword(email: string, password: string): Promise<{ userId: string; mfaEnabled: boolean } | null>;
-  /** Starts TOTP enrollment; returns the secret and an otpauth:// URI for an authenticator app. */
+  /**
+   * Generates a new TOTP secret and otpauth:// URI for an authenticator app.
+   * Writes nothing: the caller keeps the pending secret until it is confirmed.
+   */
   beginTotpEnrollment(userId: string): Promise<{ secret: string; otpauthUrl: string }>;
-  /** Confirms enrollment with a first valid code. */
-  confirmTotpEnrollment(userId: string, code: string): Promise<boolean>;
+  /** Saves the secret and enables MFA if the code matches and MFA is still off. First confirmation wins. */
+  confirmTotpEnrollment(userId: string, secret: string, code: string): Promise<boolean>;
   verifyTotp(userId: string, code: string): Promise<boolean>;
 }

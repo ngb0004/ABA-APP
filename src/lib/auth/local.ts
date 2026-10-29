@@ -53,15 +53,17 @@ export class LocalAuthProvider implements AuthProvider {
     const user = await db().user.findUniqueOrThrow({ where: { id: userId } });
     if (user.mfaEnabled) throw new Error("MFA already enrolled");
     const secret = authenticator.generateSecret();
-    await db().user.update({ where: { id: userId }, data: { totpSecret: secret } });
     return { secret, otpauthUrl: authenticator.keyuri(user.email, "ABA Plan Assistant", secret) };
   }
 
-  async confirmTotpEnrollment(userId: string, code: string) {
-    const user = await db().user.findUniqueOrThrow({ where: { id: userId } });
-    if (!user.totpSecret || !authenticator.check(code, user.totpSecret)) return false;
-    await db().user.update({ where: { id: userId }, data: { mfaEnabled: true } });
-    return true;
+  async confirmTotpEnrollment(userId: string, secret: string, code: string) {
+    if (!authenticator.check(code.trim(), secret)) return false;
+    // Conditional update: if someone else finished enrolling first, this one fails.
+    const r = await db().user.updateMany({
+      where: { id: userId, mfaEnabled: false },
+      data: { totpSecret: secret, mfaEnabled: true },
+    });
+    return r.count === 1;
   }
 
   async verifyTotp(userId: string, code: string) {

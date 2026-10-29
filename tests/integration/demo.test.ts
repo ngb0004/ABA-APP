@@ -37,32 +37,83 @@ describe("demo mode uploads", () => {
 });
 
 describe("first sign-in authenticator enrollment", () => {
-  it("enrolls a user without MFA and completes sign-in with the first code", async () => {
-    const email = "enroll-test@sample-practice.test";
-    await db().user.deleteMany({ where: { email } });
+  async function freshUser(email: string) {
+    const { withOrg } = await import("@/lib/db");
+    const existing = await db().user.findUnique({ where: { email } });
+    if (existing) {
+      await db().authSession.deleteMany({ where: { userId: existing.id } });
+      await withOrg({ orgId: sampleOrg.id, userId: null, role: null }, (tx) =>
+        tx.membership.deleteMany({ where: { userId: existing.id } }),
+      );
+      await db().user.delete({ where: { id: existing.id } });
+    }
     const { userId } = await authProvider().createUser({
       email,
       name: "Enroll Test",
       password: "enroll-test-password",
     });
-    const bcba = sampleOrg.users.find((u) => u.role === "BCBA")!;
-    // Reuse the sample org membership so the session can bind to an org.
-    const { withOrg } = await import("@/lib/db");
-    await withOrg({ orgId: sampleOrg.id, userId: bcba.id, role: "BCBA" }, (tx) =>
+    await withOrg({ orgId: sampleOrg.id, userId: null, role: null }, (tx) =>
       tx.membership.create({ data: { orgId: sampleOrg.id, userId, role: "RBT" } }),
     );
+    return userId;
+  }
 
+  it("enrolls a user without MFA and completes sign-in with the first code", async () => {
+    const email = "enroll-test@sample-practice.test";
+    await freshUser(email);
     const step1 = await loginWithPassword(email, "enroll-test-password");
     expect(step1!.mfaEnabled).toBe(false);
     expect(await getSessionByToken(step1!.token)).toBeNull();
     const en = await startMfaEnrollment(step1!.token);
     expect(en!.otpauthUrl).toMatch(/^otpauth:\/\/totp\//);
+    // Nothing is written to the user until a code confirms.
+    expect((await db().user.findUniqueOrThrow({ where: { email } })).totpSecret).toBeNull();
     expect(await confirmMfaEnrollment(step1!.token, "000000")).toBeNull();
     const s = await confirmMfaEnrollment(step1!.token, authenticator.generate(en!.secret));
     expect(s).toMatchObject({ mfaVerified: true, role: "RBT", orgId: sampleOrg.id });
-    // Once enrolled, enrollment cannot be restarted from a password-only session.
     const again = await loginWithPassword(email, "enroll-test-password");
     await expect(startMfaEnrollment(again!.token)).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("two people enrolling the same account at once: the first confirmation wins, the other cannot overwrite it", async () => {
+    const email = "enroll-race@sample-practice.test";
+    await freshUser(email);
+    const a = await loginWithPassword(email, "enroll-test-password");
+    const b = await loginWithPassword(email, "enroll-test-password");
+    const ea = await startMfaEnrollment(a!.token);
+    const eb = await startMfaEnrollment(b!.token);
+    expect(ea!.secret).not.toBe(eb!.secret);
+    // B starting later does not break A's pending setup.
+    expect(await confirmMfaEnrollment(a!.token, authenticator.generate(ea!.secret))).not.toBeNull();
+    await expect(confirmMfaEnrollment(b!.token, authenticator.generate(eb!.secret))).rejects.toMatchObject({
+      status: 409,
+    });
+    const user = await db().user.findUniqueOrThrow({ where: { email } });
+    expect(user.totpSecret).toBe(ea!.secret);
+  });
+
+  it("ends the sign-in after five wrong codes, and locks the account after ten", async () => {
+    const email = "enroll-limit@sample-practice.test";
+    await freshUser(email);
+    const first = await loginWithPassword(email, "enroll-test-password");
+    const en = await startMfaEnrollment(first!.token);
+    await confirmMfaEnrollment(first!.token, authenticator.generate(en!.secret));
+    const wrong = authenticator.generate(en!.secret) === "123456" ? "654321" : "123456";
+    const { verifyMfa, MAX_MFA_ATTEMPTS_PER_SESSION } = await import("@/lib/auth/session");
+    const s1 = await loginWithPassword(email, "enroll-test-password");
+    for (let i = 0; i < MAX_MFA_ATTEMPTS_PER_SESSION; i++)
+      expect(await verifyMfa(s1!.token, wrong)).toBeNull();
+    expect(await getSessionByToken(s1!.token, { allowUnverified: true })).toBeNull();
+    const s2 = await loginWithPassword(email, "enroll-test-password");
+    for (let i = 0; i < MAX_MFA_ATTEMPTS_PER_SESSION; i++)
+      expect(await verifyMfa(s2!.token, wrong)).toBeNull();
+    // Ten consecutive failures: even the right code is refused for a while.
+    const s3 = await loginWithPassword(email, "enroll-test-password");
+    await expect(verifyMfa(s3!.token, authenticator.generate(en!.secret))).rejects.toMatchObject({
+      status: 429,
+    });
+    await db().user.update({ where: { email }, data: { mfaLockedUntil: null } });
+    expect(await verifyMfa(s3!.token, authenticator.generate(en!.secret))).not.toBeNull();
   });
 });
 

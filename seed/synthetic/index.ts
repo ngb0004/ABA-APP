@@ -41,7 +41,8 @@ const ORG_TABLES = [
   "membership",
 ];
 
-export async function seedOrg(org: SynOrg) {
+/** seededAsOf marks the dataset date; it commits with the org's data, so it also marks a completed seed. */
+export async function seedOrg(org: SynOrg, asOf: Day) {
   const ctx = { orgId: org.id, userId: null, role: null };
   const prisma = new PrismaClient({ datasourceUrl: process.env.DATABASE_URL });
   // Hosted demo: the password comes from the host's settings (never the one in this repo),
@@ -71,8 +72,12 @@ export async function seedOrg(org: SynOrg) {
       await tx.$executeRawUnsafe(`DELETE FROM "${t}" WHERE org_id = $1::uuid`, org.id);
     await tx.org.upsert({
       where: { id: org.id },
-      create: { id: org.id, name: org.name, settings: org.settings as Prisma.InputJsonValue },
-      update: { name: org.name, settings: org.settings as Prisma.InputJsonValue },
+      create: {
+        id: org.id,
+        name: org.name,
+        settings: { ...org.settings, seededAsOf: asOf } as Prisma.InputJsonValue,
+      },
+      update: { name: org.name, settings: { ...org.settings, seededAsOf: asOf } as Prisma.InputJsonValue },
     });
     await tx.membership.createMany({
       data: org.users.map((u) => ({
@@ -325,7 +330,7 @@ export async function seedAll(asOf: Day = toDay(new Date())) {
     for (const c of org.clients)
       if (!c.payors.every((p) => p.memberId.startsWith("SYN-")))
         throw new Error("Refusing to seed: non-synthetic member ID");
-    await seedOrg(org);
+    await seedOrg(org, ds.asOf);
   }
   return ds;
 }

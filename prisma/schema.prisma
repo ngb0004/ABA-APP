@@ -41,13 +41,16 @@ model Org {
 }
 
 model User {
-  id           String   @id @default(uuid()) @db.Uuid
-  email        String   @unique
-  name         String
-  passwordHash String
-  totpSecret   String?
-  mfaEnabled   Boolean  @default(false)
-  createdAt    DateTime @default(now())
+  id             String    @id @default(uuid()) @db.Uuid
+  email          String    @unique
+  name           String
+  passwordHash   String
+  totpSecret     String?
+  mfaEnabled     Boolean   @default(false)
+  /// Consecutive wrong authenticator codes across sessions; locks MFA for a while when too high.
+  failedMfaCount Int       @default(0)
+  mfaLockedUntil DateTime?
+  createdAt      DateTime  @default(now())
 
   memberships Membership[]
   sessions    AuthSession[]
@@ -69,14 +72,17 @@ model Membership {
 }
 
 model AuthSession {
-  id          String   @id @default(uuid()) @db.Uuid
-  tokenHash   String   @unique
-  userId      String   @db.Uuid
-  orgId       String?  @map("org_id") @db.Uuid
-  role        Role?
-  mfaVerified Boolean  @default(false)
-  createdAt   DateTime @default(now())
-  expiresAt   DateTime
+  id                String   @id @default(uuid()) @db.Uuid
+  tokenHash         String   @unique
+  userId            String   @db.Uuid
+  orgId             String?  @map("org_id") @db.Uuid
+  role              Role?
+  mfaVerified       Boolean  @default(false)
+  /// Authenticator secret being set up in this sign-in; moved to the user only on confirmation.
+  pendingTotpSecret String?
+  failedMfaAttempts Int      @default(0)
+  createdAt         DateTime @default(now())
+  expiresAt         DateTime
 
   user User @relation(fields: [userId], references: [id])
 
@@ -101,51 +107,51 @@ model AuditEvent {
 // ---------------------------------------------------------------- clients
 
 model Client {
-  id            String   @id @default(uuid()) @db.Uuid
-  orgId         String   @map("org_id") @db.Uuid
+  id             String   @id @default(uuid()) @db.Uuid
+  orgId          String   @map("org_id") @db.Uuid
   /// v1.0 accepts synthetic data only. A CHECK constraint enforces true.
-  isSynthetic   Boolean  @default(true) @map("is_synthetic")
-  firstName     String
-  lastName      String
-  preferredName String?
-  dob           DateTime @db.Date
-  sex           String?
-  serviceAddress Json    @default("{}")
+  isSynthetic    Boolean  @default(true) @map("is_synthetic")
+  firstName      String
+  lastName       String
+  preferredName  String?
+  dob            DateTime @db.Date
+  sex            String?
+  serviceAddress Json     @default("{}")
   /// [{name, relationship, legalCustody: boolean, canSign: boolean}]
-  guardians     Json     @default("[]")
-  hasIep        Boolean  @default(false)
+  guardians      Json     @default("[]")
+  hasIep         Boolean  @default(false)
   /// Payor event triggers that have occurred, e.g. ["bcba_transfer"].
-  events        String[] @default([])
-  createdAt     DateTime @default(now())
+  events         String[] @default([])
+  createdAt      DateTime @default(now())
 
-  org            Org                @relation(fields: [orgId], references: [id])
-  diagnoses      Diagnosis[]
-  payors         ClientPayor[]
-  authorizations Authorization[]
-  sessions       ServiceSession[]
-  intakes        Intake[]
-  vbmappImports  VbmappImport[]
+  org             Org                    @relation(fields: [orgId], references: [id])
+  diagnoses       Diagnosis[]
+  payors          ClientPayor[]
+  authorizations  Authorization[]
+  sessions        ServiceSession[]
+  intakes         Intake[]
+  vbmappImports   VbmappImport[]
   administrations VbmappAdministration[]
-  goals          Goal[]
-  plans          Plan[]
-  letters        PayorLetter[]
-  attachments    Attachment[]
+  goals           Goal[]
+  plans           Plan[]
+  letters         PayorLetter[]
+  attachments     Attachment[]
 
   @@map("client")
 }
 
 model Diagnosis {
-  id           String   @id @default(uuid()) @db.Uuid
-  orgId        String   @map("org_id") @db.Uuid
-  clientId     String   @db.Uuid
-  dsm5Code     String
-  dsm5Label    String
-  icd10Code    String
-  isPrimary    Boolean  @default(false)
-  severity     String?
+  id             String    @id @default(uuid()) @db.Uuid
+  orgId          String    @map("org_id") @db.Uuid
+  clientId       String    @db.Uuid
+  dsm5Code       String
+  dsm5Label      String
+  icd10Code      String
+  isPrimary      Boolean   @default(false)
+  severity       String?
   evaluationDate DateTime? @db.Date
   /// Deficit areas the diagnosis documents; goals must link to one of these.
-  deficitAreas String[]
+  deficitAreas   String[]
 
   client Client @relation(fields: [clientId], references: [id])
   goals  Goal[]
@@ -154,13 +160,13 @@ model Diagnosis {
 }
 
 model ClientPayor {
-  id        String  @id @default(uuid()) @db.Uuid
-  orgId     String  @map("org_id") @db.Uuid
-  clientId  String  @db.Uuid
-  payorId   String  @db.Uuid
-  priority  String  @default("primary") // primary | secondary
-  memberId  String
-  planName  String?
+  id                  String  @id @default(uuid()) @db.Uuid
+  orgId               String  @map("org_id") @db.Uuid
+  clientId            String  @db.Uuid
+  payorId             String  @db.Uuid
+  priority            String  @default("primary") // primary | secondary
+  memberId            String
+  planName            String?
   secondaryDocsSigned Boolean @default(false)
 
   client Client @relation(fields: [clientId], references: [id])
@@ -170,15 +176,15 @@ model ClientPayor {
 }
 
 model Attachment {
-  id         String   @id @default(uuid()) @db.Uuid
-  orgId      String   @map("org_id") @db.Uuid
-  clientId   String   @db.Uuid
+  id              String    @id @default(uuid()) @db.Uuid
+  orgId           String    @map("org_id") @db.Uuid
+  clientId        String    @db.Uuid
   /// diagnostic_evaluation | iep | ifsp | prior_evaluation | payor_form | other
-  kind       String
-  title      String
-  documentDate DateTime? @db.Date
-  caregiverSigned Boolean @default(false)
-  uploadedAt DateTime @default(now())
+  kind            String
+  title           String
+  documentDate    DateTime? @db.Date
+  caregiverSigned Boolean   @default(false)
+  uploadedAt      DateTime  @default(now())
 
   client Client @relation(fields: [clientId], references: [id])
 
@@ -188,14 +194,14 @@ model Attachment {
 // ---------------------------------------------------------------- authorizations
 
 model Authorization {
-  id         String   @id @default(uuid()) @db.Uuid
-  orgId      String   @map("org_id") @db.Uuid
-  clientId   String   @db.Uuid
-  payorId    String   @db.Uuid
-  authNumber String
-  kind       String   @default("initial") // initial | reauth
-  startDate  DateTime @db.Date
-  endDate    DateTime @db.Date
+  id                      String   @id @default(uuid()) @db.Uuid
+  orgId                   String   @map("org_id") @db.Uuid
+  clientId                String   @db.Uuid
+  payorId                 String   @db.Uuid
+  authNumber              String
+  kind                    String   @default("initial") // initial | reauth
+  startDate               DateTime @db.Date
+  endDate                 DateTime @db.Date
   /// Hours/week the BCBA recommends; compared against intake availability.
   recommendedHoursPerWeek Float?
 
@@ -224,19 +230,19 @@ model AuthorizationUnit {
 
 /// A delivered, billable service. Units are 15-minute CPT units.
 model ServiceSession {
-  id              String   @id @default(uuid()) @db.Uuid
-  orgId           String   @map("org_id") @db.Uuid
-  clientId        String   @db.Uuid
-  authorizationId String?  @db.Uuid
-  cptCode         String
-  date            DateTime @db.Date
-  startMinute     Int      @default(540) // minutes after midnight
-  units           Int
-  providerRole    Role
+  id                 String   @id @default(uuid()) @db.Uuid
+  orgId              String   @map("org_id") @db.Uuid
+  clientId           String   @db.Uuid
+  authorizationId    String?  @db.Uuid
+  cptCode            String
+  date               DateTime @db.Date
+  startMinute        Int      @default(540) // minutes after midnight
+  units              Int
+  providerRole       Role
   /// Opaque staff identifier (e.g. "RBT-A"), used for per-technician supervision ratios.
-  providerId      String?
+  providerId         String?
   providerCredential String?
-  inPerson        Boolean  @default(true)
+  inPerson           Boolean  @default(true)
 
   client        Client         @relation(fields: [clientId], references: [id])
   authorization Authorization? @relation(fields: [authorizationId], references: [id])
@@ -300,17 +306,17 @@ model VbmappAdministration {
   reviewedAt     DateTime?
   createdAt      DateTime  @default(now())
 
-  client Client         @relation(fields: [clientId], references: [id])
-  import VbmappImport?  @relation(fields: [importId], references: [id])
+  client Client           @relation(fields: [clientId], references: [id])
+  import VbmappImport?    @relation(fields: [importId], references: [id])
   scores MilestoneScore[]
 
   @@map("vbmapp_administration")
 }
 
 model MilestoneScore {
-  id               String @id @default(uuid()) @db.Uuid
-  orgId            String @map("org_id") @db.Uuid
-  administrationId String @db.Uuid
+  id               String  @id @default(uuid()) @db.Uuid
+  orgId            String  @map("org_id") @db.Uuid
+  administrationId String  @db.Uuid
   level            Int
   domain           String
   milestone        Int
@@ -327,11 +333,11 @@ model MilestoneScore {
 // ---------------------------------------------------------------- payors
 
 model Payor {
-  id        String  @id @default(uuid()) @db.Uuid
-  orgId     String  @map("org_id") @db.Uuid
-  key       String
-  name      String
-  inherits  String?
+  id       String  @id @default(uuid()) @db.Uuid
+  orgId    String  @map("org_id") @db.Uuid
+  key      String
+  name     String
+  inherits String?
 
   rules          PayorRule[]
   clientPayors   ClientPayor[]
@@ -397,49 +403,49 @@ model GoalTemplate {
 }
 
 model Goal {
-  id               String  @id @default(uuid()) @db.Uuid
-  orgId            String  @map("org_id") @db.Uuid
-  clientId         String  @db.Uuid
-  planId           String? @db.Uuid
-  templateId       String? @db.Uuid
-  diagnosisId      String? @db.Uuid
-  ordinal          Int     @default(0)
-  domain           String
-  tier             Int
+  id                         String    @id @default(uuid()) @db.Uuid
+  orgId                      String    @map("org_id") @db.Uuid
+  clientId                   String    @db.Uuid
+  planId                     String?   @db.Uuid
+  templateId                 String?   @db.Uuid
+  diagnosisId                String?   @db.Uuid
+  ordinal                    Int       @default(0)
+  domain                     String
+  tier                       Int
   /// communication | social_play | behavior_reduction | replacement | caregiver | other
-  category         String
-  deficitArea      String?
+  category                   String
+  deficitArea                String?
   /// percent | frequency | duration. Frequency/duration goals improve downward.
-  measure          String  @default("percent")
-  linkedMilestones Json    @default("[]")
-  initiationWindow String  @default("Months 1-3")
-  objective        String
-  sd               String  @default("")
-  targetBehavior   String  @default("")
-  dataCollection   String  @default("")
-  prompting        String  @default("")
-  teachingProcedure String @default("")
-  phases           Json    @default("[]")
-  masteryAccuracyPct Int   @default(80)
-  masteryConsecutiveSessions Int @default(5)
-  masteryInstructors Int   @default(2)
-  masterySettings  Int     @default(1)
-  generalization   String  @default("")
-  rationalePattern String  @default("A")
-  rationale        String  @default("")
+  measure                    String    @default("percent")
+  linkedMilestones           Json      @default("[]")
+  initiationWindow           String    @default("Months 1-3")
+  objective                  String
+  sd                         String    @default("")
+  targetBehavior             String    @default("")
+  dataCollection             String    @default("")
+  prompting                  String    @default("")
+  teachingProcedure          String    @default("")
+  phases                     Json      @default("[]")
+  masteryAccuracyPct         Int       @default(80)
+  masteryConsecutiveSessions Int       @default(5)
+  masteryInstructors         Int       @default(2)
+  masterySettings            Int       @default(1)
+  generalization             String    @default("")
+  rationalePattern           String    @default("A")
+  rationale                  String    @default("")
   /// Pointer to the sourced baseline: {kind: "datapoints", window} or {kind: "vbmapp", ...}
-  baselineSource   Json?
-  replacementForGoalId String? @db.Uuid
-  status           String  @default("draft") // draft | approved
+  baselineSource             Json?
+  replacementForGoalId       String?   @db.Uuid
+  status                     String    @default("draft") // draft | approved
   /// Required before export when progress is flat over 8+ weeks.
-  flatExplanation  String?
-  approvedById     String? @db.Uuid
-  approvedAt       DateTime?
+  flatExplanation            String?
+  approvedById               String?   @db.Uuid
+  approvedAt                 DateTime?
 
-  client     Client          @relation(fields: [clientId], references: [id])
-  plan       Plan?           @relation(fields: [planId], references: [id])
-  diagnosis  Diagnosis?      @relation(fields: [diagnosisId], references: [id])
-  dataPoints GoalDataPoint[]
+  client       Client            @relation(fields: [clientId], references: [id])
+  plan         Plan?             @relation(fields: [planId], references: [id])
+  diagnosis    Diagnosis?        @relation(fields: [diagnosisId], references: [id])
+  dataPoints   GoalDataPoint[]
   phaseChanges GoalPhaseChange[]
 
   @@map("goal")
@@ -475,17 +481,17 @@ model GoalPhaseChange {
 // ---------------------------------------------------------------- plans
 
 model Plan {
-  id              String   @id @default(uuid()) @db.Uuid
-  orgId           String   @map("org_id") @db.Uuid
-  clientId        String   @db.Uuid
-  authorizationId String?  @db.Uuid
-  type            String   // initial | reauth
-  status          String   @default("draft") // draft | finalized
+  id               String    @id @default(uuid()) @db.Uuid
+  orgId            String    @map("org_id") @db.Uuid
+  clientId         String    @db.Uuid
+  authorizationId  String?   @db.Uuid
+  type             String // initial | reauth
+  status           String    @default("draft") // draft | finalized
   /// [{key, name, version}] payor documents this plan was written against.
-  payorDocVersions Json    @default("[]")
-  createdById     String?  @db.Uuid
-  createdAt       DateTime @default(now())
-  finalizedAt     DateTime?
+  payorDocVersions Json      @default("[]")
+  createdById      String?   @db.Uuid
+  createdAt        DateTime  @default(now())
+  finalizedAt      DateTime?
 
   client        Client         @relation(fields: [clientId], references: [id])
   authorization Authorization? @relation(fields: [authorizationId], references: [id])
@@ -525,7 +531,7 @@ model PlanSectionRevision {
   id        String   @id @default(uuid()) @db.Uuid
   orgId     String   @map("org_id") @db.Uuid
   sectionId String   @db.Uuid
-  kind      String   // ai_draft | edit | approve | reopen
+  kind      String // ai_draft | edit | approve | reopen
   content   String
   /// Unified-style line diff against the AI draft.
   diff      String   @default("")
@@ -540,20 +546,20 @@ model PlanSectionRevision {
 // ---------------------------------------------------------------- letters/packets
 
 model PayorLetter {
-  id              String   @id @default(uuid()) @db.Uuid
-  orgId           String   @map("org_id") @db.Uuid
-  clientId        String   @db.Uuid
-  authorizationId String?  @db.Uuid
+  id              String    @id @default(uuid()) @db.Uuid
+  orgId           String    @map("org_id") @db.Uuid
+  clientId        String    @db.Uuid
+  authorizationId String?   @db.Uuid
   filename        String
   text            String
   /// approval | denial | reduction | request_for_info | p2p_offer
   classification  String?
   /// Extracted fields, each with the verbatim quote it came from.
-  extracted       Json     @default("{}")
-  status          String   @default("pending") // pending | confirmed
-  confirmedById   String?  @db.Uuid
+  extracted       Json      @default("{}")
+  status          String    @default("pending") // pending | confirmed
+  confirmedById   String?   @db.Uuid
   confirmedAt     DateTime?
-  createdAt       DateTime @default(now())
+  createdAt       DateTime  @default(now())
 
   client Client @relation(fields: [clientId], references: [id])
 

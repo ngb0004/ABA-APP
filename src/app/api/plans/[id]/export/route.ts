@@ -24,5 +24,10 @@ export const GET = api<{ id: string }>(async (_req, ctx, { id }) => {
   requirePermission(ctx.role, "export:pdf");
   const packet = await withOrg(ctx, (tx) => tx.packet.findUnique({ where: { planId: id } }));
   if (!packet?.exportedAt) throw new HttpError(404, "Not exported yet");
-  return pdfResponse(await readFile(path.join(EXPORT_DIR, `${id}.pdf`)), id);
+  try {
+    return pdfResponse(await readFile(path.join(EXPORT_DIR, `${id}.pdf`)), id);
+  } catch {
+    // The file is gone (e.g. the server restarted); the packet record remains.
+    throw new HttpError(404, "The exported file is no longer available. Export the packet again.");
+  }
 });
