@@ -343,7 +343,9 @@ if (process.argv[1] && /seed\/synthetic\/index\.ts$/.test(process.argv[1])) {
         `Seeded ${ds.orgs.length} synthetic orgs, ${ds.orgs.reduce((n, o) => n + o.clients.length, 0)} synthetic clients (asOf ${ds.asOf}).`,
       );
       console.log(
-        "Demo logins (synthetic only; password for all: synthetic-demo-only). Get a TOTP code with: pnpm totp <email>",
+        process.env.DEMO_MODE === "true"
+          ? "Demo logins (password: DEMO_PASSWORD; each person sets up an authenticator app at first sign-in):"
+          : "Demo logins (synthetic only; password for all: synthetic-demo-only). Get a TOTP code with: pnpm totp <email>",
       );
       for (const u of users) console.log(`  ${u.role.padEnd(16)} ${u.email}`);
       process.exit(0);
