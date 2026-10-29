@@ -25,7 +25,7 @@ Cost: Railway's Hobby plan is $5/month including some usage; with the database a
    If your database service has a different name than `Postgres`, use that name instead, e.g. `${{postgres-db.DATABASE_URL}}`.
 
    Railway may also suggest or import variables from the project's `.env.example` (`DATABASE_URL`, `DIRECT_DATABASE_URL`, `SESSION_SECRET`, `TEST_…`, `LLM_…`). **Delete them**: the demo works them out itself and ignores the local-development values.
-6. **Give it a web address.** App service → **Settings → Networking → Generate Domain**. Railway gives you a link like `aba-app-production.up.railway.app`.
+6. **Give it a web address.** App service → **Settings → Networking → Generate Domain**. Railway gives you a link like `aba-app-production.up.railway.app`. If it asks for a port, use the one the app reports in its deploy logs (`[demo-start] starting app on port …`, usually `8080`). If the link shows **"Application failed to respond"** while the service is Online, the ports don't match: click the pencil next to the domain and set it to the port from the logs.
 7. **Deploy.** Saving variables usually triggers a new deploy; if not, click **Deploy**. The first boot takes a few minutes: it builds the app, sets up the database, and loads the fictional clients. When the service shows **Active**, open the link.
 
 ## Signing in
