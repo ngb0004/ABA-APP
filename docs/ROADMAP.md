@@ -36,6 +36,10 @@ Goal: Amoy can write a real reauth faster than by hand.
 | 1.5 | AI spend and time tracking | Tokens and cost per call, per user, per month; time spent per plan. Feeds pricing and the "4–6 hours → ~1 hour" pitch. |
 | 1.6 | Replace provisional plan structure | Use `docs/SPEC.md` once available; answer `docs/QUESTIONS_FOR_BCBA.md`. |
 
+## Payor rules: keeping them current
+
+The strategy for watching payor documents, evidence-based verification, the outreach agent, and a shared rules library is in `docs/PAYOR_RULES_STRATEGY.md`. Its step 1 (provenance retrofit and fixing the stale Georgia rules) should run alongside Phase 1.
+
 ## Phase 2: Go live (HIPAA)
 
 Goal: real clients, safely. Follow `docs/HIPAA_DEPLOYMENT.md`: AWS BAA, Bedrock instead of the direct API, Cognito login, encrypted database and file storage, logging and backups. Verify the payor rules that will be relied on. Remove the synthetic-only database constraint last, after sign-off.
