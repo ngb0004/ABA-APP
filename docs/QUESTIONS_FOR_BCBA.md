@@ -39,3 +39,9 @@ Each question lists the default the build uses today. Defaults are the safer cho
 ## Treatment plan structure
 
 20. **Eleven sections.** `docs/SPEC.md` ("Treatment plan structure") was not in the build brief. *Default:* a provisional structure covering every GA Medicaid `plan_content` topic: identifying information, background, assessment, behavior assessment, skill acquisition goals and progress, behavior reduction and BIP, caregiver training, service recommendations and medical necessity, coordination of care, crisis and safety plan, transition and discharge. Replace with the spec's list. (`src/lib/plan/sections.ts`)
+
+## Payor rule verification (Rules Watch)
+
+21. **Second reviewer for rules with numbers.** The strategy recommends a second person confirm any rule containing a number (hours, percentages, units). *Default:* one BCBA is enough, because a solo practice has no second reviewer; the quote must still contain every number in the rule. Should multi-BCBA practices require two?
+22. **How long a verification lasts.** *Default:* until the payor's next scheduled revision (next quarter for Georgia's manual, the "Next Review" date for Aetna policies), and never more than 180 days for an official document (90 days for written payor correspondence).
+23. **Same-topic change alerts.** *Default:* a checklist-only rule is flagged "needs re-check" when the payor's official document logs a change on the same topic, for supervision, licensing/credentials, and treatment-plan templates only. Too many or too few alerts?

@@ -8,7 +8,7 @@ import { withOrg, type Tx } from "../../src/lib/db";
 import { toDay, type Day } from "../../src/lib/dates";
 import { loadGoalBank } from "../../src/lib/goals/bank";
 import { masteryDefaults, tokenizeMastery } from "../../src/lib/goals/tokenize";
-import { loadPayorSeed, resolvePayorRules } from "../../src/lib/payors/load";
+import { syncPayorLibrary } from "../../src/lib/payors/library";
 import { buildDataset, sid, type SynOrg } from "./dataset";
 
 const d = (day: Day) => new Date(`${day}T00:00:00Z`);
@@ -35,9 +35,6 @@ const ORG_TABLES = [
   "diagnosis",
   "client",
   "goal_template",
-  "payor_rule",
-  "payor_document",
-  "payor",
   "membership",
 ];
 
@@ -87,55 +84,11 @@ export async function seedOrg(org: SynOrg, asOf: Day) {
         role: u.role,
       })),
     });
-    const payorIds = await seedPayors(tx, org.id);
+    // Payors, documents and rules are synced (not recreated), so evidence and snapshots survive a reseed.
+    const { payorIds } = await syncPayorLibrary(tx, org.id);
     await seedGoalTemplates(tx, org.id);
     for (const c of org.clients) await seedClient(tx, org.id, c, payorIds);
   });
-}
-
-async function seedPayors(tx: Tx, orgId: string) {
-  const seed = loadPayorSeed();
-  const docIds: Record<string, string> = {};
-  for (const [key, doc] of Object.entries(seed.documents)) {
-    docIds[key] = sid(`${orgId}:doc:${key}`);
-    await tx.payorDocument.create({
-      data: {
-        id: docIds[key]!,
-        orgId,
-        key,
-        name: doc.name,
-        version: doc.version,
-        url: doc.url,
-        effectiveDate: doc.effective_date ? d(doc.effective_date) : null,
-      },
-    });
-  }
-  const payorIds: Record<string, string> = {};
-  for (const p of seed.payors) {
-    payorIds[p.id] = sid(`${orgId}:payor:${p.id}`);
-    await tx.payor.create({
-      data: { id: payorIds[p.id]!, orgId, key: p.id, name: p.name, inherits: p.inherits ?? null },
-    });
-  }
-  for (const p of seed.payors) {
-    const rules = resolvePayorRules(seed, p.id);
-    await tx.payorRule.createMany({
-      data: rules.map((r, i) => ({
-        id: sid(`${orgId}:rule:${p.id}:${i}`),
-        orgId,
-        payorId: payorIds[p.id]!,
-        type: r.type,
-        params: r.params as Prisma.InputJsonValue,
-        sourceDocumentId: r.source.key ? (docIds[r.source.key] ?? null) : null,
-        sourceSection: r.source.section,
-        verified: r.verified,
-        notes: r.notes,
-        inheritedFrom: r.inheritedFrom,
-        ordinal: i,
-      })),
-    });
-  }
-  return payorIds;
 }
 
 async function seedGoalTemplates(tx: Tx, orgId: string) {

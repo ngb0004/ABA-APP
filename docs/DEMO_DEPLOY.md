@@ -49,7 +49,7 @@ Cost: Railway's Hobby plan is $5/month including some usage; with the database a
 - **Clients → Bravo → New reauth plan:** "Draft with AI" on a section. Tap a highlighted number to see where it came from. Mark the required items, then approve the section.
 - **VB-MAPP page:** load a sample workbook to see the import review and its flags.
 - **Packet page:** load a sample payor letter, confirm it, and see export stay blocked until everything is approved.
-- **Payor rules:** each rule's source and its verified/unverified status.
+- **Payor rules:** which payor documents changed or broke, the rules that need re-checking and why, and verifying a rule by pasting the sentence from the official document. The demo checks payor websites 30 seconds after start and then daily; "Check sources now" runs it on demand.
 
 The AI is a built-in stand-in (no real AI calls, no cost). To try real Claude drafting on the fictional clients, add `LLM_PROVIDER=anthropic`, `LLM_MODEL=claude-opus-5-5`, and `ANTHROPIC_API_KEY` to the app's variables.
 

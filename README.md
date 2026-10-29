@@ -49,6 +49,7 @@ To put the fictional-client demo online (e.g., to try it from a phone), follow `
 - `src/lib/db.ts`: every client-data query runs inside `withOrg()`, which sets `app.current_org` for Postgres RLS and writes an audit row for each read and write.
 - `src/lib/vbmapp/`: Milestones Grid import (SheetJS, data only, never macros); totals always recomputed; validation flags; carry-forward; our own SVG grid.
 - `src/lib/payors/`: payor rules as data (`seed/payors.yaml`), one evaluator per rule type; unverified rules can only warn.
+- `src/lib/rules-watch/`: watches payor documents (finds the current version, parses payor change logs) and computes each rule's trust from its evidence. See `docs/PAYOR_RULES_STRATEGY.md`.
 - `src/lib/intake/`: typed intake schema with sensitivity tags, safety flags, custody signers, availability fit, and the minimum-necessary AI payload.
 - `src/lib/firewall/` and `src/lib/ai/`: the numeric firewall and the single AI module (pseudonymize, filter restricted fields, privacy guard, validate, retry once, audit).
 - `src/lib/plan/`: sections, sourced values, graphs, progress checks, and the pre-submission audit.

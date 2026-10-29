@@ -98,6 +98,12 @@ async function setupRolesAndDatabase() {
       }
     }
     if (!me.rolsuper) await pg.$executeRawUnsafe("GRANT aba_owner TO CURRENT_USER");
+    // The owner runs migrations only; BYPASSRLS lets the narrow app_org_ids() helper list orgs for scheduled jobs.
+    if (me.rolsuper) await pg.$executeRawUnsafe("ALTER ROLE aba_owner BYPASSRLS");
+    else
+      say(
+        "admin is not a superuser: scheduled source checks will not see any org (app_org_ids needs an owner with BYPASSRLS)",
+      );
     const db = await pg.$queryRaw<unknown[]>`SELECT 1 FROM pg_database WHERE datname = ${dbName}`;
     if (!db.length) await pg.$executeRawUnsafe(`CREATE DATABASE ${ident(dbName)} OWNER aba_owner`);
     await pg.$executeRawUnsafe(`GRANT CONNECT ON DATABASE ${ident(dbName)} TO aba_app`);
@@ -193,6 +199,11 @@ async function main() {
   } else {
     await syncDemoCredentials();
   }
+  // Payor rules are data: bring every org's library in line with seed/payors.yaml (evidence is kept).
+  execSync("pnpm exec tsx scripts/payor-sync.ts", {
+    stdio: "inherit",
+    env: { ...shared, DATABASE_URL: appUrl, DIRECT_DATABASE_URL: appUrl },
+  });
   // The fictional scenarios are dated relative to the seed day; keep "today" there.
   const asOf = process.env.APP_AS_OF ?? (await seededAsOf(sampleOrgId));
   if (asOf) say(`demo date is ${asOf}`);
@@ -210,6 +221,14 @@ async function main() {
   const child = spawn("pnpm", ["exec", "next", "start", "-p", port], { stdio: "inherit", env: appEnv });
   for (const sig of ["SIGTERM", "SIGINT"] as const) process.on(sig, () => child.kill(sig));
   child.on("exit", (code: number | null) => process.exit(code ?? 0));
+
+  // Check payor sources shortly after start, then daily. A failed run is logged and retried next time.
+  const watch = () => {
+    const w = spawn("pnpm", ["exec", "tsx", "scripts/rules-watch.ts"], { stdio: "inherit", env: appEnv });
+    w.on("exit", (code: number | null) => code && say(`source check exited with code ${code}`));
+  };
+  setTimeout(watch, 30_000).unref();
+  setInterval(watch, 24 * 3600_000).unref();
 }
 
 main().catch((e) =>

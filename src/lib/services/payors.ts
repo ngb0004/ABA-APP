@@ -3,30 +3,174 @@ import { ageYears, toDay, type Day } from "../dates";
 import type { EvalContext } from "../payors/context";
 import { evaluateRules } from "../payors/evaluate";
 import type { Rule, RuleType } from "../payors/types";
+import type { RevisionRow } from "../rules-watch/parsers";
+import { computeTrust, relatedChanges, type SnapshotState } from "../rules-watch/status";
+import { quoteAppears } from "../rules-watch/text";
 import type { UnitBasis } from "../utilization";
 
 export async function loadRules(tx: Tx, payorId: string): Promise<Rule[]> {
   const rows = await tx.payorRule.findMany({
     where: { payorId },
-    include: { payor: true, sourceDocument: true },
+    include: { payor: true },
     orderBy: { ordinal: "asc" },
   });
-  return rows.map((r) => ({
-    id: r.id,
-    payorKey: r.payor.key,
-    type: r.type as RuleType,
-    params: r.params as Record<string, unknown>,
-    verified: r.verified,
-    source: {
-      key: r.sourceDocument?.key ?? null,
-      name: r.sourceDocument?.name ?? null,
-      version: r.sourceDocument?.version ?? null,
-      section: r.sourceSection,
-      url: r.sourceDocument?.url ?? null,
+  return withTrust(tx, rows);
+}
+
+type RuleRow = {
+  id: string;
+  payor: { key: string };
+  type: string;
+  params: unknown;
+  sourceDocumentId: string | null;
+  sourceSection: string | null;
+  notes: string | null;
+  inheritedFrom: string | null;
+  lineageKey: string;
+};
+
+const snapshotState = (s: {
+  id: string;
+  textSha256: string;
+  effectiveDate: Date | null;
+  versionLabel: string | null;
+  nextRevision: Date | null;
+  revisions: unknown;
+}): SnapshotState => ({
+  id: s.id,
+  textSha256: s.textSha256,
+  effectiveDate: s.effectiveDate ? toDay(s.effectiveDate) : null,
+  versionLabel: s.versionLabel,
+  nextRevision: s.nextRevision ? toDay(s.nextRevision) : null,
+  revisions: (s.revisions as RevisionRow[]) ?? [],
+});
+
+/** Attach computed trust (evidence + source health) to rule rows, in a few batched queries. */
+export async function withTrust(tx: Tx, rows: RuleRow[], today: Day = toDay(new Date())): Promise<Rule[]> {
+  if (!rows.length) return [];
+  const evidence = await tx.ruleEvidence.findMany({
+    where: { lineageKey: { in: [...new Set(rows.map((r) => r.lineageKey))] } },
+    orderBy: { createdAt: "asc" },
+  });
+  const docIds = [
+    ...new Set(
+      [...rows.map((r) => r.sourceDocumentId), ...evidence.map((e) => e.documentId)].filter(
+        (x): x is string => !!x,
+      ),
+    ),
+  ];
+  const docs = new Map(
+    (await tx.payorDocument.findMany({ where: { id: { in: docIds } } })).map((d) => [d.id, d]),
+  );
+  const snaps = await tx.payorDocumentSnapshot.findMany({
+    where: { documentId: { in: docIds } },
+    orderBy: { fetchedAt: "desc" },
+    select: {
+      id: true,
+      documentId: true,
+      resolvedUrl: true,
+      textSha256: true,
+      effectiveDate: true,
+      versionLabel: true,
+      nextRevision: true,
+      revisions: true,
     },
-    notes: r.notes,
-    inheritedFrom: r.inheritedFrom,
-  }));
+  });
+  const latest = new Map<string, (typeof snaps)[number]>();
+  for (const s of snaps) if (!latest.has(s.documentId)) latest.set(s.documentId, s);
+  const byId = new Map(snaps.map((s) => [s.id, s]));
+
+  // Each payor's official documents (cited by any of its rules), for same-topic change detection.
+  const officialByPayor = new Map<
+    string,
+    { name: string; citedEffectiveDate: string | null; revisions: RevisionRow[] }[]
+  >();
+  for (const r of rows) {
+    const d = r.sourceDocumentId ? docs.get(r.sourceDocumentId) : undefined;
+    const snap = d ? latest.get(d.id) : undefined;
+    if (!d || d.secondary || !snap) continue;
+    const list = officialByPayor.get(r.payor.key) ?? [];
+    if (!list.some((x) => x.name === d.name))
+      list.push({
+        name: d.name,
+        citedEffectiveDate: d.effectiveDate ? toDay(d.effectiveDate) : null,
+        revisions: (snap.revisions as RevisionRow[]) ?? [],
+      });
+    officialByPayor.set(r.payor.key, list);
+  }
+
+  const out: Rule[] = [];
+  for (const r of rows) {
+    const ev = evidence.filter((e) => e.lineageKey === r.lineageKey);
+    let current: (typeof ev)[number] | null = null;
+    for (const e of ev) current = e.kind === "verify" ? e : null;
+    // A verified rule is judged against the document it was verified with.
+    const docId = current?.documentId ?? r.sourceDocumentId;
+    const doc = docId ? docs.get(docId) : undefined;
+    const snap = docId ? latest.get(docId) : undefined;
+    let quoteStillPresent: boolean | undefined;
+    if (current && snap && current.textSha256 && current.textSha256 !== snap.textSha256) {
+      const text = await tx.payorDocumentSnapshot.findUniqueOrThrow({
+        where: { id: snap.id },
+        select: { text: true },
+      });
+      quoteStillPresent = quoteAppears(current.quote, text.text);
+    }
+    const trust = computeTrust({
+      section: current?.section ?? r.sourceSection,
+      doc: doc
+        ? {
+            name: doc.name,
+            secondary: doc.secondary,
+            citedEffectiveDate: doc.effectiveDate ? toDay(doc.effectiveDate) : null,
+            health: doc.health,
+            lastError: doc.lastError,
+            lastCheckedAt: doc.lastCheckedAt?.toISOString() ?? null,
+          }
+        : null,
+      latest: snap ? snapshotState(snap) : null,
+      evidence: ev.map((e) => {
+        const es = e.snapshotId ? byId.get(e.snapshotId) : undefined;
+        return {
+          kind: e.kind as "verify" | "revoke",
+          tier: e.tier,
+          createdAt: e.createdAt.toISOString(),
+          reviewerId: e.reviewerId,
+          snapshotId: e.snapshotId,
+          textSha256: e.textSha256,
+          snapshotEffectiveDate: es?.effectiveDate ? toDay(es.effectiveDate) : null,
+          quote: e.quote,
+          section: e.section,
+        };
+      }),
+      quoteStillPresent,
+      relatedChanges:
+        doc?.secondary || !r.sourceSection
+          ? relatedChanges(r.type, officialByPayor.get(r.payor.key) ?? [])
+          : [],
+      today,
+    });
+    out.push({
+      id: r.id,
+      payorKey: r.payor.key,
+      lineageKey: r.lineageKey,
+      type: r.type as RuleType,
+      params: r.params as Record<string, unknown>,
+      verified: trust.status === "verified",
+      trust,
+      source: {
+        key: doc?.key ?? null,
+        name: doc?.name ?? null,
+        version: snap?.versionLabel ?? doc?.version ?? null,
+        section: current?.section ?? r.sourceSection,
+        // Link to the version actually fetched (e.g., this quarter's Georgia manual), else the cited URL.
+        url: snap?.resolvedUrl ?? doc?.url ?? null,
+      },
+      notes: r.notes,
+      inheritedFrom: r.inheritedFrom,
+    });
+  }
+  return out;
 }
 
 /** Builds the evaluator context for a client (and optionally a plan). */

@@ -480,12 +480,29 @@ const EVALUATORS: Record<RuleType, Evaluator> = {
     ].filter(Boolean) as string[];
     return { status: "pass", message: `Submit via ${parts}`, evidence: ev };
   },
+
+  decision_timeframe(p) {
+    const parts = [
+      num(p.standard_days) !== undefined ? `standard requests within ${p.standard_days} calendar days` : null,
+      num(p.expedited_hours) !== undefined ? `expedited requests within ${p.expedited_hours} hours` : null,
+    ].filter(Boolean);
+    return {
+      status: "pass",
+      message: `Payor must decide ${parts.join(" and ")}`,
+      evidence: [
+        str(p.from) ? `Applies from ${p.from}` : "",
+        "If no decision arrives in time, follow up and record the reference number",
+      ].filter(Boolean),
+    };
+  },
 };
 
 export function evaluateRule(rule: Rule, ctx: EvalContext): RuleResult {
   const out = EVALUATORS[rule.type](rule.params, ctx, rule);
   const evidence = [...(out.evidence ?? [])];
   let status = out.status;
+  // Why the rule can't be trusted yet (source changed, broken, expired, secondary only).
+  if (rule.trust && rule.trust.status !== "verified") for (const r of rule.trust.reasons) evidence.push(r);
   if (!rule.verified) {
     // Unverified rules never block: they can only warn.
     if (status === "fail" || status === "pass") {

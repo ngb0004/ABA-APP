@@ -1,0 +1,201 @@
+/**
+ * Finds and downloads the current version of a payor document, and extracts
+ * its text. Public documents only: no logins, no portals. Every anomaly
+ * (HTTP error, empty or challenge page, missing title) is reported as broken,
+ * never as "unchanged".
+ */
+import type { Locator } from "../payors/types";
+import {
+  parseAetnaCpbDates,
+  parseGaRevisionRecord,
+  nextQuarterStart,
+  usDateToIso,
+  type RevisionRow,
+} from "./parsers";
+import { htmlToText, normalizeText, textSha256 } from "./text";
+
+export type FetchLike = (
+  url: string,
+  init?: { method?: string; headers?: Record<string, string>; body?: string; redirect?: "follow" | "manual" },
+) => Promise<{
+  status: number;
+  url: string;
+  headers: { get(name: string): string | null; getSetCookie?(): string[] };
+  arrayBuffer(): Promise<ArrayBuffer>;
+  text(): Promise<string>;
+}>;
+
+export const USER_AGENT = "ABA-Plan-Assistant-RulesWatch/1.0 (public policy document monitor)";
+const MAX_BYTES = 25 * 1024 * 1024;
+/** Extracted text shorter than this is treated as an empty or challenge page. */
+const MIN_TEXT = 400;
+
+export type FetchedDocument =
+  | {
+      ok: true;
+      resolvedUrl: string;
+      contentType: string;
+      byteLength: number;
+      text: string;
+      textSha256: string;
+      versionLabel: string | null;
+      effectiveDate: string | null;
+      nextRevision: string | null;
+      revisions: RevisionRow[];
+    }
+  | { ok: false; error: string; resolvedUrl: string | null };
+
+/** Real network fetch with a timeout. */
+export const defaultFetch: FetchLike = async (url, init) => {
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), 45_000);
+  try {
+    return await fetch(url, {
+      ...init,
+      headers: { "user-agent": USER_AGENT, ...(init?.headers ?? {}) },
+      signal: ctl.signal,
+    });
+  } finally {
+    clearTimeout(t);
+  }
+};
+
+async function extract(bytes: Buffer, contentType: string, url: string): Promise<string> {
+  const isPdf =
+    contentType.includes("pdf") || bytes.subarray(0, 5).toString() === "%PDF-" || /\.pdf($|\?)/i.test(url);
+  if (isPdf) {
+    const { extractText, getDocumentProxy } = await import("unpdf");
+    const pdf = await getDocumentProxy(new Uint8Array(bytes));
+    const { text } = await extractText(pdf, { mergePages: true });
+    return text;
+  }
+  return htmlToText(bytes.toString("utf8"));
+}
+
+async function download(fetcher: FetchLike, url: string, init?: Parameters<FetchLike>[1]) {
+  const res = await fetcher(url, { redirect: "follow", ...init });
+  const bytes = Buffer.from(await res.arrayBuffer());
+  return { res, bytes };
+}
+
+function fail(error: string, resolvedUrl: string | null = null): FetchedDocument {
+  return { ok: false, error, resolvedUrl };
+}
+
+/** Georgia MMIS: GET the index, find the row by title, post back to get the current file path. */
+async function resolveGaMmis(
+  fetcher: FetchLike,
+  indexUrl: string,
+  title: string,
+): Promise<{ url: string; listedDate: string | null } | { error: string }> {
+  const r = await fetcher(indexUrl, { redirect: "follow" });
+  if (r.status !== 200) return { error: `Index page returned HTTP ${r.status}` };
+  const html = await r.text();
+  const cookies = (r.headers.getSetCookie?.() ?? []).map((c) => c.split(";")[0]).join("; ");
+  const esc = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const row = new RegExp(
+    `__doPostBack\\(&#39;([^&]+)&#39;[^"]*"></a></td><td[^>]*>\\s*${esc}\\s*</td>([\\s\\S]*?)</tr>`,
+  ).exec(html);
+  if (!row) return { error: `"${title}" is no longer listed on the index page` };
+  const listedDate = usDateToIso(/(\d{1,2}\/\d{1,2}\/\d{4})/.exec(row[2] ?? "")?.[1] ?? "");
+  const form = new URLSearchParams();
+  for (const m of html.matchAll(/<input[^>]+type="hidden"[^>]*>/g)) {
+    const name = /name="([^"]+)"/.exec(m[0])?.[1];
+    const value = /value="([^"]*)"/.exec(m[0])?.[1] ?? "";
+    if (name)
+      form.set(
+        name,
+        value
+          .replace(/&#39;/g, "'")
+          .replace(/&quot;/g, '"')
+          .replace(/&amp;/g, "&"),
+      );
+  }
+  form.set("__EVENTTARGET", row[1]!);
+  form.set("__EVENTARGUMENT", "");
+  const action = /<form[^>]+action="([^"]+)"/.exec(html)?.[1]?.replace(/&amp;/g, "&") ?? indexUrl;
+  const post = await fetcher(new URL(action, indexUrl).toString(), {
+    method: "POST",
+    redirect: "follow",
+    headers: { "content-type": "application/x-www-form-urlencoded", ...(cookies ? { cookie: cookies } : {}) },
+    body: form.toString(),
+  });
+  const body = await post.text();
+  const path =
+    /(\/?portal\/[^'"]*?StaticContent\/[^'"]+?\.pdf)/i.exec(body)?.[1] ??
+    /(StaticContent\/[^'"]+?\.pdf)/i.exec(body)?.[1];
+  if (!path) return { error: "Could not find the document link after selecting it on the index page" };
+  const base = new URL(indexUrl);
+  const url = path.startsWith("/")
+    ? `${base.origin}${path}`
+    : new URL(path.startsWith("portal/") ? `/${path}` : `/portal/Portals/0/${path}`, base.origin).toString();
+  return { url: encodeURI(decodeURI(url)), listedDate };
+}
+
+export async function fetchCurrentDocument(
+  locator: Locator,
+  fetcher: FetchLike = defaultFetch,
+): Promise<FetchedDocument> {
+  let url: string;
+  let listedDate: string | null = null;
+  try {
+    if (locator.kind === "ga_mmis_index") {
+      const r = await resolveGaMmis(fetcher, locator.indexUrl, locator.title);
+      if ("error" in r) return fail(r.error);
+      url = r.url;
+      listedDate = r.listedDate;
+    } else url = locator.url;
+
+    const { res, bytes } = await download(fetcher, url);
+    const resolvedUrl = res.url || url;
+    if (res.status !== 200) return fail(`HTTP ${res.status}`, resolvedUrl);
+    if (bytes.length === 0) return fail("Empty response", resolvedUrl);
+    if (bytes.length > MAX_BYTES) return fail("Document too large", resolvedUrl);
+    const contentType = res.headers.get("content-type") ?? "application/octet-stream";
+    const text = normalizeText(await extract(bytes, contentType, resolvedUrl));
+    if (text.length < MIN_TEXT)
+      return fail("Page had almost no text (blocked, empty, or needs a browser)", resolvedUrl);
+
+    // Payor-specific version signals.
+    let versionLabel: string | null = null;
+    let effectiveDate: string | null = listedDate;
+    let nextRevision: string | null = null;
+    let revisions: RevisionRow[] = [];
+    if (locator.kind === "ga_mmis_index") {
+      revisions = parseGaRevisionRecord(text);
+      effectiveDate =
+        listedDate ??
+        revisions
+          .map((r) => r.date)
+          .sort()
+          .at(-1) ??
+        null;
+      versionLabel = effectiveDate ? `Effective ${effectiveDate}` : null;
+      nextRevision = effectiveDate ? nextQuarterStart(effectiveDate) : null;
+    } else if (/aetna\.com\/cpb\//i.test(resolvedUrl)) {
+      const d = parseAetnaCpbDates(text);
+      effectiveDate = d.lastReview;
+      nextRevision = d.nextReview;
+      versionLabel = d.lastReview ? `Last review ${d.lastReview}` : null;
+    }
+    return {
+      ok: true,
+      resolvedUrl,
+      contentType,
+      byteLength: bytes.length,
+      text,
+      textSha256: textSha256(text),
+      versionLabel,
+      effectiveDate,
+      nextRevision,
+      revisions,
+    };
+  } catch (e) {
+    const err = e as { name?: string; cause?: { code?: string } };
+    return fail(
+      err.name === "AbortError"
+        ? "Timed out"
+        : `Network error${err.cause?.code ? ` (${err.cause.code})` : ""}`,
+    );
+  }
+}

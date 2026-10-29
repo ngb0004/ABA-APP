@@ -27,6 +27,7 @@ export function resolvePayorRules(seed: PayorSeed, payorKey: string, seen = new 
     return {
       id: `${payorKey}#${i}`,
       payorKey,
+      lineageKey: `${payorKey}#${i}`,
       type: r.type,
       params: r.params,
       verified: r.verified,
@@ -41,5 +42,6 @@ export function resolvePayorRules(seed: PayorSeed, payorKey: string, seen = new 
       inheritedFrom: null,
     };
   });
+  // Inherited copies keep the parent's lineage key, so one verification covers them all.
   return [...inherited.map((r, i) => ({ ...r, id: `${payorKey}#inh${i}` })), ...own];
 }

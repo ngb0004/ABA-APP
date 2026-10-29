@@ -273,3 +273,22 @@ svg {
 details summary {
   cursor: pointer;
 }
+.badge.verified {
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+.badge.unverified,
+.badge.changed {
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+.badge.stale,
+.badge.broken {
+  background: var(--bad-bg);
+  color: var(--bad);
+}
+.badge.unsourced,
+.badge.unknown {
+  background: var(--info-bg);
+  color: var(--info);
+}

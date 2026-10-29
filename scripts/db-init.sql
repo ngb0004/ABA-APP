@@ -13,6 +13,8 @@ END $$;
 SELECT 'CREATE DATABASE aba OWNER aba_owner' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'aba')\gexec
 SELECT 'CREATE DATABASE aba_test OWNER aba_owner' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'aba_test')\gexec
 SELECT 'CREATE DATABASE aba_e2e OWNER aba_owner' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'aba_e2e')\gexec
+-- The owner runs migrations only; BYPASSRLS lets narrow SECURITY DEFINER helpers (app_org_ids) work.
+ALTER ROLE aba_owner BYPASSRLS;
 GRANT CONNECT ON DATABASE aba TO aba_app;
 GRANT CONNECT ON DATABASE aba_e2e TO aba_app;
 GRANT CONNECT ON DATABASE aba_test TO aba_app;

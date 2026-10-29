@@ -100,30 +100,6 @@ export async function addGoalFromTemplate(ctx: OrgCtx, clientId: string, templat
   });
 }
 
-export async function setRuleVerified(
-  ctx: OrgCtx,
-  ruleId: string,
-  verified: boolean,
-  section: string | null,
-) {
-  requirePermission(ctx.role, "payor:verify");
-  if (verified && !section?.trim())
-    throw new HttpError(422, "Record the section of the official document you checked");
-  return withOrg(ctx, async (tx) => {
-    const rule = await tx.payorRule.findUniqueOrThrow({ where: { id: ruleId } });
-    await tx.payorRule.update({
-      where: { id: ruleId },
-      data: { verified, sourceSection: section?.trim() || rule.sourceSection },
-    });
-    await audit(tx, {
-      action: verified ? "payor_rule:verify" : "payor_rule:unverify",
-      entityType: "PayorRule",
-      entityId: ruleId,
-      meta: { section },
-    });
-  });
-}
-
 export async function listAudit(ctx: OrgCtx, limit = 200) {
   requirePermission(ctx.role, "audit:read");
   return withOrg(ctx, (tx) => tx.auditEvent.findMany({ orderBy: { createdAt: "desc" }, take: limit }));

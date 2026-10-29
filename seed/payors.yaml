@@ -11,10 +11,14 @@ documents:
   ga_medicaid_asd_manual_2026q3:
     name: "GA Medicaid Policies and Procedures for ASD Services"
     version: "2026-07-01"
+    effective_date: "2026-07-01"
+    # Re-posted quarterly under a new file name: find the current file by its title on the index page.
+    locator: {kind: ga_mmis_index, indexUrl: "https://www.mmis.georgia.gov/portal/PubAccess.Provider%20Information/Provider%20Manuals/tabId/17/Default.aspx", title: "Autism Spectrum Disorder Services"}
     url: "https://www.mmis.georgia.gov/portal/Portals/0/StaticContent/Public/ALL/Handbooks/Autism%20Spectrum%20Disorder-Q3%20July%202026%2020260702131100.pdf"
   aetna_aba_request_gr69017_4:
     name: "Aetna Outpatient BH ABA Treatment Request (GR-69017-4)"
     version: "7-26 (effective 2026-08-01)"
+    effective_date: "2026-08-01"
     url: "https://www.aetna.com/content/dam/aetna/pdfs/aetnacom/pharmacy-insurance/healthcare-professional/documents/outpatient-behavioral-health-BH-ABA-assessment-precert.pdf"
   evernorth_aba_pa_928213d:
     name: "Evernorth ABA Prior Authorization Form (928213d)"
@@ -31,11 +35,28 @@ documents:
   triwest_acd_initial_referral:
     name: "TriWest ACD Initial Referral Request for ABA"
     version: "2026-04-15"
+    effective_date: "2026-04-15"
     url: "https://tricare.triwest.com/globalassets/tricare/provider/tricare-west-region-autism-care-demonstration-initial-referral-request-applied-behavior-analysis.pdf"
   checklist_2026:
     name: "Practice internal auth checklist (secondary source)"
     version: "2026"
     url: null
+    # Secondary: a rule citing only this can never be verified; re-cite it to an official document.
+    secondary: true
+  aetna_cpb_0648:
+    name: "Aetna Clinical Policy Bulletin 0648: Autism Spectrum Disorders"
+    version: "Last review 10/20/2026"
+    effective_date: "2026-10-20"
+    url: "https://www.aetna.com/cpb/medical/data/600_699/0648.html"
+  tricare_tom_c18s3:
+    name: "TRICARE Operations Manual (T-5), Chapter 18, Section 3: Autism Care Demonstration"
+    version: "As of 2025-01-17 (per manual URL)"
+    url: "https://manuals.health.mil/pages/DisplayManualHtmlFile/2025-01-17/AsOf/TOT5/C18S3.html"
+  cms_0057_f_presentation:
+    name: "CMS Interoperability and Prior Authorization Final Rule (CMS-0057-F), CMS presentation"
+    version: "2024-03-26"
+    effective_date: "2024-03-26"
+    url: "https://www.cms.gov/files/document/cms-interoperability-and-prior-authorization-final-rule-presentation-3-26-24.pdf"
 
 payors:
   - id: ga_medicaid
@@ -63,6 +84,12 @@ payors:
         source: checklist_2026
         verified: false
         notes: "DCH manual sets no percentage (defers to BACB). May be CMO-specific."
+      - type: decision_timeframe
+        params: {standard_days: 7, expedited_hours: 72, from: "2026-01-01"}
+        source: cms_0057_f_presentation
+        section: "Prior authorization decision timeframes"
+        verified: false
+        notes: "Federal ceiling for Medicaid fee-for-service and managed care; contracts may be stricter."
 
   - id: peach_state
     name: "Peach State Health Plan (GA Medicaid CMO)"

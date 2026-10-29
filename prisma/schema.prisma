@@ -352,14 +352,53 @@ model PayorDocument {
   orgId         String    @map("org_id") @db.Uuid
   key           String
   name          String
+  /// The version our rules were written against.
   version       String
   effectiveDate DateTime? @db.Date
   url           String?
+  /// How to find the current version: {kind: "direct", url} or
+  /// {kind: "ga_mmis_index", indexUrl, title}. Null for secondary sources with nothing to watch.
+  locator       Json?
+  /// Secondary sources (e.g., a practice checklist) can never verify a rule.
+  secondary     Boolean   @default(false)
+  /// unknown | ok | changed | broken
+  health        String    @default("unknown")
+  lastCheckedAt DateTime?
+  lastChangedAt DateTime?
+  /// Short, non-sensitive reason for the last failure (HTTP status, "empty response"...).
+  lastError     String?
 
-  rules PayorRule[]
+  rules     PayorRule[]
+  snapshots PayorDocumentSnapshot[]
 
   @@unique([orgId, key])
   @@map("payor_document")
+}
+
+/// One fetched version of a payor document. Public documents only; text is kept
+/// internally for change detection and quote checks, never shown in full.
+model PayorDocumentSnapshot {
+  id            String    @id @default(uuid()) @db.Uuid
+  orgId         String    @map("org_id") @db.Uuid
+  documentId    String    @db.Uuid
+  fetchedAt     DateTime  @default(now())
+  resolvedUrl   String
+  contentType   String
+  byteLength    Int
+  textSha256    String
+  text          String
+  /// Version label the payor shows (e.g., an effective date or "Last Review" date).
+  versionLabel  String?
+  effectiveDate DateTime? @db.Date
+  /// When the payor says the next revision is due, if it publishes that.
+  nextRevision  DateTime? @db.Date
+  /// Change-log rows the payor publishes: [{date, section, description, change}]
+  revisions     Json      @default("[]")
+
+  document PayorDocument @relation(fields: [documentId], references: [id])
+
+  @@index([documentId, fetchedAt])
+  @@map("payor_document_snapshot")
 }
 
 model PayorRule {
@@ -370,16 +409,45 @@ model PayorRule {
   params           Json
   sourceDocumentId String? @db.Uuid
   sourceSection    String?
-  verified         Boolean @default(false)
   notes            String?
   /// Payor key this rule was inherited from (e.g., ga_medicaid for Amerigroup).
   inheritedFrom    String?
+  /// Shared by a rule and the copies other payors inherit, so evidence applies to all of them.
+  lineageKey       String
   ordinal          Int     @default(0)
 
   payor          Payor          @relation(fields: [payorId], references: [id])
   sourceDocument PayorDocument? @relation(fields: [sourceDocumentId], references: [id])
 
+  @@index([orgId, lineageKey])
   @@map("payor_rule")
+}
+
+/// Append-only evidence for a rule lineage. A rule's status is computed from
+/// this, never typed in. Revocations are new rows, not edits.
+model RuleEvidence {
+  id         String   @id @default(uuid()) @db.Uuid
+  orgId      String   @map("org_id") @db.Uuid
+  lineageKey String
+  /// verify | revoke
+  kind       String
+  /// T1 official document, T2 written payor correspondence, T3 portal chat,
+  /// T4 phone with reference number, T5 secondary source
+  tier       String
+  /// document | letter | portal | phone | secondary
+  channel    String
+  documentId String?  @db.Uuid
+  snapshotId String?  @db.Uuid
+  section    String?
+  quote      String   @default("")
+  textSha256 String?
+  reference  String?
+  reviewerId String?  @db.Uuid
+  note       String?
+  createdAt  DateTime @default(now())
+
+  @@index([orgId, lineageKey, createdAt])
+  @@map("rule_evidence")
 }
 
 // ---------------------------------------------------------------- goals

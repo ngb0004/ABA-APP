@@ -260,6 +260,19 @@ export function runPresubmissionAudit(
   }
 
   // ---- Payor rules (from the evaluator)
+  // Rules whose source changed, broke, or expired: a warning before submission, not a denial after.
+  const stale = ruleResults.filter((r) => r.rule.trust?.status === "stale" && r.status !== "n/a");
+  if (stale.length)
+    push({
+      id: "payor.stale_sources",
+      category: "Payor rules",
+      status: "warn",
+      message: `${stale.length} payor rule(s) this plan relies on changed at the source or need re-checking`,
+      details: stale.map(
+        (r) => `${r.rule.type.replace(/_/g, " ")}: ${r.rule.trust!.reasons[0] ?? "re-check the source"}`,
+      ),
+      action: "Review the current payor document on the Payor rules page and re-verify these rules",
+    });
   for (const r of ruleResults) {
     if (r.status === "n/a" || (r.status === "pass" && r.rule.verified)) continue;
     push({
