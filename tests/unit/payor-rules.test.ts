@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { loadPayorSeed, resolvePayorRules } from "@/lib/payors/load";
 import { evaluateRule, evaluateRules } from "@/lib/payors/evaluate";
 import { RULE_TYPES, type Rule } from "@/lib/payors/types";
+import { numbersMissingFromQuote, quoteIsSubstantial } from "@/lib/rules-watch/text";
 import { client, evalContextFor, fullPlan } from "../helpers/synthetic-eval";
 
 const seed = loadPayorSeed();
@@ -35,6 +36,26 @@ describe("seed loader", () => {
         expect(r.verified).toBe(false);
         expect(r).toHaveProperty("source.section");
       }
+  });
+  it("records where official rules were read: each quote is substantial and has every number in the rule", () => {
+    let quoted = 0;
+    for (const p of seed.payors)
+      for (const r of [...p.rules, ...p.extra_rules]) {
+        if (!r.quote) continue;
+        quoted++;
+        expect(r.source, r.quote).toBeTruthy();
+        expect(seed.documents[r.source!]?.secondary ?? false).toBe(false);
+        expect(quoteIsSubstantial(r.quote), r.quote).toBe(true);
+        expect(numbersMissingFromQuote(r.params, r.quote), r.quote).toEqual([]);
+        expect(r.page, r.quote).toBeDefined();
+      }
+    expect(quoted).toBeGreaterThan(80);
+  });
+  it("renamed documents list their earlier keys, and no rule cites a missing document", () => {
+    expect(seed.documents.ga_medicaid_asd_manual?.formerly).toContain("ga_medicaid_asd_manual_2026q3");
+    for (const p of seed.payors)
+      for (const r of [...p.rules, ...p.extra_rules])
+        if (r.source) expect(seed.documents).toHaveProperty(r.source);
   });
   it("uses every rule type in the seed", () => {
     const types = new Set(seed.payors.flatMap((p) => rulesFor(p.id).map((r) => r.type)));
@@ -94,7 +115,10 @@ describe("rule types (evaluated as verified)", () => {
     expect(evaluateRule(r, { ...ctx2, offices: [] }).status).toBe("fail");
   });
   it("supervision_ratio: Cigna 1 h per 10 h per technician passes for Client 2; TRICARE monthly in-person fails for Client 3", () => {
-    const cigna = evaluateRule(verified(find("cigna_evernorth", "supervision_ratio")), ctx2);
+    const cigna = evaluateRule(
+      verified(find("cigna_evernorth", "supervision_ratio", (x) => x.params.per_technician === true)),
+      ctx2,
+    );
     expect(cigna.status).toBe("pass");
     expect(cigna.evidence.some((e) => /RBT-A/.test(e))).toBe(true);
     const tri = evaluateRule(verified(find("tricare_east", "supervision_ratio")), ctx3);
@@ -158,17 +182,18 @@ describe("rule types (evaluated as verified)", () => {
     expect(evaluateRule(verified(find("ga_medicaid", "unit_basis")), ctx1).status).toBe("pass");
   });
   it("request_timing: Amerigroup 97151 due 3 months before expiry; TRICARE window open", () => {
-    const am = evaluateRule(verified(find("amerigroup", "request_timing")), ctx1);
+    const amRule = find("amerigroup", "request_timing", (x) => x.params.months_before_auth_end !== undefined);
+    const am = evaluateRule(verified(amRule), ctx1);
     expect(am.evidence[0]).toMatch(/97151 \(separate request\) due 2026-09-28/);
     // Client 1's 90-day initial auth started after that date: it applies to the next authorization.
     expect(am.status).toBe("pass");
     const longer = { ...ctx1, authorization: { ...ctx1.authorization!, startDate: "2026-06-01" } };
-    expect(evaluateRule(verified(find("amerigroup", "request_timing")), longer).status).toBe("fail");
-    expect(evaluateRule(verified(find("tricare_east", "request_timing")), ctx3).status).toBe("warn");
-    expect(
-      evaluateRule(verified(find("tricare_east", "request_timing")), { ...ctx3, packetSubmitted: true })
-        .status,
-    ).toBe("pass");
+    expect(evaluateRule(verified(amRule), longer).status).toBe("fail");
+    const window = verified(
+      find("tricare_east", "request_timing", (x) => x.params.submit_up_to_days_before_auth_end === 60),
+    );
+    expect(evaluateRule(window, ctx3).status).toBe("warn");
+    expect(evaluateRule(window, { ...ctx3, packetSubmitted: true }).status).toBe("pass");
   });
   it("outcome_measure_schedule: Client 3 measures are due (PDDBI stale, teacher form missing)", () => {
     const r = evaluateRule(verified(find("tricare_east", "outcome_measure_schedule")), ctx3);
@@ -177,8 +202,8 @@ describe("rule types (evaluated as verified)", () => {
     expect(r.message).toMatch(/PDDBI_teacher_or_BCBA/);
     expect(r.message).not.toMatch(/PSI/);
   });
-  it("staff_credential: technicians must be RBTs", () => {
-    const r = verified(find("tricare_east", "staff_credential", (x) => x.params.role === "technician"));
+  it("staff_credential: technicians must be RBTs (TRICARE West checklist)", () => {
+    const r = verified(find("tricare_west", "staff_credential", (x) => x.params.role === "technician"));
     expect(evaluateRule(r, ctx3).status).toBe("pass");
     expect(
       evaluateRule(r, {
@@ -187,8 +212,92 @@ describe("rule types (evaluated as verified)", () => {
       }).status,
     ).toBe("fail");
   });
+  it("staff_credential: TRICARE East accepts any listed technician credential", () => {
+    const r = verified(
+      find("tricare_east", "staff_credential", (x) => Array.isArray(x.params.must_be_any_of)),
+    );
+    const at = (providerRole: string) =>
+      evaluateRule(r, {
+        ...ctx3,
+        sessions: [{ cptCode: "97153", date: "2026-10-01", units: 4, inPerson: true, providerRole }],
+      }).status;
+    expect(at("ABAT")).toBe("pass");
+    expect(at("BCAT")).toBe("pass");
+    expect(at("RBT")).toBe("pass");
+    expect(at("BCaBA")).toBe("fail");
+  });
+  it("supervision_ratio: Cigna EN0499 expects 1 to 2 h per 10 h direct", () => {
+    const r = verified(
+      find("cigna_evernorth", "supervision_ratio", (x) => x.params.max_hours_per_10_direct === 2),
+    );
+    const sessions = (supHours: number) => [
+      {
+        cptCode: "97153",
+        date: "2026-09-02",
+        units: 40,
+        inPerson: true,
+        providerId: "t1",
+        providerRole: "RBT",
+      },
+      {
+        cptCode: "97155",
+        date: "2026-09-02",
+        units: supHours * 4,
+        inPerson: true,
+        providerId: "b1",
+        providerRole: "BCBA",
+      },
+    ];
+    const ctx = (h: number) => ({
+      ...ctx2,
+      authorization: { ...ctx2.authorization!, startDate: "2026-09-01", endDate: "2027-02-28" },
+      asOf: "2026-10-15",
+      sessions: sessions(h),
+    });
+    expect(evaluateRule(r, ctx(0.5)).status).toBe("fail");
+    expect(evaluateRule(r, ctx(1.5)).status).toBe("pass");
+    // More supervision than usual is flagged for review, never blocked.
+    expect(evaluateRule(r, ctx(3)).status).toBe("warn");
+  });
+  it("supervision_ratio: Aetna compares authorized 97155 to 97153", () => {
+    const r = verified(find("aetna", "supervision_ratio", (x) => x.params.basis === "authorization"));
+    const auth = (sup: number) => ({
+      ...ctx2,
+      authorization: {
+        ...ctx2.authorization!,
+        units: [
+          { cptCode: "97153", approvedUnits: 80, unitBasis: "week" as const },
+          { cptCode: "97155", approvedUnits: sup, unitBasis: "week" as const },
+        ],
+      },
+    });
+    expect(evaluateRule(r, auth(4)).status).toBe("fail"); // 0.5 h per 10
+    expect(evaluateRule(r, auth(12)).status).toBe("pass"); // 1.5 h per 10
+    expect(evaluateRule(r, auth(24)).status).toBe("warn"); // 3 h per 10
+  });
+  it("rules the app cannot compute become manual checks, never passes", () => {
+    for (const p of seed.payors)
+      for (const r of rulesFor(p.id)) {
+        const res = evaluateRule(verified(r), ctx2);
+        if (res.status === "pass")
+          expect(res.message).not.toMatch(/^Request timing noted$|^Concurrent billing allowed$/);
+      }
+    const cig = evaluateRule(
+      verified(find("cigna_evernorth", "concurrent_billing", (x) => !Array.isArray(x.params.codes))),
+      ctx2,
+    );
+    expect(cig.status).toBe("warn");
+    expect(cig.message).toMatch(/manual check/);
+    const school = evaluateRule(
+      verified(
+        find("ga_medicaid", "required_document", (x) => x.params.when === "school_based_public_school"),
+      ),
+      ctx1,
+    );
+    expect(school.status).toBe("warn");
+  });
   it("event_trigger: n/a until the event occurs, then requires the document", () => {
-    const r = verified(find("amerigroup", "event_trigger"));
+    const r = verified(find("amerigroup", "event_trigger", (x) => x.params.event === "bcba_transfer"));
     expect(evaluateRule(r, ctx1).status).toBe("n/a");
     expect(evaluateRule(r, { ...ctx1, client: { ...ctx1.client, events: ["bcba_transfer"] } }).status).toBe(
       "fail",
@@ -203,7 +312,11 @@ describe("rule types (evaluated as verified)", () => {
           Array.isArray(x.params.must_include) && (x.params.must_include as string[]).includes("crisis_plan"),
       ),
     );
-    expect(evaluateRule(r, ctx1).status).toBe("pass");
+    // All mapped sections present; the "if applicable" items (behavior goals, telehealth) stay a manual check.
+    const full = evaluateRule(r, ctx1);
+    expect(full.status).toBe("warn");
+    expect(full.message).toMatch(/manual check/);
+    expect(full.evidence.some((e) => /telehealth readiness/.test(e))).toBe(true);
     const partial = {
       ...ctx1,
       plan: {

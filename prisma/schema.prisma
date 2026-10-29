@@ -409,6 +409,10 @@ model PayorRule {
   params           Json
   sourceDocumentId String? @db.Uuid
   sourceSection    String?
+  /// Page in the official document where the rule was read.
+  sourcePage       String?
+  /// The official sentence the rule was read from (pre-fills verification; never trusted on its own).
+  sourceQuote      String?
   notes            String?
   /// Payor key this rule was inherited from (e.g., ga_medicaid for Amerigroup).
   inheritedFrom    String?

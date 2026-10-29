@@ -34,11 +34,24 @@ export function numbersMissingFromQuote(params: unknown, quote: string): string[
     else if (v && typeof v === "object") Object.values(v).forEach(walk);
   };
   walk(params);
-  const q = normalizeText(quote);
+  const q = digitsForNumberWords(normalizeText(quote));
   // A whole number: not part of a longer number or the integer part of a decimal ("2" is not in "2.5").
   return [...new Set(nums)].filter(
     (n) => !new RegExp(`(^|[^\\d.])${n.replace(".", "\\.")}(?![\\d]|\\.\\d)`).test(q),
   );
+}
+
+const WORDS: Record<string, number> = {
+  zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12,
+  thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20, thirty: 30,
+  forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90,
+};
+
+/** Payors often spell numbers out ("one to two hours per ten hours", "six-month"); read them as digits for the number check. */
+export function digitsForNumberWords(text: string): string {
+  return text
+    .replace(/\b(twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)[- ](one|two|three|four|five|six|seven|eight|nine)\b/gi, (_m, t: string, u: string) => String(WORDS[t.toLowerCase()]! + WORDS[u.toLowerCase()]!))
+    .replace(/\b(zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)\b/gi, (w) => String(WORDS[w.toLowerCase()]));
 }
 
 /** A quote must be real text: at least 4 words and 20 characters after normalization. */

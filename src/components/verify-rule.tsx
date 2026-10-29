@@ -13,12 +13,15 @@ export function VerifyRule({
   documents,
   defaultDocumentId,
   section,
+  recordedQuote,
 }: {
   ruleId: string;
   verified: boolean;
   documents: Doc[];
   defaultDocumentId: string | null;
   section: string | null;
+  /** The sentence the rule was read from, if recorded. The reviewer still has to choose to use it. */
+  recordedQuote?: string | null;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -71,6 +74,18 @@ export function VerifyRule({
         style={{ width: "100%" }}
       />
       <label>Exact sentence from the document</label>
+      {recordedQuote && !quote && (
+        <div className="muted">
+          Recorded when the rule was written. Check it against the document before using it.{" "}
+          <button
+            className="secondary"
+            data-testid={`use-quote-${ruleId}`}
+            onClick={() => setQuote(recordedQuote)}
+          >
+            Use the recorded quote
+          </button>
+        </div>
+      )}
       <textarea
         data-testid={`quote-${ruleId}`}
         value={quote}

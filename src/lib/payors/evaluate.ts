@@ -19,6 +19,18 @@ const fmt = (n: number) => String(Math.round(n * 100) / 100);
 const pct = (n: number) => `${fmt(n * 100)}%`;
 const NA = (message: string): Outcome => ({ status: "n/a", message });
 
+/** A rule the app cannot compute from its parameters: show what it says and ask for a manual check. */
+function guidance(p: Record<string, unknown>, message: string, skip: string[] = []): Outcome {
+  return {
+    status: "warn",
+    message: `${message} (manual check)`,
+    evidence: Object.keys(p)
+      .filter((k) => !skip.includes(k))
+      .map((k) => `${k.replace(/_/g, " ")}: ${typeof p[k] === "string" ? p[k] : JSON.stringify(p[k])}`),
+  };
+}
+const has = (p: Record<string, unknown>, keys: string[]) => keys.some((k) => p[k] !== undefined);
+
 const norm = (s: string) =>
   s
     .toLowerCase()
@@ -54,6 +66,12 @@ export function documentPresent(doc: string, ctx: EvalContext): { present: boole
 /** Plan-content topics mapped to our section taxonomy. */
 const TOPIC_SECTIONS: Record<string, string[]> = {
   background: ["background"],
+  medications: ["background"],
+  parent_concerns: ["background"],
+  assessment_results: ["assessment"],
+  skill_goals: ["skill_goals"],
+  behavior_goals: ["behavior_goals"],
+  caregiver_goals: ["caregiver"],
   goals: ["skill_goals", "behavior_goals"],
   coordination_of_care: ["coordination"],
   care_coordination: ["coordination"],
@@ -87,6 +105,16 @@ const EVALUATORS: Record<RuleType, Evaluator> = {
     if (when === "reauth" && ctx.plan?.type !== "reauth")
       return NA(`${doc}: only required for reauthorization`);
     if (when === "treatment" && !ctx.plan) return NA(`${doc}: only required for treatment requests`);
+    if (when && !["reauth", "treatment", "if_applicable"].includes(when)) {
+      // The app does not track this condition (e.g., school-based or telehealth services): ask, never assume.
+      const { present, how } = documentPresent(doc, ctx);
+      if (present) return { status: "pass", message: `${doc}: present`, evidence: [how] };
+      return {
+        status: "warn",
+        message: `${doc}: required when ${when.replace(/_/g, " ")} (manual check)`,
+        evidence: [str(p.note) ?? "Attach it if this applies to the request"],
+      };
+    }
     if (when === "if_applicable") {
       const applicable = /ifsp/i.test(doc)
         ? ctx.client.ageYears < 3
@@ -96,7 +124,18 @@ const EVALUATORS: Record<RuleType, Evaluator> = {
       if (!applicable) return NA(`${doc}: not applicable to this client`);
     }
     const { present, how } = documentPresent(doc, ctx);
-    if (present) return { status: "pass", message: `${doc}: present`, evidence: [how] };
+    const age = num(p.max_age_months_before_effective);
+    if (present)
+      return {
+        status: "pass",
+        message: `${doc}: present`,
+        evidence: [
+          how,
+          age !== undefined
+            ? `Must be no more than ${age} months older than the requested effective date`
+            : "",
+        ].filter(Boolean),
+      };
     if (p.optional === true) return NA(`${doc}: optional, not attached`);
     return {
       status: "fail",
@@ -145,6 +184,29 @@ const EVALUATORS: Record<RuleType, Evaluator> = {
         ? num(p.hours_supervision_per_10_hours_direct)! * 10
         : undefined);
     const perTech = p.per_technician === true || p.min_pct_per_technician !== undefined;
+    // Range of supervision hours per 10 direct hours. basis "authorization" compares authorized units instead.
+    const min10 = num(p.min_hours_per_10_direct);
+    const max10 = num(p.max_hours_per_10_direct);
+    let aboveRange = false;
+    if ((min10 !== undefined || max10 !== undefined) && p.basis === "authorization") {
+      const sup = ctx.authorization?.units.find((u) => u.cptCode === SUPERVISION_CODE);
+      const dir = ctx.authorization?.units.find((u) => u.cptCode === DIRECT_CODE);
+      if (!sup || !dir || sup.unitBasis !== dir.unitBasis || dir.approvedUnits <= 0)
+        return NA(`${SUPERVISION_CODE} and ${DIRECT_CODE} are not both authorized on the same basis`);
+      const per10 = (sup.approvedUnits / dir.approvedUnits) * 10;
+      const low = min10 !== undefined && per10 < min10 - 1e-9;
+      const high = max10 !== undefined && per10 > max10 + 1e-9;
+      const range = `${min10 ?? 0}–${max10 ?? "∞"}`;
+      return {
+        status: low ? "fail" : high ? "warn" : "pass",
+        message: low
+          ? `Authorized ${SUPERVISION_CODE} is below ${range} h per 10 h of ${DIRECT_CODE}`
+          : high
+            ? `Authorized ${SUPERVISION_CODE} is above the usual ${range} h per 10 h of ${DIRECT_CODE}`
+            : `Authorized ${SUPERVISION_CODE} is within ${range} h per 10 h of ${DIRECT_CODE}`,
+        evidence: [`Authorized: ${fmt(per10)} h ${SUPERVISION_CODE} per 10 h ${DIRECT_CODE}`],
+      };
+    }
     for (const m of months) {
       if (minPct !== undefined) {
         if (perTech) {
@@ -162,6 +224,15 @@ const EVALUATORS: Record<RuleType, Evaluator> = {
             `${m.month}: ${fmt(m.supervisionHours)} h supervision / ${fmt(m.directHours)} h direct = ${m.ratio === null ? "n/a" : pct(m.ratio)} (min ${minPct}%)${ok ? "" : " — below minimum"}`,
           );
         }
+      }
+      if ((min10 !== undefined || max10 !== undefined) && m.directHours > 0) {
+        const per10 = (m.supervisionHours / m.directHours) * 10;
+        const low = min10 !== undefined && per10 < min10 - 1e-9;
+        if (low) failed = true;
+        if (max10 !== undefined && per10 > max10 + 1e-9) aboveRange = true;
+        evidence.push(
+          `${m.month}: ${fmt(per10)} h supervision per 10 h direct (expected ${min10 ?? 0}–${max10 ?? "∞"})${low ? " — below minimum" : ""}`,
+        );
       }
       const maxPer10 = num(p.max_protocol_mod_hours_per_10_direct);
       if (maxPer10 !== undefined && m.directHours > 0) {
@@ -197,11 +268,14 @@ const EVALUATORS: Record<RuleType, Evaluator> = {
       }
     }
     const severity = str(p.severity_if_missed);
+    if (!evidence.length) return guidance(p, "Supervision guidance");
     return {
-      status: failed ? "fail" : "pass",
+      status: failed ? "fail" : aboveRange ? "warn" : "pass",
       message: failed
         ? `Supervision requirement not met${severity === "hard_alert" ? " (hard alert: recoupment risk)" : ""}`
-        : "Supervision requirement met",
+        : aboveRange
+          ? "Supervision is above the payor's usual range"
+          : "Supervision requirement met",
       evidence,
     };
   },
@@ -224,8 +298,15 @@ const EVALUATORS: Record<RuleType, Evaluator> = {
 
   concurrent_billing(p, ctx) {
     const codes = Array.isArray(p.codes) ? (p.codes as string[]) : [];
-    if (p.allowed !== false || codes.length < 2)
-      return { status: "pass", message: "Concurrent billing allowed" };
+    if (p.allowed !== false)
+      return {
+        status: "pass",
+        message: codes.length
+          ? `${codes.join(" and ")} may be billed together`
+          : "Concurrent billing allowed",
+        evidence: [str(p.condition)].filter((x): x is string => !!x),
+      };
+    if (codes.length < 2) return guidance(p, "Concurrent billing restriction", ["allowed"]);
     const [a, b] = codes as [string, string];
     const conflicts: string[] = [];
     const sa = ctx.sessions.filter((s) => s.cptCode === a);
@@ -273,6 +354,7 @@ const EVALUATORS: Record<RuleType, Evaluator> = {
   },
 
   unit_limit(p, ctx) {
+    if (p.guide_only === true || p.code === undefined) return guidance(p, "Unit guidance", ["guide_only"]);
     if (!ctx.authorization) return NA("No authorization");
     const code = str(p.code) ?? "";
     const u = ctx.authorization.units.find((x) => x.cptCode === code);
@@ -283,8 +365,7 @@ const EVALUATORS: Record<RuleType, Evaluator> = {
       max = num(p.initial_units)! + (num(p.initial_outcome_units) ?? 0);
     else if (ctx.authorization.kind === "reauth" && num(p.reassessment_units) !== undefined)
       max = num(p.reassessment_units)!;
-    if (max === undefined)
-      return { status: "warn", message: `Unit limit for ${code}: ${JSON.stringify(p)}`, evidence: [] };
+    if (max === undefined) return guidance(p, `Unit limit for ${code}`, ["code"]);
     const requested =
       u.unitBasis === "auth"
         ? u.approvedUnits
@@ -300,6 +381,8 @@ const EVALUATORS: Record<RuleType, Evaluator> = {
   },
 
   unit_basis(p, ctx) {
+    if (!has(p, ["request_per", "treatment_periods_weeks", "assessment_increment_months"]))
+      return guidance(p, "Units and billing");
     if (!ctx.authorization) return NA("No authorization");
     const evidence: string[] = [];
     let failed = false;
@@ -332,6 +415,15 @@ const EVALUATORS: Record<RuleType, Evaluator> = {
   },
 
   request_timing(p, ctx) {
+    if (
+      !has(p, [
+        "months_before_auth_end",
+        "submit_up_to_days_before_auth_end",
+        "report_due_days_after_assessment",
+        "with_other_codes",
+      ])
+    )
+      return guidance(p, "Request timing");
     if (!ctx.authorization) return NA("No authorization");
     const end = ctx.authorization.endDate;
     const evidence: string[] = [];
@@ -346,7 +438,7 @@ const EVALUATORS: Record<RuleType, Evaluator> = {
     if (num(p.submit_up_to_days_before_auth_end) !== undefined) {
       // A window opening, not a deadline: earliest date a reauth may be submitted.
       const opens = addDays(end, -num(p.submit_up_to_days_before_auth_end)!);
-      evidence.push(`Reauth submission window opens ${opens}`);
+      evidence.push(`Reauth submission window opens ${opens}${p.day_type ? ` (${p.day_type} days)` : ""}`);
       windowOpen = ctx.asOf >= opens && ctx.asOf <= end;
     }
     if (num(p.report_due_days_after_assessment) !== undefined)
@@ -366,14 +458,17 @@ const EVALUATORS: Record<RuleType, Evaluator> = {
         message: `Reauth submission window is open (authorization ends ${end})`,
         evidence,
       };
+    if (!due && num(p.submit_up_to_days_before_auth_end) === undefined)
+      return { status: "warn", message: "Request timing (manual check)", evidence };
     return {
       status: "pass",
-      message: due ? `Request timing: next due ${due}` : "Request timing noted",
+      message: due ? `Request timing: next due ${due}` : "Reauth submission window not open yet",
       evidence,
     };
   },
 
   outcome_measure_schedule(p, ctx) {
+    if (!has(p, ["initial", "every_6_months"])) return guidance(p, "Outcome measures");
     const needed =
       ctx.plan?.type === "initial" || ctx.authorization?.kind === "initial"
         ? ((p.initial as string[] | undefined) ?? [])
@@ -407,15 +502,20 @@ const EVALUATORS: Record<RuleType, Evaluator> = {
 
   staff_credential(p, ctx) {
     if (str(p.role) === "technician") {
-      const must = str(p.must_be) ?? "RBT";
-      const bad = ctx.sessions.filter((s) => s.cptCode === DIRECT_CODE && s.providerRole !== must);
+      const anyOf = Array.isArray(p.must_be_any_of)
+        ? (p.must_be_any_of as string[])
+        : [str(p.must_be) ?? "RBT"];
+      const label = anyOf.join(" or ");
+      const bad = ctx.sessions.filter(
+        (s) => s.cptCode === DIRECT_CODE && !anyOf.includes(s.providerRole ?? ""),
+      );
       return bad.length
         ? {
             status: "fail",
-            message: `${bad.length} ${DIRECT_CODE} session(s) delivered by non-${must} staff`,
+            message: `${bad.length} ${DIRECT_CODE} session(s) delivered by staff who are not ${label}`,
             evidence: bad.slice(0, 5).map((s) => `${s.date}: ${s.providerRole}`),
           }
-        : { status: "pass", message: `All technicians are ${must}s` };
+        : { status: "pass", message: `All technicians are ${label}` };
     }
     if (str(p.when) === "bcaba_delegated_codes") {
       const delegated = ctx.sessions.some((s) => s.providerRole === "BCaBA");
@@ -425,13 +525,15 @@ const EVALUATORS: Record<RuleType, Evaluator> = {
         ? { status: "pass", message: "BCaBA attestation on file" }
         : { status: "fail", message: `${str(p.requires)} required` };
     }
-    return { status: "warn", message: `Staff credential rule: ${JSON.stringify(p)}`, evidence: [] };
+    return guidance(p, "Staff credentials");
   },
 
   event_trigger(p, ctx) {
-    const event = str(p.event) ?? "";
-    if (!ctx.client.events.includes(event)) return NA(`Event "${event}" has not occurred`);
+    const events = Array.isArray(p.events) ? (p.events as string[]) : [str(p.event) ?? ""];
+    const event = events.find((e) => ctx.client.events.includes(e));
+    if (!event) return NA(`Event "${events.join(" / ")}" has not occurred`);
     const req = str(p.requires) ?? "";
+    if (!req) return guidance(p, `Event "${event}"`, ["event", "events"]);
     const { present, how } = documentPresent(req, ctx);
     return present
       ? { status: "pass", message: `${req}: present`, evidence: [how] }
@@ -441,11 +543,17 @@ const EVALUATORS: Record<RuleType, Evaluator> = {
   plan_content(p, ctx) {
     const evidence: string[] = [];
     const must = Array.isArray(p.must_include) ? (p.must_include as string[]) : [];
-    const known = Object.keys(p).filter((k) => !["must_include", "signed_by"].includes(k));
+    const known = Object.keys(p).filter(
+      (k) => !["must_include", "must_include_if_applicable", "signed_by"].includes(k),
+    );
+    const ifApplicable = Array.isArray(p.must_include_if_applicable)
+      ? (p.must_include_if_applicable as string[])
+      : [];
     if (!ctx.plan) {
       if (must.length || p.signed_by) return { status: "fail", message: "No plan yet", evidence: [] };
     }
     const missing: string[] = [];
+    let manual = 0;
     for (const topic of must) {
       if (topic === "evaluation_date") {
         if (!ctx.plan?.includesEvaluationDate) missing.push("evaluation date");
@@ -453,18 +561,26 @@ const EVALUATORS: Record<RuleType, Evaluator> = {
       }
       const keys = TOPIC_SECTIONS[topic];
       if (!keys) {
-        evidence.push(`Manual check: "${topic}"`);
+        evidence.push(`Manual check: "${topic.replace(/_/g, " ")}"`);
+        manual++;
         continue;
       }
       const ok = keys.every((k) => ctx.plan?.sections.some((s) => s.key === k && s.hasContent));
       if (!ok) missing.push(topic.replace(/_/g, " "));
     }
     if (p.signed_by === "BCBA" && !ctx.plan?.allApprovedByBcba) missing.push("BCBA approval/signature");
+    for (const topic of ifApplicable) evidence.push(`If applicable: "${topic.replace(/_/g, " ")}"`);
     for (const k of known) evidence.push(`${k.replace(/_/g, " ")}: ${JSON.stringify(p[k])}`);
     if (missing.length)
       return { status: "fail", message: `Plan must include: ${missing.join(", ")}`, evidence };
     if (!must.length && !p.signed_by)
       return { status: "warn", message: "Plan content guidance (manual check)", evidence };
+    if (manual || ifApplicable.length)
+      return {
+        status: "warn",
+        message: "Required plan content present; some items need a manual check",
+        evidence,
+      };
     return { status: "pass", message: "Required plan content present", evidence };
   },
 
@@ -484,6 +600,9 @@ const EVALUATORS: Record<RuleType, Evaluator> = {
   decision_timeframe(p) {
     const parts = [
       num(p.standard_days) !== undefined ? `standard requests within ${p.standard_days} calendar days` : null,
+      num(p.supplemental_documentation_days) !== undefined
+        ? `${p.supplemental_documentation_days} more calendar days after supplemental documentation`
+        : null,
       num(p.expedited_hours) !== undefined ? `expedited requests within ${p.expedited_hours} hours` : null,
     ].filter(Boolean);
     return {

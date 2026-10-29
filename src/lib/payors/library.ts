@@ -20,8 +20,14 @@ export function locatorFor(doc: PayorSeed["documents"][string]): Locator | null 
 export async function syncPayorLibrary(tx: Tx, orgId: string, seed: PayorSeed = loadPayorSeed()) {
   const docIds: Record<string, string> = {};
   for (const [key, doc] of Object.entries(seed.documents)) {
-    const id = sid(`${orgId}:doc:${key}`);
-    docIds[key] = id;
+    // A renamed document keeps its row (and so its fetched copies and the evidence that cites them).
+    if (
+      doc.formerly?.length &&
+      !(await tx.payorDocument.findUnique({ where: { orgId_key: { orgId, key } } }))
+    ) {
+      const old = await tx.payorDocument.findFirst({ where: { orgId, key: { in: doc.formerly } } });
+      if (old) await tx.payorDocument.update({ where: { id: old.id }, data: { key } });
+    }
     const data = {
       name: doc.name,
       version: doc.version,
@@ -30,11 +36,13 @@ export async function syncPayorLibrary(tx: Tx, orgId: string, seed: PayorSeed = 
       locator: (locatorFor(doc) ?? undefined) as Prisma.InputJsonValue | undefined,
       secondary: doc.secondary ?? false,
     };
-    await tx.payorDocument.upsert({
+    const row = await tx.payorDocument.upsert({
       where: { orgId_key: { orgId, key } },
-      create: { id, orgId, key, ...data },
+      create: { id: sid(`${orgId}:doc:${key}`), orgId, key, ...data },
       update: data,
+      select: { id: true },
     });
+    docIds[key] = row.id;
   }
 
   const payorIds: Record<string, string> = {};
@@ -65,6 +73,8 @@ export async function syncPayorLibrary(tx: Tx, orgId: string, seed: PayorSeed = 
         params: r.params as Prisma.InputJsonValue,
         sourceDocumentId: r.source.key ? (docIds[r.source.key] ?? null) : null,
         sourceSection: r.source.section,
+        sourcePage: r.source.page ?? null,
+        sourceQuote: r.source.quote ?? null,
         notes: r.notes,
         inheritedFrom: r.inheritedFrom,
         lineageKey: lineage,

@@ -1,29 +1,56 @@
 # Payor rules seed: Georgia launch market.
 #
-# EVERY rule ships with verified: false. A rule is set to verified: true only after a
-# human checks it against the cited official document and records the section.
+# EVERY rule ships with verified: false. A rule's status comes from recorded evidence:
+# a BCBA verifies it by pasting a sentence from the current official document
+# (the `quote` below pre-fills that form; the app still checks it against the live copy).
 # Sources:
 #   checklist_2026 = one practice's internal auth checklist (secondary source, may be outdated)
-#   official docs  = listed under each payor's documents
+#   official docs  = listed under documents
+# `page` and `quote` record where the rule was read in the official document.
 # Unverified rules may only produce WARN in the evaluator.
+# Reviewed against the official documents in docs/PAYOR_DOCUMENTS_REVIEW.md.
 
 documents:
-  ga_medicaid_asd_manual_2026q3:
+  ga_medicaid_asd_manual:
     name: "GA Medicaid Policies and Procedures for ASD Services"
-    version: "2026-07-01"
-    effective_date: "2026-07-01"
+    version: "Q4 2026 (effective 2026-10-01)"
+    effective_date: "2026-10-01"
+    # Earlier key: sync renames the stored document, keeping its fetched copies.
+    formerly: [ga_medicaid_asd_manual_2026q3]
     # Re-posted quarterly under a new file name: find the current file by its title on the index page.
     locator: {kind: ga_mmis_index, indexUrl: "https://www.mmis.georgia.gov/portal/PubAccess.Provider%20Information/Provider%20Manuals/tabId/17/Default.aspx", title: "Autism Spectrum Disorder Services"}
-    url: "https://www.mmis.georgia.gov/portal/Portals/0/StaticContent/Public/ALL/Handbooks/Autism%20Spectrum%20Disorder-Q3%20July%202026%2020260702131100.pdf"
+    url: "https://www.mmis.georgia.gov/portal/Portals/0/StaticContent/Public/ALL/Handbooks/Autism%20Spectrum%20Disorder-Q4%20October%202026%2020261001130506.pdf"
   aetna_aba_request_gr69017_4:
     name: "Aetna Outpatient BH ABA Treatment Request (GR-69017-4)"
     version: "7-26 (effective 2026-08-01)"
     effective_date: "2026-08-01"
     url: "https://www.aetna.com/content/dam/aetna/pdfs/aetnacom/pharmacy-insurance/healthcare-professional/documents/outpatient-behavioral-health-BH-ABA-assessment-precert.pdf"
+  aetna_office_manual:
+    name: "Aetna Provider Manual (office manual)"
+    version: "8102800-01-01 (6/26)"
+    url: "https://www.aetna.com/content/dam/aetna/pdfs/aetnacom/health-care-professionals/office_manual_hcp.pdf"
+  aetna_aba_mn_guide:
+    name: "Aetna Applied Behavior Analysis Medical Necessity Guide"
+    version: "7244850-01-01"
+    url: "https://www.aetna.com/content/dam/aetna/pdfs/health-care-professionals/applied-behavioral-analysis-necessity-guide.pdf"
+  aetna_cpb_0648:
+    name: "Aetna Clinical Policy Bulletin 0648: Autism Spectrum Disorders"
+    version: "Last review 10/20/2026"
+    effective_date: "2026-10-20"
+    url: "https://www.aetna.com/cpb/medical/data/600_699/0648.html"
   evernorth_aba_pa_928213d:
     name: "Evernorth ABA Prior Authorization Form (928213d)"
     version: "Rev. 08/2021"
     url: "https://static.cigna.com/assets/chcp/pdf/resourceLibrary/behavioral/applied-behavior-analysis.pdf"
+  cigna_en0499:
+    name: "Evernorth Behavioral Health Coverage Policy EN0499: Intensive Behavioral Interventions"
+    version: "Effective 5/15/2026 (next review 12/15/2026)"
+    effective_date: "2026-05-15"
+    url: "https://static.cigna.com/assets/chcp/pdf/coveragePolicies/medical/en_mm_0499_coveragepositioncriteria_intensive_behavioral_interventions.pdf"
+  anthem_aba_resource_guide:
+    name: "Anthem ABA Provider Resource Guide"
+    version: "MULTI-BCBS-CM-084583-25 (June 2025)"
+    url: "https://www.anthembluecross.com/content/dam/digital/docs/anthembluecross/provider/commercial/forms/aba-provider-resource-guide-abc.pdf"
   umr_aba_doc_reqs:
     name: "UMR Behavioral Health ABA Therapy Documentation Requirements"
     version: "unknown"
@@ -32,22 +59,20 @@ documents:
     name: "Humana Military Request for ABA Reassessment (XPBB0824-A)"
     version: "unknown"
     url: "https://assets.humana.com/is/content/humana/request-for-applied-behavior-analysis-aba-reassessmentpdf"
+  # No public copy matches the edition we reviewed: a BCBA uploads the official file (Payor rules, Sources).
+  tricare_east_provider_handbook_2026:
+    name: "TRICARE Provider Handbook, East Region (Humana Military)"
+    version: "2026"
+    url: null
+  humana_aba_faq_xpbb0825:
+    name: "Humana Military ABA Provider FAQ (XPBB0825-C)"
+    version: "XPBB0825-C"
+    url: null
   triwest_acd_initial_referral:
     name: "TriWest ACD Initial Referral Request for ABA"
     version: "2026-04-15"
     effective_date: "2026-04-15"
     url: "https://tricare.triwest.com/globalassets/tricare/provider/tricare-west-region-autism-care-demonstration-initial-referral-request-applied-behavior-analysis.pdf"
-  checklist_2026:
-    name: "Practice internal auth checklist (secondary source)"
-    version: "2026"
-    url: null
-    # Secondary: a rule citing only this can never be verified; re-cite it to an official document.
-    secondary: true
-  aetna_cpb_0648:
-    name: "Aetna Clinical Policy Bulletin 0648: Autism Spectrum Disorders"
-    version: "Last review 10/20/2026"
-    effective_date: "2026-10-20"
-    url: "https://www.aetna.com/cpb/medical/data/600_699/0648.html"
   tricare_tom_c18s3:
     name: "TRICARE Operations Manual (T-5), Chapter 18, Section 3: Autism Care Demonstration"
     version: "As of 2025-01-17 (per manual URL)"
@@ -57,28 +82,99 @@ documents:
     version: "2024-03-26"
     effective_date: "2024-03-26"
     url: "https://www.cms.gov/files/document/cms-interoperability-and-prior-authorization-final-rule-presentation-3-26-24.pdf"
+  checklist_2026:
+    name: "Practice internal auth checklist (secondary source)"
+    version: "2026"
+    url: null
+    # Secondary: a rule citing only this can never be verified; re-cite it to an official document.
+    secondary: true
 
 payors:
   - id: ga_medicaid
     name: "Georgia Medicaid (straight / Katie Beckett)"
     rules:
-      - {type: required_document, params: {doc: "GA Medicaid PA cover sheet (Appendix D)"}, source: ga_medicaid_asd_manual_2026q3, section: "Appendix D", verified: false}
-      - {type: required_document, params: {doc: "Diagnostic evaluation"}, source: ga_medicaid_asd_manual_2026q3, section: "802/803", verified: false}
-      - {type: required_document, params: {doc: "Letter of medical necessity"}, source: ga_medicaid_asd_manual_2026q3, section: "802/803", verified: false}
-      - {type: required_document, params: {doc: "Proposed plan of care", when: treatment}, source: ga_medicaid_asd_manual_2026q3, section: "803", verified: false}
-      - {type: required_document, params: {doc: "Updated data from previous authorization", when: reauth}, source: ga_medicaid_asd_manual_2026q3, section: "803", verified: false}
-      - {type: required_document, params: {doc: "IFSP", when: if_applicable}, source: ga_medicaid_asd_manual_2026q3, section: "802/803", verified: false}
-      - {type: required_document, params: {doc: "IEP", optional: true}, source: ga_medicaid_asd_manual_2026q3, section: "802/803", verified: false}
-      - {type: plan_content, params: {must_include: [background, goals, coordination_of_care, transition_plan, discharge_criteria, crisis_plan], signed_by: BCBA}, source: ga_medicaid_asd_manual_2026q3, section: "Appendix D", verified: false}
-      - {type: plan_content, params: {must_include: [evaluation_date]}, source: checklist_2026, verified: false}
-      - {type: submission_channel, params: {channel: portal, name: "Georgia Medical Review Portal", separate_requests: ["assessment (97151)", "treatment"]}, source: ga_medicaid_asd_manual_2026q3, section: "Appendix E", verified: false}
-      - {type: unit_basis, params: {assessment_increment_months: 3, treatment_periods_weeks: [13, 26]}, source: ga_medicaid_asd_manual_2026q3, section: "Appendix D", verified: false}
-      - type: signature_type
-        params: {document: "cover sheet", requirement: "CONFLICT: checklist says wet signature only; manual 602.3.4 allows secure e-signature, bans rubber stamps"}
-        source: ga_medicaid_asd_manual_2026q3
-        section: "602.3.4"
+      - type: required_document
+        params: {doc: "GA Medicaid PA cover sheet (Appendix D)"}
+        source: ga_medicaid_asd_manual
+        section: "802.6 / 803.11; Appendix D"
+        page: 25
+        quote: "802.6. Medicaid Cover Page (Appendix D)"
         verified: false
-        notes: "Confirm with DCH/CMO before enforcing."
+      - {type: required_document, params: {doc: "Diagnostic evaluation"}, source: ga_medicaid_asd_manual, section: "802.1 / 803.1", page: 26, verified: false}
+      - {type: required_document, params: {doc: "Letter of medical necessity"}, source: ga_medicaid_asd_manual, section: "802.2 / 803.2", page: 26, verified: false}
+      - type: required_document
+        params: {doc: "Proposed plan of care", when: treatment}
+        source: ga_medicaid_asd_manual
+        section: "803.4"
+        page: 26
+        quote: "803.4. Proposed Plan of Care (POC)"
+        verified: false
+      - type: required_document
+        params: {doc: "Updated data from previous authorization", when: reauth, max_age_months_before_effective: 2}
+        source: ga_medicaid_asd_manual
+        section: "803.5"
+        page: 26
+        quote: "This data should reflect the member’s current performance and must not be more than two months older than the effective date of the requested prior authorization."
+        verified: false
+        notes: "Probe data is also expected for goals that were baselined but not yet introduced."
+      - type: required_document
+        params: {doc: "IFSP", when: if_applicable}
+        source: ga_medicaid_asd_manual
+        section: "802.3 / 803.6"
+        page: 26
+        quote: "803.6. Individualized Family Service Plan (if applicable)."
+        verified: false
+      - {type: required_document, params: {doc: "IEP", optional: true}, source: ga_medicaid_asd_manual, section: "803.7", page: 26, verified: false}
+      - type: required_document
+        params: {doc: "Most recent IEP, IFSP, and/or 504 plan", when: school_based_public_school}
+        source: ga_medicaid_asd_manual
+        section: "804.12"
+        page: 28
+        quote: "The most recent Individualized Education Plan (IEP), Individualized Family Support Plan (IFSP), and/or 504 plan should be included for members who attend a public school."
+        verified: false
+        notes: "Not required for private school or homeschool. Applies when school-based services are requested."
+      - type: plan_content
+        params:
+          must_include: [background, medications, parent_concerns, assessment_results, skill_goals, caregiver_goals, coordination_of_care, transition_plan, discharge_criteria, crisis_plan]
+          must_include_if_applicable: [behavior_goals, telehealth_readiness]
+          signed_by: BCBA
+        source: ga_medicaid_asd_manual
+        section: "Appendix D, Checklist A.iii"
+        page: 45
+        quote: "Plan of Care (Initial Treatment Plan or Progress Report) including the following:"
+        verified: false
+        notes: "Signature may be a BCBA or BCBA-D."
+      - type: plan_content
+        params: {must_include: [evaluation_date]}
+        source: ga_medicaid_asd_manual
+        section: "801.2"
+        page: 22
+        quote: "Include the date it was completed and include the tests administered with scores."
+        verified: false
+      - type: submission_channel
+        params: {channel: portal, name: "Georgia Medical Review Portal", separate_requests: ["initial assessment"], consolidated_ongoing: true}
+        source: ga_medicaid_asd_manual
+        section: "Appendix E B.xiv.2.a"
+        page: 50
+        quote: "Once a member has completed their initial behavioral assessment, the initial treatment PA, and all subsequent ongoing PAs, must be submitted as a single consolidated request."
+        verified: false
+        notes: "The same manual's Appendix E B.iii/iv (page 48) still describes separate assessment and treatment PAs. Confirm with DCH (question 24)."
+      - type: unit_basis
+        params: {assessment_increment_months: 3, treatment_periods_weeks: [13, 26]}
+        source: ga_medicaid_asd_manual
+        section: "801; Appendix D"
+        page: 43
+        quote: "# of units/3 mths (13 wks) / # of units/6 mths (26 wks)"
+        verified: false
+        notes: "Section 801: assessment PAs in 3-month increments, treatment PAs in 6-month increments (up to 26 weeks)."
+      - type: signature_type
+        params: {document: "cover sheet", requirement: "Secure electronic signatures are acceptable; rubber stamps are not. The practice checklist says wet signature only."}
+        source: ga_medicaid_asd_manual
+        section: "602.3.4"
+        page: 17
+        quote: "Rubber stamp signatures are not acceptable. Secure Electronic Signatures are acceptable"
+        verified: false
+        notes: "Confirm with DCH/CMO before relying on e-signature for the cover sheet."
       - type: supervision_ratio
         params: {min_pct_of_hours_per_month: 10, max_pct_authorized: 20}
         source: checklist_2026
@@ -90,6 +186,175 @@ payors:
         section: "Prior authorization decision timeframes"
         verified: false
         notes: "Federal ceiling for Medicaid fee-for-service and managed care; contracts may be stricter."
+      - type: decision_timeframe
+        params: {standard_days: 7, day_type: calendar, supplemental_documentation_days: 10}
+        source: ga_medicaid_asd_manual
+        section: "Appendix E B.viii"
+        page: 49
+        quote: "Please allow up to 7 calendar days for the PA request to be reviewed and a decision issued. If it is necessary for a provider to submit supplemental documentation to resolve a technical or peer denial, an additional 10 calendar days for the reviewer to complete the review and render a decision is required."
+        verified: false
+      # From the official documents review (ga_medicaid)
+      - type: required_document
+        params: {"doc": "Skill acquisition line graphs (per goal)", "when": "reauth"}
+        source: ga_medicaid_asd_manual
+        section: "803.10 (new in Q4)"
+        page: 26
+        quote: "Providers shall submit skill acquisition line graphs with continued treatment authorization requests."
+        verified: false
+      - type: required_document
+        params: {"doc": "Progress summary for each behavior targeted for reduction", "when": "if_applicable", "must_address": ["data variability", "intervention effectiveness", "modifications"]}
+        source: ga_medicaid_asd_manual
+        section: "803.9"
+        page: 26
+        quote: "Progress summaries, if applicable, are required for each behavior targeted for reduction. These summaries should address data variability, clarify the effectiveness of current intervention strategies, and describe any modifications implemented."
+        verified: false
+      - type: required_document
+        params: {"doc": "Previous hospitalization or out-of-home placement documents", "when": "if_applicable"}
+        source: ga_medicaid_asd_manual
+        section: "803.8"
+        page: 26
+        quote: "803.8. Previous Hospitalization or out-of-home placement documents (if applicable)."
+        verified: false
+      - type: required_document
+        params: {"doc": "Telehealth Readiness Checklist (Appendix D)", "when": "telehealth", "sections": ["general", "per CPT code requested"]}
+        source: ga_medicaid_asd_manual
+        section: "903.3 Telehealth Services"
+        page: 33
+        quote: "The Telehealth Readiness Checklist (located in Appendix D) must be completed for all services delivered via telehealth and submitted as supporting documentation with the prior authorization (PA) request."
+        verified: false
+      - type: plan_content
+        params: {"diagnostic_eval_requires": {"clinician_tools_min": 1, "caregiver_tools_min": 1}, "cars_gars_both_versions_count_once": true, "school_psychoeducational_accepted": false}
+        source: ga_medicaid_asd_manual
+        section: "Appendix D, A. Checklist, i.1"
+        page: 45
+        quote: "Diagnostic Evaluation Requires One (1) Clinician Tool and One (1) Caregiver Tool from the Acceptable Tools List"
+        verified: false
+      - type: plan_content
+        params: {"goal_must_include": ["baseline", "measurement_method", "mastery_criteria"], "per_goal_also": ["medical_necessity_rationale", "date_of_introduction", "projected_mastery"]}
+        source: ga_medicaid_asd_manual
+        section: "804. Plan of Care"
+        page: 27
+        quote: "Each goal must include baseline data, measurement methods, and mastery criteria designed to address the core deficits of ASD, consistent with the practice guidelines for treatment of ASD established by the Behavior Analyst Certification Board (BACB)."
+        verified: false
+      - type: plan_content
+        params: {"caregiver_goals_min": 2, "caregiver_goals_max": 4, "presence_alone_insufficient": true}
+        source: ga_medicaid_asd_manual
+        section: "Appendix D, Parent/Caregiver Training Goals"
+        page: 44
+        quote: "Parents/caregivers being present during the session is not sufficient for a parent/caregiver training goal. You are required to document and track 2 – 4 goals."
+        verified: false
+      - type: plan_content
+        params: {"assessment_graph_label": ["member_initials", "date_mm/dd/yyyy"], "assessment_max_age_months_before_treatment_effective": 2}
+        source: ga_medicaid_asd_manual
+        section: "Appendix D, Graph date format"
+        page: 44
+        quote: "The behavior assessment graph should include the member initials as well as the date in a month/day/year format and must be conducted/dated no more than two (2) months prior to the Treatment Services PA request effective date."
+        verified: false
+      - type: plan_content
+        params: {"typical_hours_per_week": [10, 30], "enhanced_review_over_hours_per_week": 30, "warn_only": true}
+        source: ga_medicaid_asd_manual
+        section: "803 (paragraph below 803.12)"
+        page: 27
+        quote: "Treatment services typically range from 10 to 30 hours per week, though the amount may be higher or lower when medically necessary. Requests exceeding 30 hours per week will undergo an enhanced authorization review."
+        verified: false
+      - type: plan_content
+        params: {"when": "reauth", "must_include": ["summary of previous goals and progress", "recent behavioral assessment", "individualized goals for individual and caregivers"], "assessment_max_age_months": 2}
+        source: ga_medicaid_asd_manual
+        section: "803 (follow-up PA requests)"
+        page: 27
+        quote: "PA requests for follow up services (following the initial treatment PA) must include 1) a summary of previous goals and progress, 2) the results of a recent Behavioral Assessment (within 2 months), and 3) individualized goals for the individual and caregivers"
+        verified: false
+      - type: plan_content
+        params: {"when": "school_based_services", "must_include": ["operationally defined target behaviors with baseline and current levels", "days/times of high frequency/intensity/duration", "behavior reduction and replacement goals", "titration plan for fading school services", "school-setting line graphs with phase change lines", "accompanying home and/or clinic plan"]}
+        source: ga_medicaid_asd_manual
+        section: "804.7-804.12"
+        page: 27
+        quote: "School plans will be reviewed for medical necessity; therefore, clinical documentation must be clearly outlined to detail the maladaptive behaviors that the member exhibits that requires the need for intensive support services in the school setting."
+        verified: false
+      - type: plan_content
+        params: {"code": "97154", "group_size_min": 2, "group_size_max": 8}
+        source: ga_medicaid_asd_manual
+        section: "Appendix F, Group Goals"
+        page: 57
+        quote: "Group sessions billed under 97154 must include a minimum of two participants and may not exceed eight."
+        verified: false
+      - type: concurrent_billing
+        params: {"codes": ["97154", "97158"], "allowed": false}
+        source: ga_medicaid_asd_manual
+        section: "Appendix D, note below Proposed Service Schedule"
+        page: 43
+        quote: "97154 and 97158 should not be billed concurrently."
+        verified: false
+      - type: unit_basis
+        params: {"units_per_hour": 4, "formula": "hours x 4 units x weeks", "example_weeks": 26, "example_months": 6}
+        source: ga_medicaid_asd_manual
+        section: "Appendix F, Requested CPT Codes"
+        page: 60
+        quote: "Use the formula: Hours × 4 units × number of weeks (e.g., 26 weeks = 6 months)."
+        verified: false
+      - type: request_timing
+        params: {"submit_up_to_months_before_effective": 2}
+        source: ga_medicaid_asd_manual
+        section: "Appendix E, B.vi"
+        page: 48
+        quote: "Requests may be submitted up to 2 months before the PA’s effective date (for example, a PA starting 6/1/2026 may be submitted as early as 4/1/2026)."
+        verified: false
+      - type: request_timing
+        params: {"effective_date_backdate_max_days": 30, "retro_otherwise_allowed": false}
+        source: ga_medicaid_asd_manual
+        section: "Appendix E, B.x"
+        page: 49
+        quote: "providers may set the PA effective date for up to 30 days prior to the submission date."
+        verified: false
+      - type: request_timing
+        params: {"reassessment_codes_within_final_months_of_auth": 3, "reassessment_completed_max_months_before_next_auth": 2, "on": "consolidated PA"}
+        source: ga_medicaid_asd_manual
+        section: "Appendix E, B.xiv.2.a"
+        page: 50
+        quote: "Reassessment codes must be entered with an effective date no more than three months before the end of the requested authorization period, and the reassessment itself may not be completed more than two months prior to the start date of the next treatment authorization."
+        verified: false
+      - type: request_timing
+        params: {"reconsideration_days_after_peer_denial": 30, "day_type": "calendar", "reconsiderations_after_first_peer_denial": 1}
+        source: ga_medicaid_asd_manual
+        section: "Appendix E, D. Reconsideration Request Guidelines"
+        page: 51
+        quote: "Peer consultant denied - requests must be submitted within 30 calendar days of the decision. Please Note: Providers are only permitted to submit one (1) reconsideration following the first peer denial."
+        verified: false
+      - type: staff_credential
+        params: {"role": "BCBA", "requires": ["Active BACB certification", "Georgia Behavior Analyst license"], "grace_period": false}
+        source: ga_medicaid_asd_manual
+        section: "601.1.2 Enrollment (new in Q4)"
+        page: 8
+        quote: "To enroll as a BCBA/BCBA-D Medicaid provider, practitioners must maintain an active certification issued by the BACB and hold a valid license from the Georgia Behavior Analyst Licensing Board."
+        verified: false
+      - type: staff_credential
+        params: {"role": "technician", "must_be": "RBT", "supervised_by": ["BCBA", "BCBA-D", "BCaBA"]}
+        source: ga_medicaid_asd_manual
+        section: "601.1.1.6 Registered Behavior Technician"
+        page: 8
+        quote: "601.1.1.6.3. Must be supervised by a BCBA/BCBA-D or BCaBA"
+        verified: false
+      - type: event_trigger
+        params: {"event": "bcba_transfer_same_company", "requires": "Receiving behavior analyst reviews and attests the treatment plan"}
+        source: ga_medicaid_asd_manual
+        section: "802. Behavioral Assessment"
+        page: 25
+        quote: "If a member transfers to another provider within the same company during a period covered under an active PA, the behavior analyst receiving the transferred member must review and attest that the treatment plan has been approved."
+        verified: false
+      - type: event_trigger
+        params: {"event": "additional_units_requested", "requires": "Updated signed LMN/POC and treatment plan addendum with new goals and baseline data"}
+        source: ga_medicaid_asd_manual
+        section: "Appendix E, F. Change Request Guidelines"
+        page: 52
+        quote: "A significant change in treatment needs must be documented by submission of an updated and signed LMN/POC uploaded to the web portal. If additional units are requested, a treatment plan addendum that outlines the new goals with baseline data is required."
+        verified: false
+      - type: event_trigger
+        params: {"event": "diagnosis_older_than_years_without_ongoing_treatment", "years": 5, "requires": "Diagnostic re-evaluation with at least 1 clinician observational assessment", "may_be_required": true}
+        source: ga_medicaid_asd_manual
+        section: "801.10"
+        page: 24
+        quote: "801.10. More than 5 years from initial diagnosis and no evidence of ongoing assessment and treatment The re-evaluation must include, at a minimum, 1 clinician observational assessment."
+        verified: false
 
   - id: peach_state
     name: "Peach State Health Plan (GA Medicaid CMO)"
@@ -109,10 +374,133 @@ payors:
     name: "Aetna (commercial)"
     rules:
       - {type: required_document, params: {doc: "Aetna ABA Treatment Request (GR-69017-4)"}, source: aetna_aba_request_gr69017_4, verified: false}
-      - {type: submission_channel, params: {channel: portal, name: "Availity", note: "Initial request starts on Availity; form is not used to initiate. Clinical fax: FaxHub"}, source: aetna_aba_request_gr69017_4, verified: false}
+      - type: submission_channel
+        params: {channel: portal, name: "Availity", note: "Initial request starts on Availity; form is not used to initiate. Clinical fax: FaxHub"}
+        source: aetna_aba_request_gr69017_4
+        verified: false
+        notes: "The office manual (6/26) says to call the number on the member's ID card for ABA precertification. Question 25."
+      - type: submission_channel
+        params: {channel: phone, name: "Number on the member's Aetna ID card"}
+        source: aetna_office_manual
+        section: "Prior authorization for ABA"
+        page: 71
+        quote: "To get ABA services precertified, call the number on the member’s Aetna ID card and speak to a Member Services representative."
+        verified: false
+        notes: "Conflicts with GR-69017-4 (effective 2026-08-01), which starts initial requests on Availity. Question 25."
       - {type: form_address, params: {use: service_state_office}, source: checklist_2026, verified: false}
-      - {type: supervision_ratio, params: {min_pct_per_technician: 10, min_onsite_face_to_face_hours_per_month: 1}, source: checklist_2026, verified: false}
+      - type: supervision_ratio
+        params: {min_hours_per_10_direct: 1, max_hours_per_10_direct: 2, basis: authorization}
+        source: aetna_aba_mn_guide
+        section: "Assessment of symptom severity"
+        page: 4
+        quote: "additional authorization may be provided for QHP protocol modification and direction at 1 to 2 hours per 10 hours of treatment by protocol"
+        verified: false
+        notes: "An authorization amount for 97155 relative to 97153, not a per-technician minimum."
+      - type: supervision_ratio
+        params: {min_pct_per_technician: 10, min_onsite_face_to_face_hours_per_month: 1}
+        source: checklist_2026
+        verified: false
+        notes: "No official source found for the monthly on-site hour."
       - {type: event_trigger, params: {event: plan_is_aetna_better_health_medicaid, requires: "Aetna Better Health request form (different form)"}, source: checklist_2026, verified: false}
+      # From the official documents review (aetna)
+      - type: staff_credential
+        params: {"role": "ABA practitioner treating ASD", "must_be_any_of": ["BACB certification", "State behavior analyst license"]}
+        source: aetna_office_manual
+        section: "The Aetna ABA Medical Necessity Guide"
+        page: 70
+        quote: "For practitioners treating autism spectrum disorders using ABA, either national certification is needed from the Behavior Analyst Certification Board (BACB), or the practitioner must be licensed as a behavior analyst in the state in which they practice."
+        verified: false
+      - type: plan_content
+        params: {"diagnosis_required": "DSM-V Autism Spectrum Disorder", "icd10": ["F84.0", "F84.3-F84.9"], "diagnosed_by": "appropriate provider"}
+        source: aetna_aba_mn_guide
+        section: "Medical necessity criteria for ABA"
+        page: 3
+        quote: "There is a DSM-V diagnosis of Autism Spectrum Disorder (ICD-10: F84.0; F84.3 - F84.9) obtained by an appropriate provider."
+        verified: false
+      - type: plan_content
+        params: {"must_include": ["target_behaviors_operationally_defined", "baseline_measures", "quantifiable_progress_criteria", "intervention_techniques_per_target", "reinforcers_selected", "generalization_strategies", "transition_plan", "titration_criteria", "discharge_criteria", "gradual_tapering_of_intensity"]}
+        source: aetna_aba_mn_guide
+        section: "Medical necessity criteria for ABA"
+        page: 3
+        quote: "The plan describes behavioral intervention techniques appropriate to the target behavior, reinforcers selected, and strategies for generalization of learned skills are specified. And there is documentation of planning for transition through the continuum of interventions, services and settings, as well as titration and discharge criteria."
+        verified: false
+      - type: plan_content
+        params: {"when": "reauth", "must_include": ["progress_documentation_or_treatment_modification"]}
+        source: aetna_aba_mn_guide
+        section: "Medical necessity criteria for ABA"
+        page: 3
+        quote: "If there has NOT been improvement, there is documentation of modification of the treatment, additional assessments that have been conducted, and/or there has been appropriate consultations from other staff or experts."
+        verified: false
+      - type: plan_content
+        params: {"must_include": ["hours_justified_by_impairment_level"]}
+        source: aetna_aba_mn_guide
+        section: "Medical necessity criteria for ABA"
+        page: 3
+        quote: "The level of impairment (calculated below) justifies the number of hours requested."
+        verified: false
+      - type: unit_limit
+        params: {"guide_only": true, "per_domain": ["maladaptive_behavior", "social_communication", "self_care"], "hours_per_week_by_severity": {"none_lt_1sd": 0, "mild_gt_1sd": [1, 4], "moderate_gt_1_5sd": [4, 7], "severe_gt_2sd": [7, 10]}}
+        source: aetna_aba_mn_guide
+        section: "Assessment of symptom severity"
+        page: 4
+        quote: "None <1SD below Mild >1 SD below Moderate >1.5 SD below Severe >2SD below Functional impairment 0 Hours/Wk 1 to 4 Hours/Wk 4 to 7 Hours/Wk 7 to10 Hours/Wk"
+        verified: false
+      - type: outcome_measure_schedule
+        params: {"progress_review_every_months": 6, "measure": "standardized measure"}
+        source: aetna_aba_mn_guide
+        section: "Termination of coverage of ABA"
+        page: 4
+        quote: "A member's progress is to be evaluated every six months. A member not making progress will be transitioned to other appropriate services."
+        verified: false
+      - type: plan_content
+        params: {"must_include": ["objective_measurable_goals", "discharge_criteria", "goal_linked_to_presenting_problem", "goal_progress_timeframe", "progress_assessed_within_timeframe"]}
+        source: aetna_office_manual
+        section: "BH treatment record review criteria, items 14.1-14.3"
+        page: 82
+        quote: "Goals include a time frame for evaluating progress, and there is documentation indicating assessment of progress within those time frames."
+        verified: false
+      - type: plan_content
+        params: {"must_include": ["member_identifier_every_page"], "filled_by": "system, never AI"}
+        source: aetna_office_manual
+        section: "BH treatment record review criteria, item 3"
+        page: 81
+        quote: "Member’s name or unique identifier appears on every page."
+        verified: false
+      - type: signature_type
+        params: {"document": "all record entries", "requirement": "dated; author signature or electronic identifier with title and credentials", "electronic_allowed": true}
+        source: aetna_office_manual
+        section: "BH treatment record review criteria, item 4"
+        page: 81
+        quote: "All entries in the record are dated and contain the author’s signature or electronic identifier with title (if applicable) and credentials/degree."
+        verified: false
+      - type: required_document
+        params: {"doc": "Signed consent for treatment"}
+        source: aetna_office_manual
+        section: "BH treatment record review criteria, item 6"
+        page: 81
+        quote: "There is a signed Consent for Treatment form."
+        verified: false
+      - type: required_document
+        params: {"doc": "Signed release for communication with PCP/other practitioners", "alternative": "documented refusal or no other providers"}
+        source: aetna_office_manual
+        section: "BH treatment record review criteria, item 5"
+        page: 81
+        quote: "There is a signed release form for communication with a primary care practitioner and/or other medical or behavioral health practitioners. If not, there is documentation that the member declined to sign releases or is not currently under the care of other providers."
+        verified: false
+      - type: event_trigger
+        params: {"events": ["initial_evaluation", "significant_treatment_plan_change", "termination_of_treatment"], "requires": "Written communication to PCP with member authorization", "recommended_within_weeks": 2, "warn_only": true}
+        source: aetna_office_manual
+        section: "Behavioral health care professional responsibilities for all levels of care"
+        page: 73
+        quote: "Note: It’s recommended that communication occur within two weeks of the above situations— if needed, the Physician Communication Form is located at Aetna.com."
+        verified: false
+      - type: submission_channel
+        params: {"channel": "portal", "name": "Availity", "purpose": "upload clinical records to an authorization", "max_files_per_upload": 6, "max_file_mb": 32, "password_protected_allowed": false}
+        source: aetna_office_manual
+        section: "Authorization adds, inquiries and updates"
+        page: 16
+        quote: "Users can upload up to six electronic files at a time, with a size of 32MB per file, by clicking the Add Files button."
+        verified: false
 
   - id: cigna_evernorth
     name: "Cigna / Evernorth"
@@ -121,9 +509,175 @@ payors:
       - {type: submission_channel, params: {channel: email, address: "ABA@Evernorth.com", preferred: true, fallback: fax, note: "Use fax number printed on current form; checklist number differs"}, source: evernorth_aba_pa_928213d, verified: false}
       - {type: unit_basis, params: {request_per: month, convert_from: week}, source: evernorth_aba_pa_928213d, verified: false}
       - {type: form_address, params: {use: service_state_office}, source: checklist_2026, verified: false}
-      - {type: supervision_ratio, params: {hours_supervision_per_10_hours_direct: 1, per_technician: true, remote_allowed: true}, source: checklist_2026, verified: false}
+      - type: supervision_ratio
+        params: {min_hours_per_10_direct: 1, max_hours_per_10_direct: 2}
+        source: cigna_en0499
+        section: "Supervision / Direction of Treatment"
+        page: 5
+        quote: "indirect case supervision is consistent with the general accepted standard of care of one to two hours per ten hours of direct treatment."
+        verified: false
+        notes: "Same section: when direct treatment is 10 hours per week or less, at least 1 to 2 hours per week of direct case supervision."
+      - type: supervision_ratio
+        params: {hours_supervision_per_10_hours_direct: 1, per_technician: true, remote_allowed: true}
+        source: checklist_2026
+        verified: false
+        notes: "Per-technician and remote supervision are not stated in EN0499."
       - {type: unit_limit, params: {code: "97151", purpose: progress_report, max_hours: 6}, source: checklist_2026, verified: false}
-      - {type: plan_content, params: {guideline: "Cigna Treatment Plan Guidelines", updates: annually_december, monitor: true}, source: checklist_2026, verified: false}
+      - type: plan_content
+        params: {guideline: "Evernorth Coverage Policy EN0499 Intensive Behavioral Interventions", updates: annually_december, monitor: true}
+        source: cigna_en0499
+        section: "Treatment plans"
+        page: 14
+        quote: "Treatment plans / plans of care include information to substantiate that the medical necessity criteria for Applied Behavior Analysis as outlined in Evernorth Behavioral Health Coverage Policy EN0499 Intensive Behavioral Interventions are met."
+        verified: false
+      # From the official documents review (cigna_evernorth)
+      - type: required_document
+        params: {"doc": "ASD diagnosis by independently licensed clinician", "must_include": ["diagnostician name", "credentials", "licensure type", "date of most recent diagnosis"]}
+        source: cigna_en0499
+        section: "Criteria for Initiation of Treatment with ABA > Diagnosis"
+        page: 3
+        quote: "The name, credentials, and type of licensure of the person who made the diagnosis"
+        verified: false
+      - type: outcome_measure_schedule
+        params: {"measure": "reliable, valid, standardized assessment instrument", "phase": "initial", "max_days_before_treatment_start": 60}
+        source: cigna_en0499
+        section: "Criteria for Initiation > Assessment"
+        page: 4
+        quote: "Administration of the assessment instrument has been completed within 60 days prior to the start of treatment."
+        verified: false
+      - type: plan_content
+        params: {"element": "assessment instrument details", "requires": ["completed in entirety", "current edition", "date of administration", "respondent/participant name", "form type", "standardized scores and score tables or grids"]}
+        source: cigna_en0499
+        section: "Assessment"
+        page: 3
+        quote: "must include the date of administration, name of the respondent and/or participant in the assessment, and the form type when applicable"
+        verified: false
+      - type: plan_content
+        params: {"element": "dated quantitative baseline for all targets in all settings", "phase": "initial", "max_days_before_treatment_start": 60}
+        source: cigna_en0499
+        section: "Treatment Plan > Data and Reporting"
+        page: 4
+        quote: "Quantitative baseline data have been collected within 60 days prior to the start of treatment, with dates reported from when the data were collected."
+        verified: false
+      - type: plan_content
+        params: {"element": "data reported separately by setting", "applies_when": "multiple settings"}
+        source: cigna_en0499
+        section: "Treatment Plan > Data and Reporting"
+        page: 5
+        quote: "quantitative data have been obtained, provided, and are clearly identified separately by location/setting for all behaviors and skills corresponding within each specific location of service"
+        verified: false
+      - type: plan_content
+        params: {"element": "goal structure", "requires": ["target behavior", "measurement method", "operational definition", "degree of independence", "mastery criteria", "consistent units across data, goal and mastery"]}
+        source: cigna_en0499
+        section: "Treatment Plan > Data and Reporting"
+        page: 5
+        quote: "Each goal includes clearly defined mastery criteria indicating the standards for determining whether a goal/objective has been/will be met."
+        verified: false
+      - type: plan_content
+        params: {"element": "interim data window", "min_months_covered": 6}
+        source: cigna_en0499
+        section: "Glossary > Interim Data"
+        page: 12
+        quote: "At a minimum, interim data should include data as collected within the previous 6 months of treatment (or less if treatment has been in place for less than 6 months), and may be reported as patient data points and/or as a relevant average."
+        verified: false
+      - type: plan_content
+        params: {"element": "continued treatment current data window", "phase": "reauth", "current_data_max_days_before_continuation_start": 60, "current_data_max_days_before_request_received": 60}
+        source: cigna_en0499
+        section: "Criteria for Continued Treatment with ABA"
+        page: 8
+        quote: "There is documentation of current data must be collected within no more than 60 days prior to the start date of the continued treatment request, as well as collected within no more than 60 days prior to the date the authorization request is received"
+        verified: false
+      - type: outcome_measure_schedule
+        params: {"measure": "reliable, valid, standardized assessment instrument", "phase": "reauth", "max_years_before_continuation_start": 1}
+        source: cigna_en0499
+        section: "Criteria for Continued Treatment with ABA"
+        page: 8
+        quote: "There is evidence of measurable and/or maintained improvement in targeted behaviors and skills as demonstrated with the use of a reliable, valid, and standardized assessment instrument completed no more than one year prior to the start date of the continued treatment request."
+        verified: false
+      - type: plan_content
+        params: {"element": "continued treatment progress and barriers", "requires": ["updated plan", "baseline, interim and current data", "sustained progress", "barrier plan with protocol modification", "stakeholder progress data"]}
+        source: cigna_en0499
+        section: "Criteria for Continued Treatment with ABA"
+        page: 8
+        quote: "barriers toward progress and/or maintenance have been identified, and there is a specific and documented plan to address barriers and evidence of interventions being adjusted through protocol modification"
+        verified: false
+      - type: event_trigger
+        params: {"event": "break_in_treatment", "threshold_calendar_days_gt": 60, "actions": ["readminister standardized assessment", "collect updated dated data for all targets"]}
+        source: cigna_en0499
+        section: "Criteria for Continued Treatment with ABA"
+        page: 8
+        quote: "Administration of a reliable, valid, and standardized assessment instrument (see above Assessment sections for criteria) is completed following any break in treatment greater than 60 calendar days."
+        verified: false
+      - type: staff_credential
+        params: {"roles": ["assessor", "case supervisor", "stakeholder trainer"], "allowed": ["BCBA", "LBA", "independently licensed MH professional with documented ABA training"], "document_name_and_credentials": true}
+        source: cigna_en0499
+        section: "Treatment Plan > Supervision / Direction of Treatment"
+        page: 5
+        quote: "The name and credentials of the individual who will provide supervision must be documented."
+        verified: false
+      - type: plan_content
+        params: {"element": "stakeholder training goals", "requires": ["measurable individualized goals with mastery criteria", "dated quantitative baseline", "progress data collection plan", "data separate per stakeholder"]}
+        source: cigna_en0499
+        section: "Stakeholder Training"
+        page: 6
+        quote: "There is a clear and documented plan to collect data to demonstrate the stakeholder(s) are making progress toward meeting identified stakeholder training goals."
+        verified: false
+      - type: plan_content
+        params: {"element": "transition plan and discharge criteria", "requires": ["measurable transition plan with fading across all settings", "individualized measurable discharge criteria tied to DSM-5-TR ASD symptoms"]}
+        source: cigna_en0499
+        section: "Coverage Policy (required ABA components)"
+        page: 2
+        quote: "Clearly defined, measurable, individualized, and realistic transition plan that includes a plan for fading services from all settings and environments in which treatment is being or will be provided."
+        verified: false
+      - type: plan_content
+        params: {"element": "treatment intensity rationale", "intensity_unit": "direct ABA hours per week excluding supervision and caregiver training"}
+        source: cigna_en0499
+        section: "Treatment Plan > Treatment Intensity"
+        page: 5
+        quote: "The planned intensity of treatment reflects the severity of the impairments, goals of treatment, and/or response to treatment across all settings and environments where treatment will occur."
+        verified: false
+      - type: plan_content
+        params: {"element": "intensity increase request", "requires": ["clinical rationale", "quantitative data showing improved outcome", "planned use of added hours"]}
+        source: cigna_en0499
+        section: "Criteria for Continued Treatment with ABA"
+        page: 8
+        quote: "Documented evidence and quantitative data demonstrating how the increase in intensity would improve outcome."
+        verified: false
+      - type: plan_content
+        params: {"element": "multiple ABA providers same auth period", "requires": ["coordination plan", "non-duplicative", "consistent strategies", "combined intensity justified"]}
+        source: cigna_en0499
+        section: "Other Factors"
+        page: 6
+        quote: "ABA services delivered by multiple ABA provider organizations/agencies/companies during the same authorization period are not considered medically necessary unless ALL the following are present and documented"
+        verified: false
+      - type: request_timing
+        params: {"classification": "continued_vs_initial", "lookback_days": 90}
+        source: cigna_en0499
+        section: "Glossary > Continued Treatment Authorization Request"
+        page: 11
+        quote: "the patient has participated in ABA services with the requesting provider within 90 days from the date the authorization request was made."
+        verified: false
+      - type: request_timing
+        params: {"retrospective_if_days_after_requested_start_gt": 90, "or_after_discharge": true}
+        source: cigna_en0499
+        section: "Glossary > Retrospective Authorization Request"
+        page: 13
+        quote: "A retrospective authorization request for ABA is any request made when more than 90 days have passed since the start date of the requested authorization, or any time after the patient has discharged."
+        verified: false
+      - type: concurrent_billing
+        params: {"allowed": false, "scope": "ABA at the same time as any other treatment modality (e.g., speech, OT)"}
+        source: cigna_en0499
+        section: "Not Covered or Reimbursable"
+        page: 9
+        quote: "Provision of ABA treatment is not covered or reimbursable when delivered to the same individual, at the same time as any other treatment modality (e.g., ABA and speech therapy, or ABA and occupational therapy)."
+        verified: false
+      - type: plan_content
+        params: {"element": "exclusions", "not_covered": ["non-ASD indications incl. Rett", "non-ABA intensive behavioral interventions", "primarily educational or vocational services"]}
+        source: cigna_en0499
+        section: "Not Medically Necessary / Not Covered"
+        page: 9
+        quote: "Services that are considered primarily educational or vocational in nature, or related to academic or work performance are not covered or reimbursable."
+        verified: false
 
   - id: umr
     name: "UMR (third-party administrator)"
@@ -140,20 +694,41 @@ payors:
       - {type: required_document, params: {doc: "Anthem ABA treatment request form", note: "Not found publicly; obtain via Availity/provider portal"}, source: checklist_2026, verified: false}
       - {type: form_address, params: {use: service_state_office}, source: checklist_2026, verified: false}
       - {type: supervision_ratio, params: {min_pct_of_hours: 5, max_protocol_mod_hours_per_10_direct: 2}, source: checklist_2026, verified: false}
+      # From the official documents review (bcbs_ga_anthem)
+      - type: concurrent_billing
+        params: {"codes": ["97155", "97153"], "allowed": true, "condition": "technician and QHP both face-to-face with patient and QHP directing technician"}
+        source: anthem_aba_resource_guide
+        section: "Supervision"
+        page: 6
+        quote: "A physician or other QHP billing for 97155 can only add code 97153 if both the technician and QHP are face-to-face with the patient at the same time and the QHP is directing the technician."
+        verified: false
+      - type: outcome_measure_schedule
+        params: {"plan_review_max_months": 6, "standardized_assessments": true}
+        source: anthem_aba_resource_guide
+        section: "Treatment plans"
+        page: 8
+        quote: "Documentation must show that the treatment plan was reviewed and/or updated at a min of every 6 months."
+        verified: false
+      - type: signature_type
+        params: {"document": "medical record entries", "allowed": ["handwritten signature", "unique electronic identifier", "initials with credentials"], "sign_within_days_of_service": 30}
+        source: anthem_aba_resource_guide
+        section: "Record documentation"
+        page: 7
+        quote: "Signature date within 30 days of the date of service, and an additional entry of the signature time for services performed in a hospital setting."
+        verified: false
 
   - id: lucet_credence_bcbs
     name: "BCBS via Lucet (behavioral health manager)"
     rules:
       - {type: plan_content, params: {must_include: [transition_fade_plan_tied_to_goals, generalization_to_caregivers, care_coordination, discharge_plan]}, source: null, verified: false, notes: "From one approval letter's next-request requirements; letter-derived rules are per-auth, not global"}
 
+  # Rules both TRICARE regions share. Rules the East documents restate are in each region's extra_rules.
   - id: tricare_east
     name: "TRICARE East (Humana Military)"
     rules: &tricare_common
-      - {type: staff_credential, params: {role: technician, must_be: RBT}, source: checklist_2026, verified: false}
       - {type: daily_cap, params: {all_services_hours: 8}, source: checklist_2026, verified: false}
       - {type: daily_cap, params: {code: "97155", hours: 2}, source: checklist_2026, verified: false}
       - {type: daily_cap, params: {code: "97156", hours: 2}, source: checklist_2026, verified: false}
-      - {type: concurrent_billing, params: {codes: ["97153", "97155"], allowed: false, note: "verify exact wording"}, source: checklist_2026, verified: false}
       - {type: min_sessions_per_auth, params: {code: "97156", min_sessions: 6, auth_months: 6}, source: checklist_2026, verified: false}
       - type: supervision_ratio
         params: {code: "97155", min_in_person_sessions_per_client_per_month: 1, by: "TRICARE-credentialed BCBA", severity_if_missed: hard_alert}
@@ -169,16 +744,188 @@ payors:
           full_publisher_report_required: true
         source: checklist_2026
         verified: false
-      - {type: request_timing, params: {submit_up_to_days_before_auth_end: 60, report_due_days_after_assessment: 14}, source: checklist_2026, verified: false}
+        notes: "The teacher/BCBA PDDBI form, PSI/SIPA age bands, and full publisher report are not in the East handbook or FAQ."
+      - type: request_timing
+        params: {report_due_days_after_assessment: 14}
+        source: checklist_2026
+        verified: false
+        notes: "No official document found states this (question 27). The FAQ's 14-day figure is the window to complete 97151."
       - {type: unit_limit, params: {code: "97151", initial_units: 32, initial_outcome_units: 3, reassessment_units: 24}, source: checklist_2026, verified: false}
       - {type: staff_credential, params: {when: bcaba_delegated_codes, requires: "BCaBA attestation"}, source: checklist_2026, verified: false}
     extra_rules:
       - {type: required_document, params: {doc: "ABA reassessment request (optional guide form)"}, source: humana_military_aba_reassessment, verified: false}
+      - type: staff_credential
+        params: {role: technician, must_be_any_of: [RBT, ABAT, BCAT]}
+        source: humana_aba_faq_xpbb0825
+        section: "National certification boards"
+        page: 2
+        quote: "Providers must meet the requirements outlined in the TRICARE Operations Manual (TOM) and comply with applicable state legislation."
+        verified: false
+        notes: "The FAQ lists BACB (RBT), QABA (ABAT), and BICC (BCAT). The TOM and state law may be stricter; the practice checklist says RBT only (question 26)."
+      - type: concurrent_billing
+        params: {codes: ["97153", "97155"], allowed: false, outcome: "higher rate paid, other denied"}
+        source: humana_aba_faq_xpbb0825
+        page: 5
+        quote: "If CPT 97153 and 97155 are billed concurrently, the higher rate will be paid and the other will be denied."
+        verified: false
+      - type: outcome_measure_schedule
+        params:
+          initial: [PDDBI, Vineland-3, SRS-2, "PSI or SIPA"]
+          every_6_months: [PDDBI, "PSI or SIPA"]
+          annually: [Vineland-3, SRS-2]
+        source: tricare_east_provider_handbook_2026
+        section: "ACD covered services"
+        page: 30
+        quote: "PDDBI/ PSI/SIPA are due with every six-month reauthorization; Vineland 3 and SRS-2 are due every year"
+        verified: false
+      - type: request_timing
+        params: {submit_up_to_days_before_auth_end: 60, day_type: calendar}
+        source: tricare_east_provider_handbook_2026
+        page: 50
+        quote: "Providers may submit reauthorization requests as early as 60 calendar days prior to the end"
+        verified: false
+      # From the official documents review (tricare_east)
+      - type: required_document
+        params: {"doc": "ACD ABA referral (must specify ABA)", "required_before": "start_of_aba", "renew_every_years": 2, "from": ["TRICARE-authorized PCM", "specialized ASD-diagnosing provider"]}
+        source: tricare_east_provider_handbook_2026
+        section: "Referral and authorization requirements for ABA services"
+        page: 50
+        quote: "A complete referral for Applied Behavioral Analysis (ABA) services under the Autism Care Demonstration (ACD) is required for all TRICARE-eligible beneficiaries prior to the start of ABA services and every two years"
+        verified: false
+      - type: required_document
+        params: {"doc": "DHA-approved DSM-5 checklist", "requires": ["asd_criteria", "current_level_of_support"]}
+        source: tricare_east_provider_handbook_2026
+        section: "Referral and authorization requirements for ABA services"
+        page: 50
+        quote: "A Defense Health Agency (DHA)-approved DSM-5 checklist documenting ASD criteria and the current level of support needed"
+        verified: false
+      - type: required_document
+        params: {"doc": "Validated ASD assessment tool result (most current edition) plus diagnostic evaluation", "options": ["STAT", "ADOS-2", "ADI-R", "CARS-2", "GARS-3"]}
+        source: tricare_east_provider_handbook_2026
+        section: "Referral and authorization requirements for ABA services"
+        page: 50
+        quote: "A validated assessment tool (the most current edition) selected from this list must be submitted"
+        verified: false
+      - type: staff_credential
+        params: {"role": "ASD diagnosing provider", "when": {"age_at_first_diagnosis_min_years": 8}, "must_be": "specialized ASD-diagnosing provider (not PCM)"}
+        source: tricare_east_provider_handbook_2026
+        section: "Referral and authorization requirements for ABA services"
+        page: 50
+        quote: "For beneficiaries first diagnosed with Autism Spectrum Disorder (ASD) at age eight years or older, a specialized ASD-diagnosing provider evaluation (not a PCM), meeting all diagnosis requirements is required"
+        verified: false
+      - type: required_document
+        params: {"doc": "EFMP enrollment and ECHO registration", "when": "beneficiary is dependent of an ADSM", "retroactive_registration": false}
+        source: tricare_east_provider_handbook_2026
+        section: "Autism Care Demonstration (ACD)"
+        page: 30
+        quote: "Be enrolled in their service’s EFMP and registered in ECHO to receive ABA under the ACD if they are a dependent of an ADSM"
+        verified: false
+      - type: plan_content
+        params: {"required_diagnosis_code": "F84.0"}
+        source: tricare_east_provider_handbook_2026
+        section: "Autism Care Demonstration (ACD)"
+        page: 29
+        quote: "The ACD provides TRICARE reimbursement for Applied Behavior Analysis (ABA) services to TRICARE-eligible beneficiaries diagnosed with Autism Spectrum Disorder (ASD, F84.0)."
+        verified: false
+      - type: request_timing
+        params: {"retro_authorization_allowed": false}
+        source: tricare_east_provider_handbook_2026
+        section: "Referral and authorization requirements for ABA services"
+        page: 50
+        quote: "All ABA authorizations must be preauthorized; retrospective authorization is not allowed"
+        verified: false
+      - type: request_timing
+        params: {"treatment_auth_period_months": 6, "basis": "TOM-compliant treatment plan"}
+        source: tricare_east_provider_handbook_2026
+        section: "Referral and authorization requirements for ABA services"
+        page: 50
+        quote: "If clinical necessity is met, treatment will be authorized for a six-month period"
+        verified: false
+      - type: outcome_measure_schedule
+        params: {"baseline_required_before": "start_of_aba_treatment"}
+        source: tricare_east_provider_handbook_2026
+        section: "Referral and authorization requirements for ABA services"
+        page: 50
+        quote: "Baseline outcome measures must be completed prior to the start of ABA treatment"
+        verified: false
+      - type: plan_content
+        params: {"prohibited_goal_domains": ["educational/academic", "vocational"], "enforced_at": "contractor approval"}
+        source: tricare_east_provider_handbook_2026
+        section: "Exclusions/Non-covered services under the ACD"
+        page: 30
+        quote: "All educational/academic and vocational goals must be removed from the TP prior to approval by the contractor"
+        verified: false
+      - type: plan_content
+        params: {"targets_must_be": "core symptoms of ASD", "excluded_examples": ["impulsivity due to ADHD", "reading difficulty due to learning disability", "worry due to anxiety disorder"]}
+        source: tricare_east_provider_handbook_2026
+        section: "Exclusions/Non-covered services under the ACD"
+        page: 30
+        quote: "ABA services are not covered for symptoms and/or behaviors that are not part of the core symptoms of ASD"
+        verified: false
+      - type: plan_content
+        params: {"prohibited_procedures": ["aversive techniques", "restraints"]}
+        source: tricare_east_provider_handbook_2026
+        section: "Exclusions/Non-covered services under the ACD"
+        page: 30
+        quote: "Rendering and billing for ABA services involving any aversive techniques or restraints"
+        verified: false
+      - type: staff_credential
+        params: {"setting": "school", "only_code": "97153", "rendered_by": "authorized ABA supervisor", "delegation_to_assistant_or_bt": false}
+        source: tricare_east_provider_handbook_2026
+        section: "Exclusions/Non-covered services under the ACD"
+        page: 30
+        quote: "The contractor shall authorize and reimburse only CPT code 97153 rendered by the authorized ABA supervisor (not delegated to the assistant or BT) in the school setting"
+        verified: false
+      - type: request_timing
+        params: {"code": "97151", "complete_within_calendar_days": 14, "if_missed": "claim denied"}
+        source: humana_aba_faq_xpbb0825
+        section: "What happens if all CPT 97151 cannot be completed within 14 calendar days?"
+        page: 5
+        quote: "What happens if all CPT 97151 cannot be completed within 14 calendar days? The claim will be denied."
+        verified: false
+      - type: event_trigger
+        params: {"event": "telehealth_service", "modifier": "GT", "telehealth_allowed_codes": ["97156"], "97156_telehealth_after_first_auth_months": 6, "telehealth_excluded_codes": ["97151", "97153", "97155", "97157", "97158"]}
+        source: humana_aba_faq_xpbb0825
+        section: "When should the GT modifier be used when filing claims?"
+        page: 5
+        quote: "For new and approved TPs, 97156 may be conducted via telemedicine only after the first six-month authorization period. Remote services with the GT modifier are excluded for 97151, 97153, 97155, 97157 and 97158."
+        verified: false
+      - type: staff_credential
+        params: {"role": "behavior_technician", "may_not": ["conduct ABA assessment", "establish treatment plan"]}
+        source: humana_aba_faq_xpbb0825
+        section: "Are BTs permitted to assist with ABA assessments and TPs?"
+        page: 3
+        quote: "No. BTs may not conduct the ABA assessment, or establish a child's ABA TP."
+        verified: false
+      - type: staff_credential
+        params: {"max_authorized_supervisors_at_a_time": 1}
+        source: humana_aba_faq_xpbb0825
+        section: "Can beneficiaries see more than one authorized ABA supervisor?"
+        page: 3
+        quote: "Yes; however only one authorized ABA supervisor is approved to provide ABA services for a beneficiary at a time."
+        verified: false
+      - type: plan_content
+        params: {"must_include": ["specific_aba_services_per_behavior_target"], "applies_to": ["initial TP", "TP updates"]}
+        source: humana_aba_faq_xpbb0825
+        section: "Are there exceptions to the concurrent billing exclusion?"
+        page: 5
+        quote: "\"Documentation\" includes session progress notes and the ABA TP (to include the initial ABA TP and ABA TP updates) that identify the specific ABA services used for each behavior target."
+        verified: false
+      - type: submission_channel
+        params: {"channel": "portal", "name": "Humana Military provider self-service", "multi_document_upload": true, "fax_allowed_only_if": "electronic submission not feasible"}
+        source: tricare_east_provider_handbook_2026
+        section: "Referral and authorization submission options"
+        page: 37
+        quote: "Faxing requests is strongly discouraged; however, Humana Military will accept fax submissions only if electronic submission is not feasible for the provider"
+        verified: false
 
   - id: tricare_west
     name: "TRICARE West (TriWest)"
     rules: *tricare_common
     extra_rules:
+      - {type: staff_credential, params: {role: technician, must_be: RBT}, source: checklist_2026, verified: false}
+      - {type: concurrent_billing, params: {codes: ["97153", "97155"], allowed: false, note: "verify exact wording"}, source: checklist_2026, verified: false}
+      - {type: request_timing, params: {submit_up_to_days_before_auth_end: 60}, source: checklist_2026, verified: false}
       - {type: required_document, params: {doc: "ACD initial referral (submitted by referring provider, not BCBA)", requires: [severity_level, dsm5_checklist, validated_assessment_tool]}, source: triwest_acd_initial_referral, verified: false}
       - {type: required_document, params: {doc: "PCM letter"}, source: checklist_2026, verified: false}
 

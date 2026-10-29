@@ -24,6 +24,8 @@ type RuleRow = {
   params: unknown;
   sourceDocumentId: string | null;
   sourceSection: string | null;
+  sourcePage?: string | null;
+  sourceQuote?: string | null;
   notes: string | null;
   inheritedFrom: string | null;
   lineageKey: string;
@@ -188,6 +190,8 @@ export async function withTrust(tx: Tx, rows: RuleRow[], today: Day = toDay(new 
         section: current?.section ?? r.sourceSection,
         // Link to the version actually fetched (e.g., this quarter's Georgia manual), else the cited URL.
         url: snap?.resolvedUrl ?? doc?.url ?? null,
+        page: r.sourcePage ?? null,
+        quote: r.sourceQuote ?? null,
       },
       notes: r.notes,
       inheritedFrom: r.inheritedFrom,

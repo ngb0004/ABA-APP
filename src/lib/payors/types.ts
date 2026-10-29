@@ -25,6 +25,10 @@ export const SeedRuleSchema = z.object({
   params: z.record(z.string(), z.unknown()).default({}),
   source: z.string().nullable().optional(),
   section: z.string().optional(),
+  /** Page in the official document where the rule was read. */
+  page: z.union([z.number().int().positive(), z.string()]).optional(),
+  /** The official sentence the rule was read from. Pre-fills the verify form; never trusted on its own. */
+  quote: z.string().optional(),
   /** Kept for the seed format. The app ignores it: a rule's status comes from recorded evidence. */
   verified: z.boolean(),
   notes: z.string().optional(),
@@ -48,6 +52,8 @@ export const SeedSchema = z.object({
       /** How to find the current version; defaults to the url. */
       locator: LocatorSchema.optional(),
       secondary: z.boolean().optional(),
+      /** Earlier keys for this document: sync renames the stored row, keeping its fetched copies. */
+      formerly: z.array(z.string()).optional(),
     }),
   ),
   payors: z.array(
@@ -93,6 +99,8 @@ export type Rule = {
     version: string | null;
     section: string | null;
     url: string | null;
+    page?: string | null;
+    quote?: string | null;
   };
   notes: string | null;
   inheritedFrom: string | null;

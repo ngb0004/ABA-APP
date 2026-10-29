@@ -66,6 +66,8 @@ export function resolvePayorRules(seed: PayorSeed, payorKey: string, seen = new 
         version: doc?.version ?? null,
         section: r.section ?? null,
         url: doc?.url ?? null,
+        page: r.page !== undefined ? String(r.page) : null,
+        quote: r.quote ?? null,
       },
       notes: r.notes ?? null,
       inheritedFrom: null,

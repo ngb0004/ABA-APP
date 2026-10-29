@@ -2,6 +2,14 @@
 
 Twelve payor publications uploaded by the founder were read by parallel reviewers and reconciled against `seed/payors.yaml` and the plan structure in `src/lib/plan/sections.ts`. None contains real client data; all are payor, contractor, or state publications (no provider company's templates). Quotes below are short excerpts kept as evidence; template wording is summarized, not copied.
 
+## Applied to the library (2026-10-31)
+
+- All 12 corrections above are in `seed/payors.yaml`, including the TRICARE technician contradiction (East now accepts RBT, ABAT, or BCAT per the Humana Military FAQ; West keeps the checklist's RBT rule).
+- 80 of the 98 new rules were added. Left out: rules whose quote was not found verbatim or did not contain the rule's numbers (7, 12, 20, 41, 42, 53, 59, 93), and rules about session notes, claims, or appeals, which the app does not do yet (23, 40, 49, 50, 67, 68, 69, 91, 96, 97). Candidate 18 was kept without its CPT code.
+- Every rule read from an official document records its page and the sentence it came from (`page`, `quote`). The verify form offers that sentence, and the app still checks it against the live copy of the document.
+- Georgia's manual is now cited at Q4 (effective 2026-10-01) under the version-agnostic key `ga_medicaid_asd_manual`.
+- New watched documents: Aetna office manual, Aetna ABA medical necessity guide, Evernorth EN0499, Anthem ABA provider resource guide (each confirmed identical to the uploaded copy). The 2026 TRICARE East handbook and the Humana Military FAQ have no matching public copy; a BCBA uploads them as official sources.
+
 ## Documents
 
 | Document | Publisher | Payor | Type | Version | Pages |

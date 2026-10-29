@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PrismaClient } from "@prisma/client";
 import { withOrg } from "@/lib/db";
 import { loadRules } from "@/lib/services/payors";
@@ -23,15 +23,31 @@ const rulesOf = (payorKey: string) =>
     ),
   );
 
+// These tests play out a quarter turning over: our rules cite Georgia's July manual, and the
+// watcher finds the October one (the fixture).
+const julySeed = () => {
+  const s = loadPayorSeed();
+  s.documents.ga_medicaid_asd_manual = {
+    ...s.documents.ga_medicaid_asd_manual!,
+    version: "2026-07-01",
+    effective_date: "2026-07-01",
+  };
+  return s;
+};
+
 beforeAll(async () => {
+  await withOrg(bcba, (tx) => syncPayorLibrary(tx, org.id, julySeed()));
   await watchOrgSources(bcba, { fetcher: fakeFetch() });
+});
+afterAll(async () => {
+  await withOrg(bcba, (tx) => syncPayorLibrary(tx, org.id));
 });
 
 describe("source watcher", () => {
   it("finds the current Georgia manual by title through the index page and records its change log", async () => {
     const doc = await withOrg(bcba, (tx) =>
       tx.payorDocument.findFirstOrThrow({
-        where: { key: "ga_medicaid_asd_manual_2026q3" },
+        where: { key: "ga_medicaid_asd_manual" },
         include: { snapshots: true },
       }),
     );
@@ -59,7 +75,7 @@ describe("source watcher", () => {
   it("does not create a new snapshot when nothing changed, and treats empty or challenge pages as broken", async () => {
     await watchOrgSources(bcba, { fetcher: fakeFetch() });
     const n = await withOrg(bcba, (tx) =>
-      tx.payorDocumentSnapshot.count({ where: { document: { key: "ga_medicaid_asd_manual_2026q3" } } }),
+      tx.payorDocumentSnapshot.count({ where: { document: { key: "ga_medicaid_asd_manual" } } }),
     );
     expect(n).toBe(1);
     const aetnaUrl = "https://www.aetna.com/cpb/medical/data/600_699/0648.html";
@@ -68,6 +84,42 @@ describe("source watcher", () => {
     });
     expect(res.find((r) => r.key === "aetna_cpb_0648")).toMatchObject({ health: "broken" });
     await watchOrgSources(bcba, { fetcher: fakeFetch() });
+  });
+
+  it("a renamed document keeps its row and fetched copies", async () => {
+    const before = await withOrg(bcba, (tx) =>
+      tx.payorDocument.findFirstOrThrow({
+        where: { key: "aetna_cpb_0648" },
+        include: { _count: { select: { snapshots: true } } },
+      }),
+    );
+    expect(before._count.snapshots).toBeGreaterThan(0);
+    const renamed = julySeed();
+    renamed.documents.aetna_cpb_0648_v2 = {
+      ...renamed.documents.aetna_cpb_0648!,
+      formerly: ["aetna_cpb_0648"],
+    };
+    delete renamed.documents.aetna_cpb_0648;
+    for (const p of renamed.payors)
+      for (const r of [...p.rules, ...p.extra_rules])
+        if (r.source === "aetna_cpb_0648") r.source = "aetna_cpb_0648_v2";
+    await withOrg(bcba, (tx) => syncPayorLibrary(tx, org.id, renamed));
+    const after = await withOrg(bcba, (tx) =>
+      tx.payorDocument.findFirstOrThrow({
+        where: { key: "aetna_cpb_0648_v2" },
+        include: { _count: { select: { snapshots: true } } },
+      }),
+    );
+    expect(after.id).toBe(before.id);
+    expect(after._count.snapshots).toBe(before._count.snapshots);
+    // And back.
+    const back = julySeed();
+    back.documents.aetna_cpb_0648 = { ...back.documents.aetna_cpb_0648!, formerly: ["aetna_cpb_0648_v2"] };
+    await withOrg(bcba, (tx) => syncPayorLibrary(tx, org.id, back));
+    const restored = await withOrg(bcba, (tx) =>
+      tx.payorDocument.findFirstOrThrow({ where: { key: "aetna_cpb_0648" } }),
+    );
+    expect(restored.id).toBe(before.id);
   });
 
   it("the scheduled run covers every org through app_org_ids()", async () => {
@@ -171,7 +223,7 @@ describe("verify with proof", () => {
     const cigna = () => rulesOf("cigna_evernorth");
     const channel = (await cigna()).find((r) => r.type === "submission_channel")!;
     expect(channel.verified).toBe(true);
-    const seed = loadPayorSeed();
+    const seed = julySeed();
     const reordered = structuredClone(seed);
     const p = reordered.payors.find((x: { id: string }) => x.id === "cigna_evernorth")!;
     p.rules.reverse();

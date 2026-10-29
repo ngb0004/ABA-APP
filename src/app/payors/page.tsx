@@ -174,6 +174,7 @@ export default async function PayorsPage() {
                             documents={official}
                             defaultDocumentId={docs.find((d) => d.key === r.source.key)?.id ?? null}
                             section={r.source.section}
+                            recordedQuote={r.source.quote}
                           />
                         )}
                         {r.inheritedFrom && <span className="muted">Verified through {r.inheritedFrom}</span>}

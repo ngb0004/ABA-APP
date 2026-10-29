@@ -35,7 +35,14 @@ export function RuleSource({
   r: {
     verified: boolean;
     trust?: TrustLike;
-    source: { name: string | null; version: string | null; section: string | null; url: string | null };
+    source: {
+      name: string | null;
+      version: string | null;
+      section: string | null;
+      url: string | null;
+      page?: string | null;
+      quote?: string | null;
+    };
     inheritedFrom: string | null;
   };
   showReasons?: boolean;
@@ -51,10 +58,14 @@ export function RuleSource({
       )}
       {r.source.version ? ` (${r.source.version})` : ""}
       {r.source.section ? `, ${r.source.section}` : ""}
+      {r.source.page ? `, p. ${r.source.page}` : ""}
       {r.inheritedFrom ? `; inherited from ${r.inheritedFrom}` : ""} ·{" "}
       <TrustBadge trust={r.trust} verified={r.verified} />
       {r.trust?.verifiedUntil && r.trust.status === "verified" && (
         <> · verified until {r.trust.verifiedUntil}</>
+      )}
+      {showReasons && r.source.quote && (
+        <span style={{ display: "block" }}>Source says: &ldquo;{r.source.quote}&rdquo;</span>
       )}
       {showReasons && r.trust && r.trust.status !== "verified" && r.trust.reasons.length > 0 && (
         <span style={{ display: "block" }}>{r.trust.reasons.slice(0, 2).join(" · ")}</span>
