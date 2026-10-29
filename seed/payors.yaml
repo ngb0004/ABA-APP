@@ -1,0 +1,165 @@
+# Payor rules seed: Georgia launch market.
+#
+# EVERY rule ships with verified: false. A rule is set to verified: true only after a
+# human checks it against the cited official document and records the section.
+# Sources:
+#   checklist_2026 = one practice's internal auth checklist (secondary source, may be outdated)
+#   official docs  = listed under each payor's documents
+# Unverified rules may only produce WARN in the evaluator.
+
+documents:
+  ga_medicaid_asd_manual_2026q3:
+    name: "GA Medicaid Policies and Procedures for ASD Services"
+    version: "2026-07-01"
+    url: "https://www.mmis.georgia.gov/portal/Portals/0/StaticContent/Public/ALL/Handbooks/Autism%20Spectrum%20Disorder-Q3%20July%202026%2020260702131100.pdf"
+  aetna_aba_request_gr69017_4:
+    name: "Aetna Outpatient BH ABA Treatment Request (GR-69017-4)"
+    version: "7-26 (effective 2026-08-01)"
+    url: "https://www.aetna.com/content/dam/aetna/pdfs/aetnacom/pharmacy-insurance/healthcare-professional/documents/outpatient-behavioral-health-BH-ABA-assessment-precert.pdf"
+  evernorth_aba_pa_928213d:
+    name: "Evernorth ABA Prior Authorization Form (928213d)"
+    version: "Rev. 08/2021"
+    url: "https://static.cigna.com/assets/chcp/pdf/resourceLibrary/behavioral/applied-behavior-analysis.pdf"
+  umr_aba_doc_reqs:
+    name: "UMR Behavioral Health ABA Therapy Documentation Requirements"
+    version: "unknown"
+    url: "https://stg.umr.com/content/dam/umr/en/findform/forms/UMF0035.pdf"
+  humana_military_aba_reassessment:
+    name: "Humana Military Request for ABA Reassessment (XPBB0824-A)"
+    version: "unknown"
+    url: "https://assets.humana.com/is/content/humana/request-for-applied-behavior-analysis-aba-reassessmentpdf"
+  triwest_acd_initial_referral:
+    name: "TriWest ACD Initial Referral Request for ABA"
+    version: "2026-04-15"
+    url: "https://tricare.triwest.com/globalassets/tricare/provider/tricare-west-region-autism-care-demonstration-initial-referral-request-applied-behavior-analysis.pdf"
+  checklist_2026:
+    name: "Practice internal auth checklist (secondary source)"
+    version: "2026"
+    url: null
+
+payors:
+  - id: ga_medicaid
+    name: "Georgia Medicaid (straight / Katie Beckett)"
+    rules:
+      - {type: required_document, params: {doc: "GA Medicaid PA cover sheet (Appendix D)"}, source: ga_medicaid_asd_manual_2026q3, section: "Appendix D", verified: false}
+      - {type: required_document, params: {doc: "Diagnostic evaluation"}, source: ga_medicaid_asd_manual_2026q3, section: "802/803", verified: false}
+      - {type: required_document, params: {doc: "Letter of medical necessity"}, source: ga_medicaid_asd_manual_2026q3, section: "802/803", verified: false}
+      - {type: required_document, params: {doc: "Proposed plan of care", when: treatment}, source: ga_medicaid_asd_manual_2026q3, section: "803", verified: false}
+      - {type: required_document, params: {doc: "Updated data from previous authorization", when: reauth}, source: ga_medicaid_asd_manual_2026q3, section: "803", verified: false}
+      - {type: required_document, params: {doc: "IFSP", when: if_applicable}, source: ga_medicaid_asd_manual_2026q3, section: "802/803", verified: false}
+      - {type: required_document, params: {doc: "IEP", optional: true}, source: ga_medicaid_asd_manual_2026q3, section: "802/803", verified: false}
+      - {type: plan_content, params: {must_include: [background, goals, coordination_of_care, transition_plan, discharge_criteria, crisis_plan], signed_by: BCBA}, source: ga_medicaid_asd_manual_2026q3, section: "Appendix D", verified: false}
+      - {type: plan_content, params: {must_include: [evaluation_date]}, source: checklist_2026, verified: false}
+      - {type: submission_channel, params: {channel: portal, name: "Georgia Medical Review Portal", separate_requests: ["assessment (97151)", "treatment"]}, source: ga_medicaid_asd_manual_2026q3, section: "Appendix E", verified: false}
+      - {type: unit_basis, params: {assessment_increment_months: 3, treatment_periods_weeks: [13, 26]}, source: ga_medicaid_asd_manual_2026q3, section: "Appendix D", verified: false}
+      - type: signature_type
+        params: {document: "cover sheet", requirement: "CONFLICT: checklist says wet signature only; manual 602.3.4 allows secure e-signature, bans rubber stamps"}
+        source: ga_medicaid_asd_manual_2026q3
+        section: "602.3.4"
+        verified: false
+        notes: "Confirm with DCH/CMO before enforcing."
+      - type: supervision_ratio
+        params: {min_pct_of_hours_per_month: 10, max_pct_authorized: 20}
+        source: checklist_2026
+        verified: false
+        notes: "DCH manual sets no percentage (defers to BACB). May be CMO-specific."
+
+  - id: peach_state
+    name: "Peach State Health Plan (GA Medicaid CMO)"
+    inherits: ga_medicaid
+    rules:
+      - {type: request_timing, params: {code: "97151", with_other_codes: true}, source: checklist_2026, verified: false}
+
+  - id: amerigroup
+    name: "Amerigroup (GA Medicaid CMO)"
+    inherits: ga_medicaid
+    rules:
+      - {type: request_timing, params: {code: "97151", separate_request: true, months_before_auth_end: 3}, source: checklist_2026, verified: false}
+      - {type: event_trigger, params: {event: bcba_transfer, requires: "Transition of care form"}, source: checklist_2026, verified: false}
+      - {type: required_document, params: {doc: "Amerigroup GA Medicaid cover page"}, source: checklist_2026, verified: false}
+
+  - id: aetna
+    name: "Aetna (commercial)"
+    rules:
+      - {type: required_document, params: {doc: "Aetna ABA Treatment Request (GR-69017-4)"}, source: aetna_aba_request_gr69017_4, verified: false}
+      - {type: submission_channel, params: {channel: portal, name: "Availity", note: "Initial request starts on Availity; form is not used to initiate. Clinical fax: FaxHub"}, source: aetna_aba_request_gr69017_4, verified: false}
+      - {type: form_address, params: {use: service_state_office}, source: checklist_2026, verified: false}
+      - {type: supervision_ratio, params: {min_pct_per_technician: 10, min_onsite_face_to_face_hours_per_month: 1}, source: checklist_2026, verified: false}
+      - {type: event_trigger, params: {event: plan_is_aetna_better_health_medicaid, requires: "Aetna Better Health request form (different form)"}, source: checklist_2026, verified: false}
+
+  - id: cigna_evernorth
+    name: "Cigna / Evernorth"
+    rules:
+      - {type: required_document, params: {doc: "Evernorth ABA Prior Authorization Form"}, source: evernorth_aba_pa_928213d, verified: false}
+      - {type: submission_channel, params: {channel: email, address: "ABA@Evernorth.com", preferred: true, fallback: fax, note: "Use fax number printed on current form; checklist number differs"}, source: evernorth_aba_pa_928213d, verified: false}
+      - {type: unit_basis, params: {request_per: month, convert_from: week}, source: evernorth_aba_pa_928213d, verified: false}
+      - {type: form_address, params: {use: service_state_office}, source: checklist_2026, verified: false}
+      - {type: supervision_ratio, params: {hours_supervision_per_10_hours_direct: 1, per_technician: true, remote_allowed: true}, source: checklist_2026, verified: false}
+      - {type: unit_limit, params: {code: "97151", purpose: progress_report, max_hours: 6}, source: checklist_2026, verified: false}
+      - {type: plan_content, params: {guideline: "Cigna Treatment Plan Guidelines", updates: annually_december, monitor: true}, source: checklist_2026, verified: false}
+
+  - id: umr
+    name: "UMR (third-party administrator)"
+    rules:
+      - {type: required_document, params: {doc: "UMR ABA Therapy Documentation Requirements"}, source: umr_aba_doc_reqs, verified: false}
+      - {type: submission_channel, params: {channel: fax, phone_review: false}, source: umr_aba_doc_reqs, verified: false}
+      - {type: plan_content, params: {diagnosis_proof_excludes: ["IEP alone", "school evaluation alone"]}, source: umr_aba_doc_reqs, verified: false}
+      - {type: event_trigger, params: {event: insurance_changed_to_umr, requires: "Diagnostic evaluation"}, source: checklist_2026, verified: false}
+      - {type: plan_content, params: {decision_days_max: 15, expedited: false}, source: umr_aba_doc_reqs, verified: false}
+
+  - id: bcbs_ga_anthem
+    name: "BCBS Georgia (Anthem UM)"
+    rules:
+      - {type: required_document, params: {doc: "Anthem ABA treatment request form", note: "Not found publicly; obtain via Availity/provider portal"}, source: checklist_2026, verified: false}
+      - {type: form_address, params: {use: service_state_office}, source: checklist_2026, verified: false}
+      - {type: supervision_ratio, params: {min_pct_of_hours: 5, max_protocol_mod_hours_per_10_direct: 2}, source: checklist_2026, verified: false}
+
+  - id: lucet_credence_bcbs
+    name: "BCBS via Lucet (behavioral health manager)"
+    rules:
+      - {type: plan_content, params: {must_include: [transition_fade_plan_tied_to_goals, generalization_to_caregivers, care_coordination, discharge_plan]}, source: null, verified: false, notes: "From one approval letter's next-request requirements; letter-derived rules are per-auth, not global"}
+
+  - id: tricare_east
+    name: "TRICARE East (Humana Military)"
+    rules: &tricare_common
+      - {type: staff_credential, params: {role: technician, must_be: RBT}, source: checklist_2026, verified: false}
+      - {type: daily_cap, params: {all_services_hours: 8}, source: checklist_2026, verified: false}
+      - {type: daily_cap, params: {code: "97155", hours: 2}, source: checklist_2026, verified: false}
+      - {type: daily_cap, params: {code: "97156", hours: 2}, source: checklist_2026, verified: false}
+      - {type: concurrent_billing, params: {codes: ["97153", "97155"], allowed: false, note: "verify exact wording"}, source: checklist_2026, verified: false}
+      - {type: min_sessions_per_auth, params: {code: "97156", min_sessions: 6, auth_months: 6}, source: checklist_2026, verified: false}
+      - type: supervision_ratio
+        params: {code: "97155", min_in_person_sessions_per_client_per_month: 1, by: "TRICARE-credentialed BCBA", severity_if_missed: hard_alert}
+        source: checklist_2026
+        verified: false
+        notes: "Missing a single month is a recoupment audit risk"
+      - type: outcome_measure_schedule
+        params:
+          initial: [PDDBI_parent, Vineland-3, SRS-2, "PSI (age 0-12) or SIPA (age 11-19)"]
+          every_6_months: [PDDBI_parent, PDDBI_teacher_or_BCBA, "PSI or SIPA"]
+          annually: [Vineland-3, SRS-2]
+          every_2_years: [two_year_review]
+          full_publisher_report_required: true
+        source: checklist_2026
+        verified: false
+      - {type: request_timing, params: {submit_up_to_days_before_auth_end: 60, report_due_days_after_assessment: 14}, source: checklist_2026, verified: false}
+      - {type: unit_limit, params: {code: "97151", initial_units: 32, initial_outcome_units: 3, reassessment_units: 24}, source: checklist_2026, verified: false}
+      - {type: staff_credential, params: {when: bcaba_delegated_codes, requires: "BCaBA attestation"}, source: checklist_2026, verified: false}
+    extra_rules:
+      - {type: required_document, params: {doc: "ABA reassessment request (optional guide form)"}, source: humana_military_aba_reassessment, verified: false}
+
+  - id: tricare_west
+    name: "TRICARE West (TriWest)"
+    rules: *tricare_common
+    extra_rules:
+      - {type: required_document, params: {doc: "ACD initial referral (submitted by referring provider, not BCBA)", requires: [severity_level, dsm5_checklist, validated_assessment_tool]}, source: triwest_acd_initial_referral, verified: false}
+      - {type: required_document, params: {doc: "PCM letter"}, source: checklist_2026, verified: false}
+
+universal_checks:
+  - caregiver_signature_on_all_documents
+  - correct_payor_request_form_attached
+  - diagnostic_evaluation_attached
+  - iep_attached_if_applicable
+  - secondary_insurance_checked_and_documents_signed
+  - plan_and_evaluation_dates_consistent
+  - documents_routed_to_payor_and_physician_where_required

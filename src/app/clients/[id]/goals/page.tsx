@@ -1,0 +1,143 @@
+import Link from "next/link";
+import { ActionButton, Html } from "@/components/actions";
+import { FlatExplanation, GoalEditor } from "@/components/goal-editor";
+import { Status } from "@/components/status";
+import { can } from "@/lib/permissions";
+import { goalsView } from "@/lib/services/goals";
+import { asOfToday, requirePageCtx } from "@/lib/server/page-session";
+
+export default async function GoalsPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const ctx = await requirePageCtx();
+  const v = await goalsView(ctx, id, asOfToday());
+  return (
+    <>
+      <p>
+        <Link href={`/clients/${id}`}>
+          ← {v.client.firstName} {v.client.lastName}
+        </Link>
+      </p>
+      <h1>Goals</h1>
+      <div className="grid2">
+        <div className="panel">
+          <h2 style={{ marginTop: 0 }}>Required goal categories</h2>
+          <ul>
+            {v.categories.map((c) => (
+              <li key={c.category}>
+                <Status s={c.ok ? "pass" : "fail"} /> {c.message} ({c.found})
+              </li>
+            ))}
+          </ul>
+          <p>
+            <Status s={v.duplicates.length ? "fail" : "pass"} /> Duplicate rationale check
+            {v.duplicates.length ? `: ${v.duplicates.length} near-identical pair(s)` : ""}
+          </p>
+          <p>
+            <Status s={v.unlinked.length ? "fail" : "pass"} /> Diagnosis/deficit links
+            {v.unlinked.length ? `: ${v.unlinked.length} unlinked` : ""}
+          </p>
+        </div>
+        <div className="panel">
+          <h2 style={{ marginTop: 0 }}>Suggestions from VB-MAPP</h2>
+          {!v.latestVerified ? (
+            <p className="muted">Import and verify a VB-MAPP to get suggestions.</p>
+          ) : (
+            <ul>
+              {v.suggestions.map((s, i) => (
+                <li key={i}>
+                  Level {s.level} {s.domain}: {s.domainScore} of {s.domainMax}; next milestone{" "}
+                  {s.nextMilestone}
+                  {s.template && can(ctx.role, "goal:write") && (
+                    <>
+                      {" "}
+                      <ActionButton
+                        url={`/api/clients/${id}/goals`}
+                        body={{ templateId: s.template.id }}
+                        secondary
+                      >
+                        Add {s.template.domainName} tier {s.template.tier}
+                      </ActionButton>
+                    </>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+
+      {v.goals.map((g) => (
+        <div className="panel" key={g.id} id={`goal-${g.ordinal}`}>
+          <h2 style={{ marginTop: 0 }}>
+            Goal {g.ordinal}: {g.domain}{" "}
+            <span className="muted">
+              tier {g.tier} · {g.category.replace("_", " ")} · {g.initiationWindow}
+            </span>{" "}
+            <Status s={g.status} />
+          </h2>
+          <Html html={g.objectiveHtml} />
+          <p>
+            <em>Medical necessity (Pattern {g.rationalePattern}):</em>
+          </p>
+          <Html html={g.rationaleHtml} />
+          {g.placeholders.length > 0 && (
+            <div className="alert warn">
+              Unresolved placeholders (fill before approval): {g.placeholders.join(", ")}
+            </div>
+          )}
+          <Html html={g.graph} />
+          <p className="muted">
+            Data: {g.dataCollection || "not set"} · Mastery: {g.masteryAccuracyPct}% across{" "}
+            {g.masteryConsecutiveSessions} sessions with {g.masteryInstructors} people
+          </p>
+          {g.flat && <div className="alert warn">No improvement over the last 8 weeks.</div>}
+          {g.flat && can(ctx.role, "goal:write") && (
+            <FlatExplanation goalId={g.id} initial={g.flatExplanation} />
+          )}
+          <div className="row" style={{ marginTop: 8 }}>
+            {can(ctx.role, "goal:approve") && g.status !== "approved" && (
+              <ActionButton url={`/api/goals/${g.id}/approve`} testId={`approve-goal-${g.ordinal}`}>
+                Approve goal
+              </ActionButton>
+            )}
+            {can(ctx.role, "goal:write") && (
+              <GoalEditor
+                goal={{
+                  id: g.id,
+                  objective: g.objective,
+                  rationale: g.rationale,
+                  flatExplanation: g.flatExplanation,
+                  masteryAccuracyPct: g.masteryAccuracyPct,
+                  masteryConsecutiveSessions: g.masteryConsecutiveSessions,
+                  masteryInstructors: g.masteryInstructors,
+                }}
+              />
+            )}
+          </div>
+        </div>
+      ))}
+
+      {can(ctx.role, "goal:write") && (
+        <div className="panel">
+          <h2 style={{ marginTop: 0 }}>Goal library</h2>
+          <details>
+            <summary>Browse 18 domains × 3 tiers</summary>
+            <ul>
+              {v.templates.map((t) => (
+                <li key={t.id} style={{ marginBottom: 6 }}>
+                  <strong>
+                    {t.domainNumber}. {t.domainName}: tier {t.tier} ({t.tierName})
+                  </strong>{" "}
+                  <ActionButton url={`/api/clients/${id}/goals`} body={{ templateId: t.id }} secondary>
+                    Add
+                  </ActionButton>
+                  <div className="muted">{t.goalText}</div>
+                </li>
+              ))}
+            </ul>
+          </details>
+        </div>
+      )}
+    </>
+  );
+}

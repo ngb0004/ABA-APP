@@ -1,0 +1,9 @@
+import { api, readUpload } from "@/lib/server/api";
+import { withOrg } from "@/lib/db";
+import { uploadLetter } from "@/lib/services/letters";
+
+export const POST = api<{ id: string }>(async (req, ctx, { id }) => {
+  const { filename, data } = await readUpload(req, 5 * 1024 * 1024);
+  const plan = await withOrg(ctx, (tx) => tx.plan.findUniqueOrThrow({ where: { id } }));
+  return uploadLetter(ctx, plan.clientId, filename, data);
+});

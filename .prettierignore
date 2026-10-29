@@ -1,0 +1,12 @@
+fixtures/
+pnpm-lock.yaml
+.next/
+docs/reference/
+seed/payors.yaml
+docs/
+CLAUDE.md
+exports/
+.next-e2e/
+test-results/
+playwright-report/
+src/lib/vbmapp/template-formulas.json

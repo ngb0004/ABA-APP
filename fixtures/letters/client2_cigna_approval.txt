@@ -1,0 +1,23 @@
+SYNTHETIC TEST LETTER - NOT A REAL HEALTH PLAN DOCUMENT
+
+Re: Bravo Testchild
+Member ID: SYN-CIG-000202
+Authorization number: SYN-AUTH-2002R
+
+Dear Provider,
+
+We have reviewed the request for applied behavior analysis services. The request is approved.
+
+Approved services are effective 11/20/2026 through 05/19/2027:
+- 97153 approved at 640 units per month
+- 97155 approved at 80 units per month
+- 97156 approved at 16 units per month
+
+For the next request, please include:
+- A transition and fade plan tied to each goal
+- Evidence of generalization to caregivers
+- Updated standardized assessment results
+
+Submit your next request no later than 04/19/2027.
+
+Utilization Management (synthetic)

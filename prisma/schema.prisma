@@ -1,0 +1,577 @@
+// ABA Treatment Plan & Reauth Assistant: data model.
+//
+// Tenancy: every org-scoped table carries org_id and is protected by Postgres
+// row-level security (see migrations/*_rls). The only tables without RLS are the
+// global identity tables `user` and `auth_session`, which hold no client data.
+//
+// The app connects as the non-owner role `aba_app` (NOBYPASSRLS); migrations run
+// as `aba_owner` through DIRECT_DATABASE_URL.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_DATABASE_URL")
+}
+
+enum Role {
+  BCBA
+  BCaBA
+  RBT
+  AUTH_COORDINATOR
+  PARENT
+}
+
+// ---------------------------------------------------------------- tenancy/auth
+
+model Org {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  /// Practice-specific details (NPI, tax ID, addresses, form names). Per-org only.
+  settings  Json     @default("{}")
+  createdAt DateTime @default(now())
+
+  memberships Membership[]
+  clients     Client[]
+
+  @@map("org")
+}
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique
+  name         String
+  passwordHash String
+  totpSecret   String?
+  mfaEnabled   Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  memberships Membership[]
+  sessions    AuthSession[]
+
+  @@map("user")
+}
+
+model Membership {
+  id     String @id @default(uuid()) @db.Uuid
+  orgId  String @map("org_id") @db.Uuid
+  userId String @db.Uuid
+  role   Role
+
+  org  Org  @relation(fields: [orgId], references: [id])
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([orgId, userId])
+  @@map("membership")
+}
+
+model AuthSession {
+  id          String   @id @default(uuid()) @db.Uuid
+  tokenHash   String   @unique
+  userId      String   @db.Uuid
+  orgId       String?  @map("org_id") @db.Uuid
+  role        Role?
+  mfaVerified Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  expiresAt   DateTime
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("auth_session")
+}
+
+/// Append-only. A trigger rejects UPDATE and DELETE. No PHI in meta: IDs only.
+model AuditEvent {
+  id         String   @id @default(uuid()) @db.Uuid
+  orgId      String?  @map("org_id") @db.Uuid
+  userId     String?  @db.Uuid
+  action     String
+  entityType String
+  entityId   String?
+  meta       Json     @default("{}")
+  createdAt  DateTime @default(now())
+
+  @@index([orgId, createdAt])
+  @@map("audit_event")
+}
+
+// ---------------------------------------------------------------- clients
+
+model Client {
+  id            String   @id @default(uuid()) @db.Uuid
+  orgId         String   @map("org_id") @db.Uuid
+  /// v1.0 accepts synthetic data only. A CHECK constraint enforces true.
+  isSynthetic   Boolean  @default(true) @map("is_synthetic")
+  firstName     String
+  lastName      String
+  preferredName String?
+  dob           DateTime @db.Date
+  sex           String?
+  serviceAddress Json    @default("{}")
+  /// [{name, relationship, legalCustody: boolean, canSign: boolean}]
+  guardians     Json     @default("[]")
+  hasIep        Boolean  @default(false)
+  /// Payor event triggers that have occurred, e.g. ["bcba_transfer"].
+  events        String[] @default([])
+  createdAt     DateTime @default(now())
+
+  org            Org                @relation(fields: [orgId], references: [id])
+  diagnoses      Diagnosis[]
+  payors         ClientPayor[]
+  authorizations Authorization[]
+  sessions       ServiceSession[]
+  intakes        Intake[]
+  vbmappImports  VbmappImport[]
+  administrations VbmappAdministration[]
+  goals          Goal[]
+  plans          Plan[]
+  letters        PayorLetter[]
+  attachments    Attachment[]
+
+  @@map("client")
+}
+
+model Diagnosis {
+  id           String   @id @default(uuid()) @db.Uuid
+  orgId        String   @map("org_id") @db.Uuid
+  clientId     String   @db.Uuid
+  dsm5Code     String
+  dsm5Label    String
+  icd10Code    String
+  isPrimary    Boolean  @default(false)
+  severity     String?
+  evaluationDate DateTime? @db.Date
+  /// Deficit areas the diagnosis documents; goals must link to one of these.
+  deficitAreas String[]
+
+  client Client @relation(fields: [clientId], references: [id])
+  goals  Goal[]
+
+  @@map("diagnosis")
+}
+
+model ClientPayor {
+  id        String  @id @default(uuid()) @db.Uuid
+  orgId     String  @map("org_id") @db.Uuid
+  clientId  String  @db.Uuid
+  payorId   String  @db.Uuid
+  priority  String  @default("primary") // primary | secondary
+  memberId  String
+  planName  String?
+  secondaryDocsSigned Boolean @default(false)
+
+  client Client @relation(fields: [clientId], references: [id])
+  payor  Payor  @relation(fields: [payorId], references: [id])
+
+  @@map("client_payor")
+}
+
+model Attachment {
+  id         String   @id @default(uuid()) @db.Uuid
+  orgId      String   @map("org_id") @db.Uuid
+  clientId   String   @db.Uuid
+  /// diagnostic_evaluation | iep | ifsp | prior_evaluation | payor_form | other
+  kind       String
+  title      String
+  documentDate DateTime? @db.Date
+  caregiverSigned Boolean @default(false)
+  uploadedAt DateTime @default(now())
+
+  client Client @relation(fields: [clientId], references: [id])
+
+  @@map("attachment")
+}
+
+// ---------------------------------------------------------------- authorizations
+
+model Authorization {
+  id         String   @id @default(uuid()) @db.Uuid
+  orgId      String   @map("org_id") @db.Uuid
+  clientId   String   @db.Uuid
+  payorId    String   @db.Uuid
+  authNumber String
+  kind       String   @default("initial") // initial | reauth
+  startDate  DateTime @db.Date
+  endDate    DateTime @db.Date
+  /// Hours/week the BCBA recommends; compared against intake availability.
+  recommendedHoursPerWeek Float?
+
+  client   Client              @relation(fields: [clientId], references: [id])
+  payor    Payor               @relation(fields: [payorId], references: [id])
+  units    AuthorizationUnit[]
+  sessions ServiceSession[]
+  plans    Plan[]
+
+  @@map("authorization")
+}
+
+model AuthorizationUnit {
+  id              String @id @default(uuid()) @db.Uuid
+  orgId           String @map("org_id") @db.Uuid
+  authorizationId String @db.Uuid
+  cptCode         String
+  approvedUnits   Int
+  /// week | month | auth
+  unitBasis       String
+
+  authorization Authorization @relation(fields: [authorizationId], references: [id])
+
+  @@map("authorization_unit")
+}
+
+/// A delivered, billable service. Units are 15-minute CPT units.
+model ServiceSession {
+  id              String   @id @default(uuid()) @db.Uuid
+  orgId           String   @map("org_id") @db.Uuid
+  clientId        String   @db.Uuid
+  authorizationId String?  @db.Uuid
+  cptCode         String
+  date            DateTime @db.Date
+  startMinute     Int      @default(540) // minutes after midnight
+  units           Int
+  providerRole    Role
+  /// Opaque staff identifier (e.g. "RBT-A"), used for per-technician supervision ratios.
+  providerId      String?
+  providerCredential String?
+  inPerson        Boolean  @default(true)
+
+  client        Client         @relation(fields: [clientId], references: [id])
+  authorization Authorization? @relation(fields: [authorizationId], references: [id])
+
+  @@index([clientId, date])
+  @@map("service_session")
+}
+
+// ---------------------------------------------------------------- intake
+
+model Intake {
+  id          String    @id @default(uuid()) @db.Uuid
+  orgId       String    @map("org_id") @db.Uuid
+  clientId    String    @db.Uuid
+  answers     Json      @default("{}")
+  status      String    @default("draft") // draft | submitted
+  submittedAt DateTime?
+  updatedAt   DateTime  @updatedAt
+
+  client Client @relation(fields: [clientId], references: [id])
+
+  @@map("intake")
+}
+
+// ---------------------------------------------------------------- VB-MAPP
+
+model VbmappImport {
+  id          String    @id @default(uuid()) @db.Uuid
+  orgId       String    @map("org_id") @db.Uuid
+  clientId    String    @db.Uuid
+  filename    String
+  fileSha256  String
+  /// Parsed administrations + flags. PHI header cells are never stored.
+  parsed      Json
+  status      String    @default("pending") // pending | confirmed | discarded
+  phiDetected Boolean   @default(false)
+  phiStripped Boolean   @default(false)
+  reviewerId  String?   @db.Uuid
+  reviewedAt  DateTime?
+  createdAt   DateTime  @default(now())
+
+  client          Client                 @relation(fields: [clientId], references: [id])
+  administrations VbmappAdministration[]
+
+  @@map("vbmapp_import")
+}
+
+model VbmappAdministration {
+  id             String    @id @default(uuid()) @db.Uuid
+  orgId          String    @map("org_id") @db.Uuid
+  clientId       String    @db.Uuid
+  importId       String?   @db.Uuid
+  adminNumber    Int
+  testDate       DateTime? @db.Date
+  testerInitials String?
+  /// Recomputed from the raw grid. Workbook totals are never used.
+  totals         Json
+  flags          Json      @default("[]")
+  verified       Boolean   @default(false)
+  reviewerId     String?   @db.Uuid
+  reviewedAt     DateTime?
+  createdAt      DateTime  @default(now())
+
+  client Client         @relation(fields: [clientId], references: [id])
+  import VbmappImport?  @relation(fields: [importId], references: [id])
+  scores MilestoneScore[]
+
+  @@map("vbmapp_administration")
+}
+
+model MilestoneScore {
+  id               String @id @default(uuid()) @db.Uuid
+  orgId            String @map("org_id") @db.Uuid
+  administrationId String @db.Uuid
+  level            Int
+  domain           String
+  milestone        Int
+  score            Float
+  /// The administration in which this score was first observed.
+  firstAdmin       Int
+  carriedForward   Boolean @default(false)
+
+  administration VbmappAdministration @relation(fields: [administrationId], references: [id])
+
+  @@map("milestone_score")
+}
+
+// ---------------------------------------------------------------- payors
+
+model Payor {
+  id        String  @id @default(uuid()) @db.Uuid
+  orgId     String  @map("org_id") @db.Uuid
+  key       String
+  name      String
+  inherits  String?
+
+  rules          PayorRule[]
+  clientPayors   ClientPayor[]
+  authorizations Authorization[]
+
+  @@unique([orgId, key])
+  @@map("payor")
+}
+
+model PayorDocument {
+  id            String    @id @default(uuid()) @db.Uuid
+  orgId         String    @map("org_id") @db.Uuid
+  key           String
+  name          String
+  version       String
+  effectiveDate DateTime? @db.Date
+  url           String?
+
+  rules PayorRule[]
+
+  @@unique([orgId, key])
+  @@map("payor_document")
+}
+
+model PayorRule {
+  id               String  @id @default(uuid()) @db.Uuid
+  orgId            String  @map("org_id") @db.Uuid
+  payorId          String  @db.Uuid
+  type             String
+  params           Json
+  sourceDocumentId String? @db.Uuid
+  sourceSection    String?
+  verified         Boolean @default(false)
+  notes            String?
+  /// Payor key this rule was inherited from (e.g., ga_medicaid for Amerigroup).
+  inheritedFrom    String?
+  ordinal          Int     @default(0)
+
+  payor          Payor          @relation(fields: [payorId], references: [id])
+  sourceDocument PayorDocument? @relation(fields: [sourceDocumentId], references: [id])
+
+  @@map("payor_rule")
+}
+
+// ---------------------------------------------------------------- goals
+
+model GoalTemplate {
+  id               String @id @default(uuid()) @db.Uuid
+  orgId            String @map("org_id") @db.Uuid
+  domainNumber     Int
+  domainName       String
+  tier             Int
+  tierName         String
+  category         String
+  goalText         String
+  rationalePattern String
+  rationaleText    String
+  /// [{level, domain, from, to}] VB-MAPP milestones this template addresses.
+  linkedMilestones Json   @default("[]")
+
+  @@unique([orgId, domainNumber, tier])
+  @@map("goal_template")
+}
+
+model Goal {
+  id               String  @id @default(uuid()) @db.Uuid
+  orgId            String  @map("org_id") @db.Uuid
+  clientId         String  @db.Uuid
+  planId           String? @db.Uuid
+  templateId       String? @db.Uuid
+  diagnosisId      String? @db.Uuid
+  ordinal          Int     @default(0)
+  domain           String
+  tier             Int
+  /// communication | social_play | behavior_reduction | replacement | caregiver | other
+  category         String
+  deficitArea      String?
+  /// percent | frequency | duration. Frequency/duration goals improve downward.
+  measure          String  @default("percent")
+  linkedMilestones Json    @default("[]")
+  initiationWindow String  @default("Months 1-3")
+  objective        String
+  sd               String  @default("")
+  targetBehavior   String  @default("")
+  dataCollection   String  @default("")
+  prompting        String  @default("")
+  teachingProcedure String @default("")
+  phases           Json    @default("[]")
+  masteryAccuracyPct Int   @default(80)
+  masteryConsecutiveSessions Int @default(5)
+  masteryInstructors Int   @default(2)
+  masterySettings  Int     @default(1)
+  generalization   String  @default("")
+  rationalePattern String  @default("A")
+  rationale        String  @default("")
+  /// Pointer to the sourced baseline: {kind: "datapoints", window} or {kind: "vbmapp", ...}
+  baselineSource   Json?
+  replacementForGoalId String? @db.Uuid
+  status           String  @default("draft") // draft | approved
+  /// Required before export when progress is flat over 8+ weeks.
+  flatExplanation  String?
+  approvedById     String? @db.Uuid
+  approvedAt       DateTime?
+
+  client     Client          @relation(fields: [clientId], references: [id])
+  plan       Plan?           @relation(fields: [planId], references: [id])
+  diagnosis  Diagnosis?      @relation(fields: [diagnosisId], references: [id])
+  dataPoints GoalDataPoint[]
+  phaseChanges GoalPhaseChange[]
+
+  @@map("goal")
+}
+
+model GoalDataPoint {
+  id     String   @id @default(uuid()) @db.Uuid
+  orgId  String   @map("org_id") @db.Uuid
+  goalId String   @db.Uuid
+  date   DateTime @db.Date
+  /// Percent correct (0-100) unless the goal measures frequency/duration.
+  value  Float
+  trials Int?
+
+  goal Goal @relation(fields: [goalId], references: [id])
+
+  @@index([goalId, date])
+  @@map("goal_data_point")
+}
+
+model GoalPhaseChange {
+  id     String   @id @default(uuid()) @db.Uuid
+  orgId  String   @map("org_id") @db.Uuid
+  goalId String   @db.Uuid
+  date   DateTime @db.Date
+  label  String
+
+  goal Goal @relation(fields: [goalId], references: [id])
+
+  @@map("goal_phase_change")
+}
+
+// ---------------------------------------------------------------- plans
+
+model Plan {
+  id              String   @id @default(uuid()) @db.Uuid
+  orgId           String   @map("org_id") @db.Uuid
+  clientId        String   @db.Uuid
+  authorizationId String?  @db.Uuid
+  type            String   // initial | reauth
+  status          String   @default("draft") // draft | finalized
+  /// [{key, name, version}] payor documents this plan was written against.
+  payorDocVersions Json    @default("[]")
+  createdById     String?  @db.Uuid
+  createdAt       DateTime @default(now())
+  finalizedAt     DateTime?
+
+  client        Client         @relation(fields: [clientId], references: [id])
+  authorization Authorization? @relation(fields: [authorizationId], references: [id])
+  sections      PlanSection[]
+  goals         Goal[]
+  packet        Packet?
+
+  @@map("plan")
+}
+
+model PlanSection {
+  id           String    @id @default(uuid()) @db.Uuid
+  orgId        String    @map("org_id") @db.Uuid
+  planId       String    @db.Uuid
+  key          String
+  ordinal      Int
+  title        String
+  state        String    @default("draft") // draft | edited | approved
+  /// Last AI draft (tokenized, firewall-validated).
+  aiDraft      String?
+  /// Current content (tokenized). Rendered by substituting sourced values.
+  content      String    @default("")
+  /// {itemKey: {status: "answered"|"none", note?}}
+  items        Json      @default("{}")
+  approvedById String?   @db.Uuid
+  approvedAt   DateTime?
+  updatedAt    DateTime  @updatedAt
+
+  plan      Plan                  @relation(fields: [planId], references: [id])
+  revisions PlanSectionRevision[]
+
+  @@unique([planId, key])
+  @@map("plan_section")
+}
+
+model PlanSectionRevision {
+  id        String   @id @default(uuid()) @db.Uuid
+  orgId     String   @map("org_id") @db.Uuid
+  sectionId String   @db.Uuid
+  kind      String   // ai_draft | edit | approve | reopen
+  content   String
+  /// Unified-style line diff against the AI draft.
+  diff      String   @default("")
+  userId    String?  @db.Uuid
+  createdAt DateTime @default(now())
+
+  section PlanSection @relation(fields: [sectionId], references: [id])
+
+  @@map("plan_section_revision")
+}
+
+// ---------------------------------------------------------------- letters/packets
+
+model PayorLetter {
+  id              String   @id @default(uuid()) @db.Uuid
+  orgId           String   @map("org_id") @db.Uuid
+  clientId        String   @db.Uuid
+  authorizationId String?  @db.Uuid
+  filename        String
+  text            String
+  /// approval | denial | reduction | request_for_info | p2p_offer
+  classification  String?
+  /// Extracted fields, each with the verbatim quote it came from.
+  extracted       Json     @default("{}")
+  status          String   @default("pending") // pending | confirmed
+  confirmedById   String?  @db.Uuid
+  confirmedAt     DateTime?
+  createdAt       DateTime @default(now())
+
+  client Client @relation(fields: [clientId], references: [id])
+
+  @@map("payor_letter")
+}
+
+model Packet {
+  id          String    @id @default(uuid()) @db.Uuid
+  orgId       String    @map("org_id") @db.Uuid
+  planId      String    @unique @db.Uuid
+  letterId    String?   @db.Uuid
+  status      String    @default("draft") // draft | ready | submitted
+  checklist   Json      @default("[]")
+  pdfSha256   String?
+  exportedAt  DateTime?
+  submittedAt DateTime?
+
+  plan Plan @relation(fields: [planId], references: [id])
+
+  @@map("packet")
+}
