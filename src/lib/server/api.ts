@@ -65,10 +65,12 @@ export async function readJson<T>(req: Request, schema: { parse: (x: unknown) =>
 export async function readUpload(
   req: Request,
   maxBytes: number,
-): Promise<{ filename: string; data: Buffer }> {
+): Promise<{ filename: string; data: Buffer; fields: Record<string, string> }> {
   const form = await req.formData();
   const file = form.get("file");
   if (!(file instanceof File)) throw new HttpError(400, "No file uploaded");
   if (file.size > maxBytes) throw new HttpError(413, "File too large");
-  return { filename: file.name, data: Buffer.from(await file.arrayBuffer()) };
+  const fields: Record<string, string> = {};
+  for (const [k, v] of form.entries()) if (typeof v === "string") fields[k] = v.slice(0, 500);
+  return { filename: file.name, data: Buffer.from(await file.arrayBuffer()), fields };
 }

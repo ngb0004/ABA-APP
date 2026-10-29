@@ -1,10 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import { PrismaClient } from "@prisma/client";
 import { withOrg } from "@/lib/db";
 import { loadRules } from "@/lib/services/payors";
 import {
   checkSourcesNow,
   revokeRuleVerification,
+  uploadOfficialCopy,
   verifyRuleWithQuote,
   watchAllOrgs,
   watchOrgSources,
@@ -256,5 +258,94 @@ describe("verify with proof", () => {
   it("checking sources now is a BCBA action", async () => {
     await expect(checkSourcesNow(ctxAs("RBT"), fakeFetch())).rejects.toMatchObject({ status: 403 });
     expect((await checkSourcesNow(bcba, fakeFetch())).length).toBeGreaterThan(5);
+  });
+});
+
+describe("uploaded official copies (documents with no public URL)", () => {
+  const pdf = (name: string) => readFileSync(`fixtures/payor-docs/${name}`);
+  const docByKey = (key: string) =>
+    withOrg(bcba, (tx) => tx.payorDocument.findFirstOrThrow({ where: { key } }));
+  const HANDBOOK = "tricare_east_provider_handbook_2026";
+  const outcomeRule = async () =>
+    (await rulesOf("tricare_east")).find(
+      (r) => r.type === "outcome_measure_schedule" && r.source.key === HANDBOOK,
+    )!;
+
+  it("before an upload, its rules say to upload the document", async () => {
+    const r = await outcomeRule();
+    expect(r.trust!.status).toBe("unverified");
+    expect(r.trust!.reasons[0]).toMatch(/upload it under Sources/);
+    expect(r.source.quote).toMatch(/Vineland 3 and SRS-2 are due every year/);
+    expect(r.source.page).toBe("30");
+  });
+
+  it("only a BCBA can upload, only to unwatched official documents, and only a text PDF", async () => {
+    const doc = await docByKey(HANDBOOK);
+    const data = pdf("synthetic-handbook.pdf");
+    await expect(uploadOfficialCopy(ctxAs("AUTH_COORDINATOR"), doc.id, { data })).rejects.toMatchObject({
+      status: 403,
+    });
+    const watched = await docByKey("aetna_cpb_0648");
+    await expect(uploadOfficialCopy(bcba, watched.id, { data })).rejects.toMatchObject({ status: 409 });
+    const checklist = await docByKey("checklist_2026");
+    await expect(uploadOfficialCopy(bcba, checklist.id, { data })).rejects.toMatchObject({ status: 422 });
+    await expect(
+      uploadOfficialCopy(bcba, doc.id, { data: Buffer.from("not a pdf at all ".repeat(50)) }),
+    ).rejects.toMatchObject({ status: 422 });
+    await expect(
+      uploadOfficialCopy(bcba, doc.id, { data, effectiveDate: "next Tuesday" }),
+    ).rejects.toMatchObject({ status: 422 });
+  });
+
+  it("rejects anything that looks like a client's record, and stores nothing", async () => {
+    const doc = await docByKey(HANDBOOK);
+    await expect(
+      uploadOfficialCopy(bcba, doc.id, { data: pdf("synthetic-client-letter.pdf") }),
+    ).rejects.toThrow(/client's information/);
+    const n = await withOrg(bcba, (tx) => tx.payorDocumentSnapshot.count({ where: { documentId: doc.id } }));
+    expect(n).toBe(0);
+  });
+
+  it("is off on the demo site", async () => {
+    const doc = await docByKey(HANDBOOK);
+    process.env.DEMO_MODE = "true";
+    try {
+      await expect(
+        uploadOfficialCopy(bcba, doc.id, { data: pdf("synthetic-handbook.pdf") }),
+      ).rejects.toMatchObject({ status: 403 });
+    } finally {
+      delete process.env.DEMO_MODE;
+    }
+  });
+
+  it("an uploaded copy lets a BCBA verify rules against it, for at most 90 days", async () => {
+    const doc = await docByKey(HANDBOOK);
+    const up = await uploadOfficialCopy(bcba, doc.id, {
+      data: pdf("synthetic-handbook.pdf"),
+      versionLabel: "2026",
+    });
+    expect(up.unchanged).toBe(false);
+    const snap = await withOrg(bcba, (tx) =>
+      tx.payorDocumentSnapshot.findFirstOrThrow({ where: { documentId: doc.id } }),
+    );
+    expect(snap).toMatchObject({ origin: "upload", uploadedById: bcba.userId, versionLabel: "2026" });
+    expect(await uploadOfficialCopy(bcba, doc.id, { data: pdf("synthetic-handbook.pdf") })).toMatchObject({
+      unchanged: true,
+    });
+    // The watcher leaves uploaded documents alone.
+    const checks = await watchOrgSources(bcba, { fetcher: fakeFetch() });
+    expect(checks.some((c) => c.key === HANDBOOK)).toBe(false);
+
+    const rule = await outcomeRule();
+    await verifyRuleWithQuote(bcba, rule.id, { quote: rule.source.quote! });
+    const after = await outcomeRule();
+    expect(after.trust).toMatchObject({ status: "verified", tier: "T1" });
+    const days = (Date.parse(after.trust!.verifiedUntil!) - Date.now()) / 86_400_000;
+    expect(days).toBeLessThanOrEqual(90);
+    expect(days).toBeGreaterThan(85);
+    const audit = await withOrg(bcba, (tx) =>
+      tx.auditEvent.count({ where: { action: "source:uploaded", entityId: doc.id } }),
+    );
+    expect(audit).toBe(1);
   });
 });

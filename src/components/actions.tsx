@@ -29,6 +29,8 @@ export function ActionButton(props: {
   redirectKey?: string;
   redirectPrefix?: string;
   testId?: string;
+  /** Extra text fields sent with the file. */
+  fields?: { name: string; label: string; type?: "text" | "date"; placeholder?: string }[];
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -73,6 +75,8 @@ export function UploadForm(props: {
   redirectKey?: string;
   redirectPrefix?: string;
   testId?: string;
+  /** Extra text fields sent with the file. */
+  fields?: { name: string; label: string; type?: "text" | "date"; placeholder?: string }[];
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -95,6 +99,12 @@ export function UploadForm(props: {
       }}
     >
       <label>{props.label}</label>
+      {props.fields?.map((f) => (
+        <div key={f.name}>
+          <label>{f.label}</label>
+          <input name={f.name} type={f.type ?? "text"} placeholder={f.placeholder} />
+        </div>
+      ))}
       <div className="row">
         <input type="file" name="file" accept={props.accept} required />
         <button disabled={busy}>{busy ? "Uploading…" : "Upload"}</button>

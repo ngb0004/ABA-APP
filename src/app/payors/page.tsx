@@ -1,4 +1,5 @@
-import { ActionButton } from "@/components/actions";
+import { ActionButton, UploadForm } from "@/components/actions";
+import { isDemo } from "@/lib/demo";
 import { RuleSource, Status } from "@/components/status";
 import { VerifyRule } from "@/components/verify-rule";
 import { withOrg } from "@/lib/db";
@@ -26,6 +27,7 @@ export default async function PayorsPage() {
             fetchedAt: true,
             revisions: true,
             effectiveDate: true,
+            origin: true,
           },
         },
       },
@@ -33,6 +35,7 @@ export default async function PayorsPage() {
     return { payors, docs };
   });
   const canVerify = can(ctx.role, "payor:verify");
+  const demo = isDemo();
   const official = docs
     .filter((d) => !d.secondary)
     .map((d) => ({
@@ -91,13 +94,40 @@ export default async function PayorsPage() {
                   <tr key={d.id} data-doc={d.key}>
                     <td>
                       {s?.resolvedUrl || d.url ? (
-                        <a href={s?.resolvedUrl ?? d.url!} target="_blank" rel="noreferrer">
+                        <a href={s?.resolvedUrl || d.url!} target="_blank" rel="noreferrer">
                           {d.name}
                         </a>
                       ) : (
                         d.name
                       )}
                       {d.secondary && <div className="muted">Secondary source: cannot verify a rule</div>}
+                      {!d.secondary && !d.locator && (
+                        <div className="muted">
+                          No public copy to watch.{" "}
+                          {s?.origin === "upload"
+                            ? `Official copy uploaded ${s.fetchedAt.toISOString().slice(0, 10)}; upload the new edition when the payor publishes one.`
+                            : "Upload the official copy to verify rules against it."}
+                        </div>
+                      )}
+                      {!d.secondary && !d.locator && canVerify && !demo && (
+                        <details>
+                          <summary className="muted">Upload official copy</summary>
+                          <p className="muted">
+                            The payor&apos;s public publication only (PDF). Never upload a letter, a filled-in
+                            form, or anything with a client&apos;s information.
+                          </p>
+                          <UploadForm
+                            url={`/api/payors/sources/${d.id}/upload`}
+                            accept="application/pdf,.pdf"
+                            label="PDF from the payor"
+                            testId={`upload-source-${d.key}`}
+                            fields={[
+                              { name: "version", label: "Edition or version", placeholder: "e.g. 2026" },
+                              { name: "effectiveDate", label: "Effective date (if printed)", type: "date" },
+                            ]}
+                          />
+                        </details>
+                      )}
                       {changes.length > 0 && (
                         <details>
                           <summary className="muted">
@@ -114,7 +144,11 @@ export default async function PayorsPage() {
                       )}
                     </td>
                     <td>
-                      <Status s={d.secondary ? "n/a" : d.health} />
+                      {!d.secondary && !d.locator && !s ? (
+                        <span className="badge unknown">not uploaded</span>
+                      ) : (
+                        <Status s={d.secondary ? "n/a" : d.health} />
+                      )}
                       {d.lastError && <div className="muted">{d.lastError}</div>}
                     </td>
                     <td className="muted">{d.version}</td>

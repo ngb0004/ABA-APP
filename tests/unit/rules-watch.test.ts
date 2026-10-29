@@ -223,6 +223,46 @@ describe("trust status", () => {
     ).toBe("2027-04-13");
   });
 
+  it("an uploaded (unwatched) document: no watcher clock, verification capped at 90 days", () => {
+    const uploaded: DocState = {
+      ...doc,
+      health: "ok",
+      lastCheckedAt: "2026-06-01T00:00:00Z",
+      watched: false,
+    };
+    const plain = { ...snap, nextRevision: null, revisions: [] };
+    const t = computeTrust({
+      section: "803",
+      doc: uploaded,
+      latest: plain,
+      evidence: [verify()],
+      today,
+    });
+    expect(t.status).toBe("verified");
+    expect(t.verifiedUntil).toBe("2027-01-13");
+    expect(
+      computeTrust({
+        section: "803",
+        doc: uploaded,
+        latest: plain,
+        evidence: [verify()],
+        today: "2027-01-13",
+      }).status,
+    ).toBe("stale");
+    // A watched document that has not been checked for weeks is not trusted.
+    expect(
+      computeTrust({
+        section: "803",
+        doc: { ...uploaded, watched: true },
+        latest: plain,
+        evidence: [verify()],
+        today,
+      }).status,
+    ).toBe("stale");
+    expect(
+      computeTrust({ section: "803", doc: uploaded, latest: null, evidence: [], today }).reasons[0],
+    ).toMatch(/upload it/);
+  });
   it("expires, and a later revoke cancels a verification", () => {
     expect(
       computeTrust({ section: "803", doc, latest: snap, evidence: [verify()], today: "2027-01-02" }).status,

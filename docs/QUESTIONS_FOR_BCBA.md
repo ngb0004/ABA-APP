@@ -53,3 +53,7 @@ Each question lists the default the build uses today. Defaults are the safer cho
 26. **TRICARE technicians: RBT only, or also ABAT/BCAT?** The checklist says RBT; the Humana Military FAQ lists QABA (ABAT) and BICC (BCAT) among accepted boards, subject to the TRICARE Operations Manual and state law. *Default:* warn only.
 27. **TRICARE "report due 14 days after assessment".** No official document found states this; the only 14-day figure is the FAQ's window for completing 97151. Is the checklist rule right?
 28. **Plan structure:** should the app move to the 23-section structure in the review (with payor-specific order and conditional school, group, and telehealth sections)?
+
+## Uploaded payor documents
+
+29. **How long does a verification against an uploaded document last?** Some official documents have no public copy (the 2026 TRICARE East handbook, the Humana Military FAQ), so a BCBA uploads the PDF and nothing can watch it for changes. *Default:* verifications against an uploaded copy last at most 90 days (180 for a watched document), and uploading a new edition re-checks every quoted sentence. Uploads that look like a client record (a name, date of birth, or member ID) are rejected, and uploads are off on the demo site. (`UNWATCHED_CEILING_DAYS` in `src/lib/rules-watch/status.ts`)

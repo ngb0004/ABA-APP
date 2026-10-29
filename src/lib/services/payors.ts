@@ -151,6 +151,7 @@ export async function withTrust(tx: Tx, rows: RuleRow[], today: Day = toDay(new 
             health: doc.health,
             lastError: doc.lastError,
             lastCheckedAt: doc.lastCheckedAt?.toISOString() ?? null,
+            watched: !!doc.locator,
           }
         : null,
       latest: snap ? snapshotState(snap) : null,
@@ -189,7 +190,7 @@ export async function withTrust(tx: Tx, rows: RuleRow[], today: Day = toDay(new 
         version: snap?.versionLabel ?? doc?.version ?? null,
         section: current?.section ?? r.sourceSection,
         // Link to the version actually fetched (e.g., this quarter's Georgia manual), else the cited URL.
-        url: snap?.resolvedUrl ?? doc?.url ?? null,
+        url: snap?.resolvedUrl || doc?.url || null,
         page: r.sourcePage ?? null,
         quote: r.sourceQuote ?? null,
       },

@@ -42,16 +42,47 @@ export function numbersMissingFromQuote(params: unknown, quote: string): string[
 }
 
 const WORDS: Record<string, number> = {
-  zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12,
-  thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20, thirty: 30,
-  forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90,
+  zero: 0,
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+  nine: 9,
+  ten: 10,
+  eleven: 11,
+  twelve: 12,
+  thirteen: 13,
+  fourteen: 14,
+  fifteen: 15,
+  sixteen: 16,
+  seventeen: 17,
+  eighteen: 18,
+  nineteen: 19,
+  twenty: 20,
+  thirty: 30,
+  forty: 40,
+  fifty: 50,
+  sixty: 60,
+  seventy: 70,
+  eighty: 80,
+  ninety: 90,
 };
 
 /** Payors often spell numbers out ("one to two hours per ten hours", "six-month"); read them as digits for the number check. */
 export function digitsForNumberWords(text: string): string {
   return text
-    .replace(/\b(twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)[- ](one|two|three|four|five|six|seven|eight|nine)\b/gi, (_m, t: string, u: string) => String(WORDS[t.toLowerCase()]! + WORDS[u.toLowerCase()]!))
-    .replace(/\b(zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)\b/gi, (w) => String(WORDS[w.toLowerCase()]));
+    .replace(
+      /\b(twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)[- ](one|two|three|four|five|six|seven|eight|nine)\b/gi,
+      (_m, t: string, u: string) => String(WORDS[t.toLowerCase()]! + WORDS[u.toLowerCase()]!),
+    )
+    .replace(
+      /\b(zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)\b/gi,
+      (w) => String(WORDS[w.toLowerCase()]),
+    );
 }
 
 /** A quote must be real text: at least 4 words and 20 characters after normalization. */
@@ -81,4 +112,18 @@ export function htmlToText(html: string): string {
       }
       return ENTITIES[e.toLowerCase()] ?? m;
     });
+}
+
+/**
+ * Payor publications never carry a filled-in client record. An upload that does
+ * (a letter, a filled-in form) is rejected before anything is stored.
+ */
+const CLIENT_RECORD_PATTERNS: RegExp[] = [
+  /\b(?:date of birth|dob|birth ?date)\s*[:#]?\s*\d{1,2}[/-]\d{1,2}[/-]\d{2,4}/i,
+  /\b(?:member|subscriber|patient|beneficiary|client|medicaid)\s*(?:id|number|no\.?|#)\s*[:#]\s*[A-Z]{0,4}\d[A-Z0-9-]{5,}/i,
+  /\b(?:patient|client|member|beneficiary|child'?s?|subscriber)\s*name\s*:\s*[A-Z][a-z]+\s+[A-Z][a-z]+/,
+];
+export function looksLikeClientRecord(text: string): boolean {
+  const t = normalizeText(text);
+  return CLIENT_RECORD_PATTERNS.some((re) => re.test(t));
 }

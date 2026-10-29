@@ -26,9 +26,9 @@ export type FetchLike = (
 }>;
 
 export const USER_AGENT = "ABA-Plan-Assistant-RulesWatch/1.0 (public policy document monitor)";
-const MAX_BYTES = 25 * 1024 * 1024;
+export const MAX_BYTES = 25 * 1024 * 1024;
 /** Extracted text shorter than this is treated as an empty or challenge page. */
-const MIN_TEXT = 400;
+export const MIN_TEXT = 400;
 
 export type FetchedDocument =
   | {
@@ -59,6 +59,11 @@ export const defaultFetch: FetchLike = async (url, init) => {
     clearTimeout(t);
   }
 };
+
+/** Text of a PDF or HTML document. */
+export async function extractDocumentText(bytes: Buffer, contentType: string, url: string): Promise<string> {
+  return extract(bytes, contentType, url);
+}
 
 async function extract(bytes: Buffer, contentType: string, url: string): Promise<string> {
   const isPdf =

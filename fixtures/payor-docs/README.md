@@ -7,3 +7,8 @@ and Aetna, kept here only so tests run without network access. They contain no c
 - ga_asd_manual_2026q4.pdf: Georgia Medicaid ASD manual, Q4 (effective 10/1/2026)
 - evernorth_aba_pa_928213d.pdf: Evernorth ABA prior authorization form
 - aetna_cpb_0648.html: Aetna Clinical Policy Bulletin 0648 (Autism Spectrum Disorders)
+
+Synthetic fixtures written for the tests (not payor publications):
+
+- synthetic-handbook.pdf: stands in for an official document with no public copy (uploaded by a BCBA)
+- synthetic-client-letter.pdf: a fictional letter with made-up client details; uploads like it must be rejected

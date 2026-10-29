@@ -394,6 +394,9 @@ model PayorDocumentSnapshot {
   nextRevision  DateTime? @db.Date
   /// Change-log rows the payor publishes: [{date, section, description, change}]
   revisions     Json      @default("[]")
+  /// fetch (the watcher downloaded it) | upload (a BCBA uploaded the official file)
+  origin        String    @default("fetch")
+  uploadedById  String?   @db.Uuid
 
   document PayorDocument @relation(fields: [documentId], references: [id])
 

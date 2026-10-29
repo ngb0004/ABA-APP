@@ -14,7 +14,16 @@ import {
   type FetchedDocument,
   type FetchLike,
 } from "../rules-watch/fetch";
-import { numbersMissingFromQuote, quoteAppears, quoteIsSubstantial } from "../rules-watch/text";
+import { isDemo } from "../demo";
+import { extractDocumentText, MAX_BYTES, MIN_TEXT } from "../rules-watch/fetch";
+import {
+  looksLikeClientRecord,
+  normalizeText,
+  numbersMissingFromQuote,
+  quoteAppears,
+  quoteIsSubstantial,
+  textSha256,
+} from "../rules-watch/text";
 
 export type SourceCheck = {
   key: string;
@@ -121,6 +130,89 @@ export async function watchOrgSources(
     );
   }
   return out;
+}
+
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * A BCBA uploads the official copy of a payor document that has no public URL
+ * (for example, a provider handbook behind a portal). Public payor publications
+ * only: anything that looks like a client's record is rejected and not stored.
+ */
+export async function uploadOfficialCopy(
+  ctx: OrgCtx,
+  documentId: string,
+  input: { data: Buffer; versionLabel?: string | null; effectiveDate?: string | null },
+) {
+  requirePermission(ctx.role, "payor:verify");
+  if (isDemo()) throw new HttpError(403, "Uploading payor documents is turned off on the demo site.");
+  const doc = await withOrg(ctx, (tx) => tx.payorDocument.findUniqueOrThrow({ where: { id: documentId } }));
+  if (doc.secondary)
+    throw new HttpError(422, `${doc.name} is a secondary source. Upload an official payor document instead.`);
+  if (doc.locator) throw new HttpError(409, `${doc.name} is fetched automatically from the payor's site.`);
+  if (input.data.length > MAX_BYTES) throw new HttpError(413, "File too large");
+  if (input.data.subarray(0, 5).toString() !== "%PDF-")
+    throw new HttpError(422, "Upload the payor's PDF file.");
+  const effectiveDate = input.effectiveDate?.trim() || null;
+  if (effectiveDate && !ISO_DAY.test(effectiveDate))
+    throw new HttpError(422, "Effective date must be a date (YYYY-MM-DD)");
+  let text: string;
+  try {
+    text = normalizeText(await extractDocumentText(input.data, "application/pdf", "upload.pdf"));
+  } catch {
+    throw new HttpError(422, "Could not read text from that PDF.");
+  }
+  if (text.length < MIN_TEXT)
+    throw new HttpError(422, "That PDF has almost no text (it may be a scan). Upload the payor's text PDF.");
+  if (looksLikeClientRecord(text))
+    throw new HttpError(
+      422,
+      "That file looks like it contains a client's information (a name, date of birth, or member ID). Upload only the payor's public publication.",
+    );
+  const sha = textSha256(text);
+  const versionLabel = input.versionLabel?.trim().slice(0, 120) || null;
+  return withOrg(ctx, async (tx) => {
+    const latest = await tx.payorDocumentSnapshot.findFirst({
+      where: { documentId },
+      orderBy: { fetchedAt: "desc" },
+      select: { textSha256: true },
+    });
+    if (latest?.textSha256 === sha) return { snapshotId: null, unchanged: true };
+    const now = new Date();
+    const snap = await tx.payorDocumentSnapshot.create({
+      data: {
+        orgId: ctx.orgId,
+        documentId,
+        fetchedAt: now,
+        resolvedUrl: "",
+        contentType: "application/pdf",
+        byteLength: input.data.length,
+        textSha256: sha,
+        text,
+        versionLabel,
+        effectiveDate: effectiveDate ? new Date(`${effectiveDate}T00:00:00Z`) : null,
+        origin: "upload",
+        uploadedById: ctx.userId,
+      },
+    });
+    const cited = doc.effectiveDate ? toDay(doc.effectiveDate) : null;
+    await tx.payorDocument.update({
+      where: { id: documentId },
+      data: {
+        health: effectiveDate && cited && effectiveDate > cited ? "changed" : "ok",
+        lastError: null,
+        lastCheckedAt: now,
+        ...(latest ? { lastChangedAt: now } : {}),
+      },
+    });
+    await audit(tx, {
+      action: "source:uploaded",
+      entityType: "PayorDocument",
+      entityId: documentId,
+      meta: { key: doc.key, textSha256: sha, byteLength: input.data.length, replaced: !!latest },
+    });
+    return { snapshotId: snap.id, unchanged: false };
+  });
 }
 
 /** Check sources now (BCBA action). */

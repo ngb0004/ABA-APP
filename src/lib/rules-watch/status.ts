@@ -21,6 +21,8 @@ export type DocState = {
   health: string;
   lastError: string | null;
   lastCheckedAt: string | null;
+  /** False for documents a BCBA uploads by hand: nothing checks them automatically. */
+  watched?: boolean;
 };
 export type SnapshotState = {
   id: string;
@@ -52,6 +54,8 @@ export type Trust = {
 export const VERIFIED_CEILING_DAYS: Record<string, number> = { T1: 180, T2: 90 };
 /** If the watcher hasn't checked a source in this long, its verified rules fall back to "needs re-check". */
 export const MAX_UNCHECKED_DAYS = 7;
+/** Nothing watches an uploaded document for changes, so its verifications last at most this long. */
+export const UNWATCHED_CEILING_DAYS = 90;
 
 const addDays = (iso: string, n: number) =>
   new Date(Date.parse(iso) + n * 86_400_000).toISOString().slice(0, 10);
@@ -90,13 +94,20 @@ export function computeTrust(input: {
 
   if (current) {
     const reasons: string[] = [];
-    const ceiling = addDays(current.createdAt.slice(0, 10), VERIFIED_CEILING_DAYS[current.tier] ?? 90);
+    const watched = doc.watched !== false;
+    const days = VERIFIED_CEILING_DAYS[current.tier] ?? 90;
+    const ceiling = addDays(
+      current.createdAt.slice(0, 10),
+      watched ? days : Math.min(days, UNWATCHED_CEILING_DAYS),
+    );
     const verifiedUntil = [ceiling, latest?.nextRevision].filter(Boolean).sort()[0]!;
     if (doc.health === "broken")
       reasons.push(
         `Source is unreachable${doc.lastError ? ` (${doc.lastError})` : ""}; re-check when it is back`,
       );
-    if (!doc.lastCheckedAt) reasons.push("The source has never been checked automatically");
+    if (!watched) {
+      // Uploaded by hand: expiry (above) is the only clock.
+    } else if (!doc.lastCheckedAt) reasons.push("The source has never been checked automatically");
     else if (today > addDays(doc.lastCheckedAt.slice(0, 10), MAX_UNCHECKED_DAYS))
       reasons.push(`The source has not been checked since ${doc.lastCheckedAt.slice(0, 10)}`);
     if (latest && current.textSha256 && latest.textSha256 !== current.textSha256) {
@@ -177,7 +188,12 @@ export function computeTrust(input: {
   return {
     status: "unverified",
     tier: null,
-    reasons: ["Cited official document, not yet checked", ...note],
+    reasons: [
+      doc.watched === false && !latest
+        ? "Official document with no public copy: upload it under Sources, then verify"
+        : "Cited official document, not yet checked",
+      ...note,
+    ],
     verifiedUntil: null,
     verifiedAt: null,
   };
