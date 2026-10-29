@@ -14,7 +14,7 @@ import {
   type FetchedDocument,
   type FetchLike,
 } from "../rules-watch/fetch";
-import { numbersMissingFromQuote, quoteAppears } from "../rules-watch/text";
+import { numbersMissingFromQuote, quoteAppears, quoteIsSubstantial } from "../rules-watch/text";
 
 export type SourceCheck = {
   key: string;
@@ -73,11 +73,12 @@ export async function watchOrgSources(
           orderBy: { fetchedAt: "asc" },
           select: { textSha256: true },
         });
-        // Where the payor publishes a version label, only a new label is a new version (page chrome changes are ignored).
-        const isNew =
-          !latest ||
-          (r.versionLabel ? r.versionLabel !== latest.versionLabel : r.textSha256 !== latest.textSha256);
-        if (isNew) {
+        // Any text change is kept as a snapshot, so a deleted sentence is noticed even when the
+        // payor's version label did not move. Only a new label (or new text, for unlabeled
+        // documents) counts as a "new version" alert.
+        const textChanged = !latest || r.textSha256 !== latest.textSha256;
+        const isNew = !latest || (r.versionLabel ? r.versionLabel !== latest.versionLabel : textChanged);
+        if (textChanged) {
           await tx.payorDocumentSnapshot.create({
             data: {
               orgId: ctx.orgId,
@@ -150,8 +151,6 @@ export async function watchAllOrgs(fetcher?: FetchLike) {
   return results;
 }
 
-const MIN_QUOTE = 15;
-
 /**
  * Verify a rule with proof: the reviewer pastes a sentence from the current
  * official document. Code checks the sentence is really there and that every
@@ -166,6 +165,8 @@ export async function verifyRuleWithQuote(
   requirePermission(ctx.role, "payor:verify");
   return withOrg(ctx, async (tx) => {
     const rule = await tx.payorRule.findUniqueOrThrow({ where: { id: ruleId } });
+    if (!rule.lineageKey)
+      throw new HttpError(409, "This rule has not been synced yet. Run the payor library sync first.");
     const documentId = input.documentId || rule.sourceDocumentId;
     if (!documentId) throw new HttpError(422, "Choose the official document that states this rule");
     const doc = await tx.payorDocument.findUniqueOrThrow({ where: { id: documentId } });
@@ -181,11 +182,8 @@ export async function verifyRuleWithQuote(
     if (!snap)
       throw new HttpError(409, `No copy of ${doc.name} has been fetched yet. Use "Check sources now" first.`);
     const quote = input.quote.trim();
-    if (quote.length < MIN_QUOTE)
-      throw new HttpError(
-        422,
-        `Paste the full sentence that states the rule (at least ${MIN_QUOTE} characters)`,
-      );
+    if (!quoteIsSubstantial(quote))
+      throw new HttpError(422, "Paste the full sentence that states the rule (at least 4 words)");
     if (!quoteAppears(quote, snap.text))
       throw new HttpError(
         422,
@@ -227,6 +225,8 @@ export async function revokeRuleVerification(ctx: OrgCtx, ruleId: string, note: 
   requirePermission(ctx.role, "payor:verify");
   return withOrg(ctx, async (tx) => {
     const rule = await tx.payorRule.findUniqueOrThrow({ where: { id: ruleId } });
+    if (!rule.lineageKey)
+      throw new HttpError(409, "This rule has not been synced yet. Run the payor library sync first.");
     const ev = await tx.ruleEvidence.create({
       data: {
         orgId: ctx.orgId,

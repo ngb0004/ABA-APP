@@ -51,8 +51,13 @@ export async function syncPayorLibrary(tx: Tx, orgId: string, seed: PayorSeed = 
   const keep: string[] = [];
   for (const p of seed.payors) {
     const rules = resolvePayorRules(seed, p.id);
+    const seen = new Map<string, number>();
     for (const [i, r] of rules.entries()) {
-      const id = sid(`${orgId}:rule:${p.id}:${i}`);
+      // Row ids follow the content fingerprint (plus an occurrence count for exact duplicates), not the position.
+      const lineage = r.lineageKey!;
+      const n = (seen.get(lineage) ?? 0) + 1;
+      seen.set(lineage, n);
+      const id = sid(`${orgId}:rule:${p.id}:${lineage}:${n}`);
       keep.push(id);
       const data = {
         payorId: payorIds[p.id]!,
@@ -62,7 +67,7 @@ export async function syncPayorLibrary(tx: Tx, orgId: string, seed: PayorSeed = 
         sourceSection: r.source.section,
         notes: r.notes,
         inheritedFrom: r.inheritedFrom,
-        lineageKey: r.lineageKey ?? r.id,
+        lineageKey: lineage,
         ordinal: i,
       };
       await tx.payorRule.upsert({ where: { id }, create: { id, orgId, ...data }, update: data });

@@ -72,10 +72,25 @@ async function extract(bytes: Buffer, contentType: string, url: string): Promise
   return htmlToText(bytes.toString("utf8"));
 }
 
+/** Reading a body can stall after the headers arrive, so it gets its own deadline. */
+const BODY_TIMEOUT_MS = 60_000;
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  let t: ReturnType<typeof setTimeout>;
+  return Promise.race([
+    p,
+    new Promise<T>(
+      (_, rej) =>
+        (t = setTimeout(() => rej(Object.assign(new Error("timeout"), { name: "AbortError" })), ms)),
+    ),
+  ]).finally(() => clearTimeout(t));
+}
+
 async function download(fetcher: FetchLike, url: string, init?: Parameters<FetchLike>[1]) {
   const res = await fetcher(url, { redirect: "follow", ...init });
-  const bytes = Buffer.from(await res.arrayBuffer());
-  return { res, bytes };
+  const declared = Number(res.headers.get("content-length") ?? "0");
+  if (declared > MAX_BYTES) return { res, bytes: null as Buffer | null, tooLarge: true };
+  const bytes = Buffer.from(await withTimeout(res.arrayBuffer(), BODY_TIMEOUT_MS));
+  return { res, bytes, tooLarge: bytes.length > MAX_BYTES };
 }
 
 function fail(error: string, resolvedUrl: string | null = null): FetchedDocument {
@@ -90,14 +105,25 @@ async function resolveGaMmis(
 ): Promise<{ url: string; listedDate: string | null } | { error: string }> {
   const r = await fetcher(indexUrl, { redirect: "follow" });
   if (r.status !== 200) return { error: `Index page returned HTTP ${r.status}` };
-  const html = await r.text();
+  const html = await withTimeout(r.text(), BODY_TIMEOUT_MS);
   const cookies = (r.headers.getSetCookie?.() ?? []).map((c) => c.split(";")[0]).join("; ");
-  const esc = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const row = new RegExp(
-    `__doPostBack\\(&#39;([^&]+)&#39;[^"]*"></a></td><td[^>]*>\\s*${esc}\\s*</td>([\\s\\S]*?)</tr>`,
-  ).exec(html);
-  if (!row) return { error: `"${title}" is no longer listed on the index page` };
-  const listedDate = usDateToIso(/(\d{1,2}\/\d{1,2}\/\d{4})/.exec(row[2] ?? "")?.[1] ?? "");
+  // Rows: a postback link, then cells. Compare decoded cell text, so "&amp;" and "&#39;" titles match too.
+  const want = normalizeText(title).toLowerCase();
+  let target: string | null = null;
+  let listedDate: string | null = null;
+  for (const tr of html.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)) {
+    const pb = /__doPostBack\(&#39;([^&'"]+)&#39;/.exec(tr[1]!) ?? /__doPostBack\('([^']+)'/.exec(tr[1]!);
+    if (!pb) continue;
+    const cells = [...tr[1]!.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map((c) =>
+      normalizeText(htmlToText(c[1]!)),
+    );
+    if (!cells.some((c) => c.toLowerCase() === want)) continue;
+    target = pb[1]!;
+    listedDate = usDateToIso(cells.find((c) => /^\d{1,2}\/\d{1,2}\/\d{4}$/.test(c)) ?? "");
+    break;
+  }
+  if (!target) return { error: `"${title}" is no longer listed on the index page` };
+  const row = [null, target] as const;
   const form = new URLSearchParams();
   for (const m of html.matchAll(/<input[^>]+type="hidden"[^>]*>/g)) {
     const name = /name="([^"]+)"/.exec(m[0])?.[1];
@@ -114,13 +140,17 @@ async function resolveGaMmis(
   form.set("__EVENTTARGET", row[1]!);
   form.set("__EVENTARGUMENT", "");
   const action = /<form[^>]+action="([^"]+)"/.exec(html)?.[1]?.replace(/&amp;/g, "&") ?? indexUrl;
-  const post = await fetcher(new URL(action, indexUrl).toString(), {
+  const postUrl = new URL(action, indexUrl);
+  // Never post (with the site's cookies) anywhere but the index page's own site.
+  if (postUrl.origin !== new URL(indexUrl).origin)
+    return { error: "The index page's form points to another site" };
+  const post = await fetcher(postUrl.toString(), {
     method: "POST",
     redirect: "follow",
     headers: { "content-type": "application/x-www-form-urlencoded", ...(cookies ? { cookie: cookies } : {}) },
     body: form.toString(),
   });
-  const body = await post.text();
+  const body = await withTimeout(post.text(), BODY_TIMEOUT_MS);
   const path =
     /(\/?portal\/[^'"]*?StaticContent\/[^'"]+?\.pdf)/i.exec(body)?.[1] ??
     /(StaticContent\/[^'"]+?\.pdf)/i.exec(body)?.[1];
@@ -146,11 +176,18 @@ export async function fetchCurrentDocument(
       listedDate = r.listedDate;
     } else url = locator.url;
 
-    const { res, bytes } = await download(fetcher, url);
+    const { res, bytes, tooLarge } = await download(fetcher, url);
     const resolvedUrl = res.url || url;
     if (res.status !== 200) return fail(`HTTP ${res.status}`, resolvedUrl);
+    if (tooLarge || !bytes) return fail("Document too large", resolvedUrl);
     if (bytes.length === 0) return fail("Empty response", resolvedUrl);
-    if (bytes.length > MAX_BYTES) return fail("Document too large", resolvedUrl);
+    // Each locator knows what a real document looks like; anything else (an error or login page) is broken.
+    if (locator.kind === "ga_mmis_index") {
+      if (new URL(resolvedUrl).origin !== new URL(locator.indexUrl).origin)
+        return fail("The document link left the payor's site", resolvedUrl);
+      if (bytes.subarray(0, 5).toString() !== "%PDF-")
+        return fail("Expected a PDF but got another kind of page", resolvedUrl);
+    }
     const contentType = res.headers.get("content-type") ?? "application/octet-stream";
     const text = normalizeText(await extract(bytes, contentType, resolvedUrl));
     if (text.length < MIN_TEXT)
@@ -174,6 +211,11 @@ export async function fetchCurrentDocument(
       nextRevision = effectiveDate ? nextQuarterStart(effectiveDate) : null;
     } else if (/aetna\.com\/cpb\//i.test(resolvedUrl)) {
       const d = parseAetnaCpbDates(text);
+      if (!d.lastReview)
+        return fail(
+          "The policy page is missing its review dates (layout changed or not the policy)",
+          resolvedUrl,
+        );
       effectiveDate = d.lastReview;
       nextRevision = d.nextReview;
       versionLabel = d.lastReview ? `Last review ${d.lastReview}` : null;

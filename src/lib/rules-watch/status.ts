@@ -50,6 +50,8 @@ export type Trust = {
 };
 
 export const VERIFIED_CEILING_DAYS: Record<string, number> = { T1: 180, T2: 90 };
+/** If the watcher hasn't checked a source in this long, its verified rules fall back to "needs re-check". */
+export const MAX_UNCHECKED_DAYS = 7;
 
 const addDays = (iso: string, n: number) =>
   new Date(Date.parse(iso) + n * 86_400_000).toISOString().slice(0, 10);
@@ -94,13 +96,16 @@ export function computeTrust(input: {
       reasons.push(
         `Source is unreachable${doc.lastError ? ` (${doc.lastError})` : ""}; re-check when it is back`,
       );
+    if (!doc.lastCheckedAt) reasons.push("The source has never been checked automatically");
+    else if (today > addDays(doc.lastCheckedAt.slice(0, 10), MAX_UNCHECKED_DAYS))
+      reasons.push(`The source has not been checked since ${doc.lastCheckedAt.slice(0, 10)}`);
     if (latest && current.textSha256 && latest.textSha256 !== current.textSha256) {
       const touched = changesSince(latest, current.snapshotEffectiveDate, section);
       if (touched.length) reasons.push(...describe(touched));
       else if (input.quoteStillPresent === false)
         reasons.push("The document changed and the quoted sentence no longer appears");
     }
-    if (today > verifiedUntil)
+    if (today >= verifiedUntil)
       reasons.push(`Verification expired ${verifiedUntil}; re-check the current document`);
     if (reasons.length)
       return { status: "stale", tier: current.tier, reasons, verifiedUntil, verifiedAt: current.createdAt };
@@ -130,11 +135,13 @@ export function computeTrust(input: {
       verifiedUntil: null,
       verifiedAt: null,
     };
-  if (doc.health === "broken" && !latest)
+  if (doc.health === "broken")
     return {
       status: "stale",
       tier: null,
-      reasons: [`Cited document is unreachable${doc.lastError ? ` (${doc.lastError})` : ""}`],
+      reasons: [
+        `Cited document is unreachable${doc.lastError ? ` (${doc.lastError})` : ""}${latest ? `; showing the last version fetched (${latest.versionLabel ?? latest.effectiveDate ?? "undated"})` : ""}`,
+      ],
       verifiedUntil: null,
       verifiedAt: null,
     };
@@ -150,6 +157,15 @@ export function computeTrust(input: {
       reasons: [
         `New version since the one cited (${latest!.versionLabel ?? latest!.effectiveDate}); re-check`,
       ],
+      verifiedUntil: null,
+      verifiedAt: null,
+    };
+  // Documents without a change log or version date: any content change since we started watching needs a re-check.
+  if (doc.health === "changed" && latest && !latest.revisions.length && !newer)
+    return {
+      status: "stale",
+      tier: null,
+      reasons: ["The document's content changed since it was first fetched; re-check the rule against it"],
       verifiedUntil: null,
       verifiedAt: null,
     };

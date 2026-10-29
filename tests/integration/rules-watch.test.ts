@@ -9,6 +9,8 @@ import {
   watchAllOrgs,
   watchOrgSources,
 } from "@/lib/services/rules-watch";
+import { syncPayorLibrary } from "@/lib/payors/library";
+import { loadPayorSeed } from "@/lib/payors/load";
 import { ctxAs, org } from "../helpers/ctx";
 import { fakeFetch } from "../helpers/fake-fetch";
 
@@ -131,7 +133,7 @@ describe("verify with proof", () => {
     );
     await expect(
       verifyRuleWithQuote(bcba, limit.id, { quote: QUOTE, documentId: evernorth.id }),
-    ).rejects.toThrow(/Missing: 6/);
+    ).rejects.toThrow(/Missing: 97151, 6/);
     // The checklist can never verify a rule.
     const checklist = await withOrg(bcba, (tx) =>
       tx.payorDocument.findFirstOrThrow({ where: { key: "checklist_2026" } }),
@@ -163,6 +165,40 @@ describe("verify with proof", () => {
     } finally {
       await owner.$disconnect();
     }
+  });
+
+  it("reordering the payor file never moves a verification; editing a rule's numbers detaches it", async () => {
+    const cigna = () => rulesOf("cigna_evernorth");
+    const channel = (await cigna()).find((r) => r.type === "submission_channel")!;
+    expect(channel.verified).toBe(true);
+    const seed = loadPayorSeed();
+    const reordered = structuredClone(seed);
+    const p = reordered.payors.find((x: { id: string }) => x.id === "cigna_evernorth")!;
+    p.rules.reverse();
+    await withOrg(bcba, (tx) => syncPayorLibrary(tx, org.id, reordered));
+    const after = await cigna();
+    expect(after.filter((r) => r.verified).map((r) => r.type)).toEqual(["submission_channel"]);
+    // Change what the rule says: the old evidence no longer applies.
+    const edited = structuredClone(seed);
+    const rule = edited.payors
+      .find((x) => x.id === "cigna_evernorth")!
+      .rules.find((r) => r.type === "submission_channel")!;
+    rule.params = { ...rule.params, address: "someone-else@example.test" };
+    await withOrg(bcba, (tx) => syncPayorLibrary(tx, org.id, edited));
+    expect((await cigna()).find((r) => r.type === "submission_channel")!.verified).toBe(false);
+    // Restore the real library: the original rule's evidence applies again.
+    await withOrg(bcba, (tx) => syncPayorLibrary(tx, org.id, seed));
+    expect((await cigna()).find((r) => r.type === "submission_channel")!.verified).toBe(true);
+  });
+
+  it("rules not yet synced (blank lineage) never pick up evidence and cannot be verified", async () => {
+    const rule = (await rulesOf("cigna_evernorth")).find((r) => r.type === "form_address")!;
+    await withOrg(bcba, (tx) => tx.payorRule.update({ where: { id: rule.id }, data: { lineageKey: "" } }));
+    await expect(
+      verifyRuleWithQuote(bcba, rule.id, { quote: "email it to: ABA@Evernorth.com* (preferred)" }),
+    ).rejects.toMatchObject({ status: 409 });
+    expect((await rulesOf("cigna_evernorth")).find((r) => r.id === rule.id)!.verified).toBe(false);
+    await withOrg(bcba, (tx) => syncPayorLibrary(tx, org.id));
   });
 
   it("checking sources now is a BCBA action", async () => {

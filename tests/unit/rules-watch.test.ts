@@ -28,6 +28,10 @@ describe("section matching", () => {
     expect(sectionsOverlap("803", "8031")).toBe(false);
     expect(sectionsOverlap("601.3.1", "601")).toBe(true);
     expect(sectionsOverlap(null, "601")).toBe(false);
+    expect(sectionsOverlap("803.4(b)", "803.4")).toBe(true);
+    expect(sectionsOverlap("Appendix D", "Appendix B/Appendix C/Appendix D")).toBe(true);
+    // An unreadable changed section touches every cited section.
+    expect(sectionsOverlap("602.3.4", null)).toBe(true);
   });
 });
 
@@ -47,10 +51,23 @@ describe("text and quotes", () => {
         "decisions within 7 calendar days and expedited decisions within 72 hours",
       ),
     ).toEqual([]);
-    expect(numbersMissingFromQuote(params, "decisions within 72 hours")).toEqual([7]);
-    expect(numbersMissingFromQuote({ periods: [13, 26] }, "periods of 13 weeks")).toEqual([26]);
-    // 7 inside 72 does not count as 7.
-    expect(numbersMissingFromQuote({ d: 7 }, "within 72 hours")).toEqual([7]);
+    expect(numbersMissingFromQuote(params, "decisions within 72 hours")).toEqual(["7"]);
+    expect(numbersMissingFromQuote({ periods: [13, 26] }, "periods of 13 weeks")).toEqual(["26"]);
+    // 7 inside 72 does not count as 7, and 2 is not the 2 in 2.5.
+    expect(numbersMissingFromQuote({ d: 7 }, "within 72 hours")).toEqual(["7"]);
+    expect(numbersMissingFromQuote({ hours: 2 }, "limited to 2.5 hours")).toEqual(["2"]);
+    // Codes inside strings count; ISO dates in strings are skipped.
+    expect(
+      numbersMissingFromQuote({ code: "97155", from: "2026-01-01" }, "supervision is billed separately"),
+    ).toEqual(["97155"]);
+    expect(numbersMissingFromQuote({ codes: ["97153", "97155"] }, "97153 and 97155 may not overlap")).toEqual(
+      [],
+    );
+  });
+  it("requires a substantial quote", async () => {
+    const { quoteIsSubstantial } = await import("@/lib/rules-watch/text");
+    expect(quoteIsSubstantial("a             b")).toBe(false);
+    expect(quoteIsSubstantial("email it to: ABA@Evernorth.com (preferred)")).toBe(true);
   });
   it("turns HTML into text without scripts and with entities decoded", () => {
     expect(normalizeText(htmlToText("<p>A&amp;B&#39;s</p><script>x()</script><b>c</b>"))).toBe("A&B's c");
@@ -60,6 +77,25 @@ describe("text and quotes", () => {
 describe("payor change-log parsers (real documents)", () => {
   it("reads Georgia's Q4 2026 revision record, including the in-person supervision change", async () => {
     const rows = parseGaRevisionRecord(await gaText());
+    // The whole table, including "Appendix E, Section B (viii)", "Below 803.11", and MM/YYYY rows.
+    expect(rows.length).toBeGreaterThanOrEqual(90);
+    expect(rows).toContainEqual({
+      date: "2026-04-01",
+      section: "Appendix E",
+      description: "Updated the PA TAT from 45 days to 7 days",
+      change: "M",
+    });
+    expect(rows).toContainEqual({
+      date: "2026-07-01",
+      section: "803.11",
+      description: "Added new guidance related to treatment requests over 30 hours/week",
+      change: "A",
+    });
+    expect(rows.find((r) => r.date === "2024-10-01" && /Consolidated/.test(r.description))!.section).toBe(
+      "Appendix B/Appendix C/Appendix D",
+    );
+    expect(rows.some((r) => r.date === "2026-01-01" && r.section === "Appendix F")).toBe(true); // "1/1/20206" typo
+    expect(rows.filter((r) => r.section === null).length).toBeLessThanOrEqual(2);
     const q4 = rows.filter((r) => r.date === "2026-10-01");
     expect(q4).toHaveLength(16);
     expect(q4).toContainEqual({
@@ -92,7 +128,7 @@ describe("trust status", () => {
     citedEffectiveDate: "2026-07-01",
     health: "changed",
     lastError: null,
-    lastCheckedAt: null,
+    lastCheckedAt: "2026-10-28T06:00:00Z",
   };
   const snap: SnapshotState = {
     id: "s2",

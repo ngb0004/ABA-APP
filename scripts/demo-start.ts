@@ -98,12 +98,14 @@ async function setupRolesAndDatabase() {
       }
     }
     if (!me.rolsuper) await pg.$executeRawUnsafe("GRANT aba_owner TO CURRENT_USER");
-    // The owner runs migrations only; BYPASSRLS lets the narrow app_org_ids() helper list orgs for scheduled jobs.
-    if (me.rolsuper) await pg.$executeRawUnsafe("ALTER ROLE aba_owner BYPASSRLS");
-    else
-      say(
-        "admin is not a superuser: scheduled source checks will not see any org (app_org_ids needs an owner with BYPASSRLS)",
-      );
+    // Scheduled jobs list org ids through app_org_ids(), owned by a NOLOGIN role with one narrow
+    // policy. The owner stays subject to RLS (an earlier build granted it BYPASSRLS: undo that).
+    const lister = await pg.$queryRaw<unknown[]>`SELECT 1 FROM pg_roles WHERE rolname = 'aba_org_lister'`;
+    if (!lister.length)
+      await pg.$executeRawUnsafe("CREATE ROLE aba_org_lister NOLOGIN NOSUPERUSER NOBYPASSRLS");
+    await pg.$executeRawUnsafe("GRANT aba_org_lister TO aba_owner");
+    if (me.rolsuper) await pg.$executeRawUnsafe("ALTER ROLE aba_owner NOBYPASSRLS");
+
     const db = await pg.$queryRaw<unknown[]>`SELECT 1 FROM pg_database WHERE datname = ${dbName}`;
     if (!db.length) await pg.$executeRawUnsafe(`CREATE DATABASE ${ident(dbName)} OWNER aba_owner`);
     await pg.$executeRawUnsafe(`GRANT CONNECT ON DATABASE ${ident(dbName)} TO aba_app`);
@@ -200,7 +202,7 @@ async function main() {
     await syncDemoCredentials();
   }
   // Payor rules are data: bring every org's library in line with seed/payors.yaml (evidence is kept).
-  execSync("pnpm exec tsx scripts/payor-sync.ts", {
+  execSync("REQUIRE_ORGS=1 pnpm exec tsx scripts/payor-sync.ts", {
     stdio: "inherit",
     env: { ...shared, DATABASE_URL: appUrl, DIRECT_DATABASE_URL: appUrl },
   });
@@ -223,9 +225,16 @@ async function main() {
   child.on("exit", (code: number | null) => process.exit(code ?? 0));
 
   // Check payor sources shortly after start, then daily. A failed run is logged and retried next time.
+  // One check at a time: a slow run is never overlapped by the next one.
+  let watching = false;
   const watch = () => {
+    if (watching) return say("previous source check still running; skipping this one");
+    watching = true;
     const w = spawn("pnpm", ["exec", "tsx", "scripts/rules-watch.ts"], { stdio: "inherit", env: appEnv });
-    w.on("exit", (code: number | null) => code && say(`source check exited with code ${code}`));
+    w.on("exit", (code: number | null) => {
+      watching = false;
+      if (code) say(`source check exited with code ${code}`);
+    });
   };
   setTimeout(watch, 30_000).unref();
   setInterval(watch, 24 * 3600_000).unref();

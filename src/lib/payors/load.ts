@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import YAML from "yaml";
@@ -7,6 +8,34 @@ export function loadPayorSeed(file = path.join(process.cwd(), "seed/payors.yaml"
   // YAML anchors/aliases (&tricare_common / *tricare_common) are resolved by the parser.
   const doc = YAML.parse(readFileSync(file, "utf8"), { merge: true, maxAliasCount: 1000 });
   return SeedSchema.parse(doc);
+}
+
+/** JSON with sorted keys, so equal content always hashes the same. */
+function canonical(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
+  if (v && typeof v === "object")
+    return `{${Object.keys(v as object)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${canonical((v as Record<string, unknown>)[k])}`)
+      .join(",")}}`;
+  return JSON.stringify(v);
+}
+
+/**
+ * A rule's lineage key is a fingerprint of what it says (type, params, source,
+ * section) within the payor that defines it. Reordering the YAML cannot move
+ * evidence to another rule, and editing a rule detaches its old evidence.
+ */
+export function ruleFingerprint(
+  payorKey: string,
+  r: { type: string; params: unknown; source?: string | null; section?: string | null },
+) {
+  const h = createHash("sha256")
+    .update(
+      canonical({ type: r.type, params: r.params, source: r.source ?? null, section: r.section ?? null }),
+    )
+    .digest("hex");
+  return `${payorKey}:${h.slice(0, 20)}`;
 }
 
 /** Resolve a payor's full rule list: inherited parent rules first, then its own, then extra_rules. */
@@ -27,7 +56,7 @@ export function resolvePayorRules(seed: PayorSeed, payorKey: string, seen = new 
     return {
       id: `${payorKey}#${i}`,
       payorKey,
-      lineageKey: `${payorKey}#${i}`,
+      lineageKey: ruleFingerprint(payorKey, r),
       type: r.type,
       params: r.params,
       verified: r.verified,

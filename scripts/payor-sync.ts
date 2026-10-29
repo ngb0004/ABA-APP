@@ -14,8 +14,13 @@ async function main() {
   console.log(
     `[payor-sync] ${orgs.length} org(s): ${rules} rules in the library${removed ? `, ${removed} retired` : ""}`,
   );
-  if (!orgs.length)
-    console.log("[payor-sync] no orgs visible: the owner role may lack BYPASSRLS (app_org_ids)");
+  if (!orgs.length) {
+    console.log(
+      "[payor-sync] no orgs visible through app_org_ids(): is the aba_org_lister role set up? (scripts/db-init.sql)",
+    );
+    // At boot there must be orgs (the seed just ran): fail loudly instead of starting with unsynced rules.
+    if (process.env.REQUIRE_ORGS === "1") process.exit(1);
+  }
 }
 main()
   .then(() => process.exit(0))

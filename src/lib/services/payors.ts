@@ -48,10 +48,14 @@ const snapshotState = (s: {
 /** Attach computed trust (evidence + source health) to rule rows, in a few batched queries. */
 export async function withTrust(tx: Tx, rows: RuleRow[], today: Day = toDay(new Date())): Promise<Rule[]> {
   if (!rows.length) return [];
-  const evidence = await tx.ruleEvidence.findMany({
-    where: { lineageKey: { in: [...new Set(rows.map((r) => r.lineageKey))] } },
-    orderBy: { createdAt: "asc" },
-  });
+  // A blank lineage (rows from before the library sync) never picks up anyone's evidence.
+  const lineages = [...new Set(rows.map((r) => r.lineageKey).filter(Boolean))];
+  const evidence = lineages.length
+    ? await tx.ruleEvidence.findMany({
+        where: { lineageKey: { in: lineages } },
+        orderBy: { createdAt: "asc" },
+      })
+    : [];
   const docIds = [
     ...new Set(
       [...rows.map((r) => r.sourceDocumentId), ...evidence.map((e) => e.documentId)].filter(
@@ -62,23 +66,44 @@ export async function withTrust(tx: Tx, rows: RuleRow[], today: Day = toDay(new 
   const docs = new Map(
     (await tx.payorDocument.findMany({ where: { id: { in: docIds } } })).map((d) => [d.id, d]),
   );
-  const snaps = await tx.payorDocumentSnapshot.findMany({
+  const snapSelect = {
+    id: true,
+    documentId: true,
+    resolvedUrl: true,
+    textSha256: true,
+    effectiveDate: true,
+    versionLabel: true,
+    nextRevision: true,
+    revisions: true,
+  } as const;
+  // Latest snapshot per document, plus the (older) snapshots evidence was recorded against.
+  const latestRows = await tx.payorDocumentSnapshot.findMany({
     where: { documentId: { in: docIds } },
-    orderBy: { fetchedAt: "desc" },
-    select: {
-      id: true,
-      documentId: true,
-      resolvedUrl: true,
-      textSha256: true,
-      effectiveDate: true,
-      versionLabel: true,
-      nextRevision: true,
-      revisions: true,
-    },
+    distinct: ["documentId"],
+    orderBy: [{ documentId: "asc" }, { fetchedAt: "desc" }],
+    select: snapSelect,
   });
-  const latest = new Map<string, (typeof snaps)[number]>();
-  for (const s of snaps) if (!latest.has(s.documentId)) latest.set(s.documentId, s);
-  const byId = new Map(snaps.map((s) => [s.id, s]));
+  const latest = new Map(latestRows.map((s) => [s.documentId, s]));
+  const refIds = [...new Set(evidence.map((e) => e.snapshotId).filter((x): x is string => !!x))];
+  const byId = new Map(
+    (refIds.length
+      ? await tx.payorDocumentSnapshot.findMany({
+          where: { id: { in: refIds } },
+          select: { id: true, effectiveDate: true },
+        })
+      : []
+    ).map((s) => [s.id, s]),
+  );
+  const textMemo = new Map<string, string>();
+  const latestText = async (snapId: string) => {
+    if (!textMemo.has(snapId))
+      textMemo.set(
+        snapId,
+        (await tx.payorDocumentSnapshot.findUniqueOrThrow({ where: { id: snapId }, select: { text: true } }))
+          .text,
+      );
+    return textMemo.get(snapId)!;
+  };
 
   // Each payor's official documents (cited by any of its rules), for same-topic change detection.
   const officialByPayor = new Map<
@@ -101,7 +126,7 @@ export async function withTrust(tx: Tx, rows: RuleRow[], today: Day = toDay(new 
 
   const out: Rule[] = [];
   for (const r of rows) {
-    const ev = evidence.filter((e) => e.lineageKey === r.lineageKey);
+    const ev = r.lineageKey ? evidence.filter((e) => e.lineageKey === r.lineageKey) : [];
     let current: (typeof ev)[number] | null = null;
     for (const e of ev) current = e.kind === "verify" ? e : null;
     // A verified rule is judged against the document it was verified with.
@@ -109,15 +134,13 @@ export async function withTrust(tx: Tx, rows: RuleRow[], today: Day = toDay(new 
     const doc = docId ? docs.get(docId) : undefined;
     const snap = docId ? latest.get(docId) : undefined;
     let quoteStillPresent: boolean | undefined;
-    if (current && snap && current.textSha256 && current.textSha256 !== snap.textSha256) {
-      const text = await tx.payorDocumentSnapshot.findUniqueOrThrow({
-        where: { id: snap.id },
-        select: { text: true },
-      });
-      quoteStillPresent = quoteAppears(current.quote, text.text);
-    }
+    if (current && snap && current.textSha256 && current.textSha256 !== snap.textSha256)
+      quoteStillPresent = quoteAppears(current.quote, await latestText(snap.id));
+    // Watch both the rule's cited section and the section it was verified under.
+    const section =
+      [...new Set([r.sourceSection, current?.section].filter((x): x is string => !!x))].join("/") || null;
     const trust = computeTrust({
-      section: current?.section ?? r.sourceSection,
+      section,
       doc: doc
         ? {
             name: doc.name,
