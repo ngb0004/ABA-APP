@@ -518,8 +518,16 @@ export async function saveAuthorization(ctx: OrgCtx, clientId: string, id: strin
   return withOrg(ctx, async (tx) => {
     await clientOf(tx, clientId);
     await assertOrgPayor(tx, v.payorId);
-    // An authorization comes from one of the client's insurers.
-    if (!(await tx.clientPayor.count({ where: { clientId, payorId: v.payorId } })))
+    // A new authorization (or a changed payor) must come from one of the client's insurers;
+    // a past authorization stays editable after its insurance was removed.
+    const prior = id
+      ? await tx.authorization.findFirst({ where: { id, clientId }, select: { payorId: true } })
+      : null;
+    if (id && !prior) throw new HttpError(404, "Not found");
+    if (
+      (!prior || prior.payorId !== v.payorId) &&
+      !(await tx.clientPayor.count({ where: { clientId, payorId: v.payorId } }))
+    )
       throw new HttpError(
         422,
         "This client has no insurance with that payor. Add the payor under Insurance first, or choose one of the client's payors.",

@@ -73,6 +73,12 @@ export function SectionCard(props: {
     setNote(null);
     const r = await requestDraft(`${base}/draft`);
     setBusy(null);
+    if (!r.ok && /already being written/.test(String(r.data.error))) {
+      // The first request is still running on the server: show it when it lands.
+      setNote(String(r.data.error));
+      setTimeout(() => router.refresh(), 20_000);
+      return;
+    }
     if (!r.ok) return setError(String(r.data.error ?? "Request failed"));
     if (typeof r.data.text === "string" && typeof r.data.html === "string")
       setFresh({ base: s.content, content: r.data.text, html: r.data.html });

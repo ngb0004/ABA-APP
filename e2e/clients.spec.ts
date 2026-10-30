@@ -9,7 +9,7 @@ test("all three synthetic clients: alerts, safety flags, intake, goals, and plan
   const c1 = await openClient(page, "Alpha Testchild");
   await expect(page.getByTestId("safety-flag")).toHaveText([
     "Severe allergy: Peanut",
-    "Epi-pen: Kept in the diaper bag",
+    "Epinephrine auto-injector: Kept in the diaper bag",
   ]);
   await page.goto(`/clients/${c1}/intake`);
   await expect(page.getByText("restricted: BCBA only, never sent to AI").first()).toBeVisible();

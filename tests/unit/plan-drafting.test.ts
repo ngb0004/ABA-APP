@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DRAFT_DROPPED_MESSAGE, requestDraft } from "@/components/draft-request";
+import { SourcedContext, validateAiText } from "@/lib/firewall";
 import { availabilityFacts, vbmappFacts, withUnit } from "@/lib/plan/context";
 import { DRAFT_SYSTEM_PROMPT, tidyDraft, valuePrefixesFor } from "@/lib/plan/drafting";
 import { SECTION_BY_KEY, SECTIONS } from "@/lib/plan/sections";
@@ -117,18 +118,20 @@ describe("VB-MAPP facts", () => {
   const f = vbmappFacts(levels, domains);
 
   it("calls a fully met level mastered, not uniform", () => {
-    expect(f.level.get("1")).toEqual(["every Level One milestone is met: Level One is mastered"]);
-    expect(f.domain.get("1:Mand")).toContain("every Mand milestone at Level One is met");
+    expect(f.level.get("1")).toEqual([
+      "every {{vbmapp.level1.name}} milestone is met: {{vbmapp.level1.name}} is mastered",
+    ]);
+    expect(f.domain.get("1:Mand")).toContain("every Mand milestone at {{vbmapp.level1.name}} is met");
   });
 
   it("ranks domains in a level the client has worked through", () => {
-    expect(f.domain.get("2:Mand")).toEqual(["highest domain in Level Two"]);
-    expect(f.domain.get("2:Tact")).toEqual(["lowest domain in Level Two"]);
+    expect(f.domain.get("2:Mand")).toEqual(["highest domain in {{vbmapp.level2.name}}"]);
+    expect(f.domain.get("2:Tact")).toEqual(["lowest domain in {{vbmapp.level2.name}}"]);
     expect(f.domain.get("2:Play")).toEqual([]);
   });
 
   it("never ranks domains in the emerging level", () => {
-    expect(f.level.get("3")![0]).toMatch(/only beginning Level Three/);
+    expect(f.level.get("3")![0]).toMatch(/only beginning {{vbmapp.level3.name}}/);
     for (const d of ["3:Mand", "3:Tact"]) {
       expect(f.domain.get(d)!.join(" ")).not.toMatch(/lowest|highest/);
       expect(f.domain.get(d)!.join(" ")).toMatch(/do not rank/);
@@ -148,13 +151,22 @@ describe("VB-MAPP facts", () => {
         ],
       ]),
     );
-    expect(only.domain.get("1:Tact")).toEqual(["lowest domain in Level One"]);
+    expect(only.domain.get("1:Tact")).toEqual(["lowest domain in {{vbmapp.level1.name}}"]);
     expect(only.level.get("1")).toEqual([]);
   });
 
-  it("facts contain no digits", () => {
-    const all = [...f.level.values(), ...f.domain.values()].flat().join(" ");
-    expect(all).not.toMatch(/\d/);
+  it("facts pass the numeric firewall when the model copies them", () => {
+    const levels = new SourcedContext(
+      ["1", "2", "3"].map((l) => ({
+        key: `vbmapp.level${l}.name`,
+        label: "level",
+        value: `Level ${l}`,
+        display: `Level ${l}`,
+        source: { kind: "test", description: "test" },
+      })),
+    );
+    for (const fact of [...f.level.values(), ...f.domain.values()].flat())
+      expect(validateAiText(`The record notes: ${fact}.`, levels).ok, fact).toBe(true);
   });
 });
 
@@ -178,21 +190,29 @@ describe("draft request", () => {
   it("retries once on a gateway error and returns the retry's answer", async () => {
     const calls: number[] = [];
     const responses = [new Response("Bad Gateway", { status: 502 }), json(200, { text: "ok" })];
-    const r = await requestDraft("/x", async () => {
-      calls.push(1);
-      return responses.shift()!;
-    });
+    const r = await requestDraft(
+      "/x",
+      async () => {
+        calls.push(1);
+        return responses.shift()!;
+      },
+      0,
+    );
     expect(calls).toHaveLength(2);
     expect(r).toEqual({ ok: true, data: { text: "ok" } });
   });
 
   it("shows a plain message when both attempts time out or drop", async () => {
     let n = 0;
-    const r = await requestDraft("/x", async () => {
-      n++;
-      if (n === 1) return new Response("", { status: 504 });
-      throw new TypeError("network error");
-    });
+    const r = await requestDraft(
+      "/x",
+      async () => {
+        n++;
+        if (n === 1) return new Response("", { status: 504 });
+        throw new TypeError("network error");
+      },
+      0,
+    );
     expect(n).toBe(2);
     expect(r).toEqual({ ok: false, data: { error: DRAFT_DROPPED_MESSAGE } });
   });

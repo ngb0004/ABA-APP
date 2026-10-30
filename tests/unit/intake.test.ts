@@ -103,7 +103,7 @@ describe("safety flags", () => {
       safetyFlags(client("client1").intake)
         .map((f) => f.label)
         .sort(),
-    ).toEqual(["Epi-pen", "Severe allergy"]);
+    ).toEqual(["Epinephrine auto-injector", "Severe allergy"]);
   });
   it("raises bolting and transportation risk for Client 3", () => {
     const f = safetyFlags(client("client3").intake);

@@ -99,7 +99,7 @@ export const INTAKE_FIELDS: IntakeField[] = [
     group: "Medical",
     sensitivity: "sensitive",
     feeds_sections: ["crisis_plan"],
-    safetyFlag: "Epi-pen",
+    safetyFlag: "Epinephrine auto-injector",
   }),
   f({
     id: "inhaler",

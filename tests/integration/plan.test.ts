@@ -306,3 +306,30 @@ describe("pre-submission audit", () => {
     expect(checks.find((c) => c.id === "universal.secondary")!.status).toBe("fail");
   });
 });
+
+describe("drafting outside the database transaction", () => {
+  it("refuses a second draft of the same section while one is running, and never overwrites an edit", async () => {
+    const slow = {
+      name: "slow-mock",
+      model: "slow-mock",
+      async complete() {
+        await new Promise((r) => setTimeout(r, 400));
+        return { text: "A short draft about {{client.name}}.", model: "slow-mock" };
+      },
+    };
+    setLlmProvider(slow as never);
+    const p = await createPlan(bcba, clientId("client2"), "reauth");
+    const first = draftSection(bcba, p.id, "barriers_to_treatment", AS_OF);
+    await expect(draftSection(bcba, p.id, "barriers_to_treatment", AS_OF)).rejects.toMatchObject({
+      status: 409,
+    });
+    await first;
+    // Edited while the model is writing: the late draft is not saved.
+    const late = draftSection(bcba, p.id, "barriers_to_treatment", AS_OF);
+    await new Promise((r) => setTimeout(r, 100));
+    await editSection(bcba, p.id, "barriers_to_treatment", "BCBA text.", AS_OF);
+    await expect(late).rejects.toMatchObject({ status: 409 });
+    const v = await planView(bcba, p.id, AS_OF);
+    expect(v.sections.find((s) => s.key === "barriers_to_treatment")!.content).toBe("BCBA text.");
+  });
+});

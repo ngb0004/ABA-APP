@@ -448,3 +448,30 @@ describe("QA fixes: dates, authorizations, provider roles", () => {
     ).rejects.toMatchObject({ status: 422, message: expect.stringMatching(/future/) });
   });
 });
+
+describe("past authorizations", () => {
+  it("stay editable after their insurance is removed", async () => {
+    const c = (await createClient(bcba, { ...newClient, firstName: "Pat" })).id;
+    const ins = await saveClientPayor(bcba, c, null, {
+      payorId: cignaId,
+      priority: "primary",
+      memberId: "SYN-CIG-454545",
+    });
+    const auth = {
+      payorId: cignaId,
+      authNumber: "SYN-AUTH-4545",
+      kind: "initial",
+      startDate: "2026-01-01",
+      endDate: "2026-06-30",
+      units: [{ cptCode: "97153", approvedUnits: 40, unitBasis: "week" }],
+    };
+    const { id } = await saveAuthorization(bcba, c, null, auth);
+    await withOrg(bcba, (tx) => tx.clientPayor.delete({ where: { id: ins.id } }));
+    await saveAuthorization(bcba, c, id, { ...auth, endDate: "2026-06-29" });
+    await expect(
+      saveAuthorization(bcba, c, null, { ...auth, authNumber: "SYN-AUTH-4546" }),
+    ).rejects.toMatchObject({
+      status: 422,
+    });
+  });
+});

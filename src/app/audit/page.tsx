@@ -21,20 +21,26 @@ function actionLabel(action: string): string {
 export default async function AuditPage({
   searchParams,
 }: {
-  searchParams: Promise<{ all?: string; before?: string }>;
+  searchParams: Promise<{ all?: string; before?: string; beforeId?: string }>;
 }) {
   const ctx = await requirePageCtx();
   requirePermission(ctx.role, "audit:read");
   const sp = await searchParams;
   const showAll = sp.all === "1";
   const before = sp.before && !Number.isNaN(Date.parse(sp.before)) ? new Date(sp.before) : null;
+  // Many events share a millisecond: page by (time, id) so none is skipped at a page boundary.
+  const beforeId = sp.beforeId && /^[0-9a-f-]{36}$/i.test(sp.beforeId) ? sp.beforeId : null;
   const { rows, users } = await withOrg(ctx, async (tx) => {
     const rows = await tx.auditEvent.findMany({
       where: {
-        ...(before ? { createdAt: { lt: before } } : {}),
+        ...(before
+          ? beforeId
+            ? { OR: [{ createdAt: { lt: before } }, { createdAt: before, id: { lt: beforeId } }] }
+            : { createdAt: { lt: before } }
+          : {}),
         ...(showAll ? {} : { NOT: AUTO_PREFIXES.map((p) => ({ action: { startsWith: p } })) }),
       },
-      orderBy: { createdAt: "desc" },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       take: PAGE_SIZE,
     });
     // RLS also shows the caller's own memberships elsewhere: scope to this practice.
@@ -44,10 +50,11 @@ export default async function AuditPage({
     });
     return { rows, users: new Map(members.map((m) => [m.userId, m.user.name || m.user.email])) };
   });
-  const href = (q: { all?: boolean; before?: string }) => {
+  const href = (q: { all?: boolean; before?: string; beforeId?: string }) => {
     const p = new URLSearchParams();
     if (q.all) p.set("all", "1");
     if (q.before) p.set("before", q.before);
+    if (q.beforeId) p.set("beforeId", q.beforeId);
     const s = p.toString();
     return s ? `/audit?${s}` : "/audit";
   };
@@ -61,11 +68,14 @@ export default async function AuditPage({
       </p>
       <p className="row">
         {showAll ? (
-          <Link href={href({ before: sp.before })} data-testid="audit-hide-auto">
+          <Link href={href({ before: sp.before, beforeId: sp.beforeId })} data-testid="audit-hide-auto">
             Hide record reads and writes
           </Link>
         ) : (
-          <Link href={href({ all: true, before: sp.before })} data-testid="audit-show-auto">
+          <Link
+            href={href({ all: true, before: sp.before, beforeId: sp.beforeId })}
+            data-testid="audit-show-auto"
+          >
             Show record reads and writes
           </Link>
         )}
@@ -121,7 +131,9 @@ export default async function AuditPage({
       <p className="row">
         {before && <Link href={href({ all: showAll })}>Newest events</Link>}
         {rows.length === PAGE_SIZE && last && (
-          <Link href={href({ all: showAll, before: last.createdAt.toISOString() })}>Older events</Link>
+          <Link href={href({ all: showAll, before: last.createdAt.toISOString(), beforeId: last.id })}>
+            Older events
+          </Link>
         )}
       </p>
     </>
