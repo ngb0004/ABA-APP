@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Html, send } from "./actions";
+import { requestDraft } from "./draft-request";
 
 type Item = { key: string; label: string; status: "answered" | "none" | null; auto: boolean };
 
@@ -33,13 +34,19 @@ export function SectionCard(props: {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  // A draft just returned, shown until the page refresh brings the saved section.
+  const [fresh, setFresh] = useState<{ base: string; content: string; html: string } | null>(null);
+  const shown =
+    fresh && fresh.base === s.content && fresh.content !== s.content
+      ? { content: fresh.content, html: fresh.html, state: "draft" }
+      : { content: s.content, html: s.html, state: s.state };
   // Optimistic item answers, so a click registers before the refresh lands.
   const [local, setLocal] = useState<Record<string, "answered" | "none">>({});
   const items = s.items.map((i) => ({ ...i, status: local[i.key] ?? i.status }));
   const base = `/api/plans/${planId}/sections/${s.key}`;
-  const na = s.state === "not_applicable";
+  const na = shown.state === "not_applicable";
   // Approved and not-applicable sections are closed until reopened.
-  const approved = s.state === "approved" || na;
+  const approved = shown.state === "approved" || na;
   const openItems = items.filter((i) => i.status === null).length;
 
   async function call(label: string, url: string, method: string, body?: unknown) {
@@ -60,22 +67,34 @@ export function SectionCard(props: {
     return true;
   }
 
+  async function draft() {
+    setBusy("draft");
+    setError(null);
+    setNote(null);
+    const r = await requestDraft(`${base}/draft`);
+    setBusy(null);
+    if (!r.ok) return setError(String(r.data.error ?? "Request failed"));
+    if (typeof r.data.text === "string" && typeof r.data.html === "string")
+      setFresh({ base: s.content, content: r.data.text, html: r.data.html });
+    router.refresh();
+  }
+
   return (
     <div className="panel" id={`section-${s.key}`} data-testid={`section-${s.key}`}>
       <h2 style={{ marginTop: 0 }}>
         {s.ordinal}. {s.title}{" "}
-        <span className={`badge ${na ? "na" : s.state}`} data-testid={`state-${s.key}`}>
-          {na ? "not applicable" : s.state}
+        <span className={`badge ${na ? "na" : shown.state}`} data-testid={`state-${s.key}`}>
+          {na ? "not applicable" : shown.state}
         </span>
       </h2>
       {na ? (
         <p className="muted" data-testid={`na-${s.key}`}>
           Not applicable to this request{s.notApplicableReason ? `: ${s.notApplicableReason}` : ""}.
         </p>
-      ) : s.content.trim() ? (
+      ) : shown.content.trim() ? (
         <Html
           className="section-body"
-          html={s.html
+          html={shown.html
             .split(/\n{2,}/)
             .map((p) => `<p>${p.replace(/\n/g, "<br>")}</p>`)
             .join("")}
@@ -86,19 +105,15 @@ export function SectionCard(props: {
       {!approved && (
         <div className="row">
           {props.canDraft && !s.bcbaOnly && (
-            <button
-              data-testid={`draft-${s.key}`}
-              disabled={!!busy}
-              onClick={() => call("draft", `${base}/draft`, "POST")}
-            >
-              {busy === "draft" ? "Drafting…" : s.content ? "Redraft with AI" : "Draft with AI"}
+            <button data-testid={`draft-${s.key}`} disabled={!!busy} onClick={() => void draft()}>
+              {busy === "draft" ? "Drafting…" : shown.content ? "Redraft with AI" : "Draft with AI"}
             </button>
           )}
           {props.canEdit && (
             <button
               className="secondary"
               onClick={() => {
-                setText(s.content);
+                setText(shown.content);
                 setEditing(!editing);
               }}
             >

@@ -120,6 +120,18 @@ describe("safety flags", () => {
     });
     expect(f.map((x) => x.label).sort()).toEqual(["Inhaler", "Overnight wandering", "Pica", "Seizures"]);
   });
+  it("raises aggression and self-injury at any rated intensity, with the intensity", () => {
+    const f = safetyFlags(client("client2").intake);
+    expect(f.find((x) => x.fieldId === "aggression")).toMatchObject({
+      label: "Aggression toward others",
+      intensity: "moderate",
+      detail: "moderate; Hitting adults during demanding tasks",
+    });
+    expect(safetyFlags({ self_injury: { value: "mild" } })).toEqual([
+      { fieldId: "self_injury", label: "Self-injury", intensity: "mild", detail: "mild" },
+    ]);
+    expect(safetyFlags({ aggression: { na: true }, self_injury: { na: true } })).toEqual([]);
+  });
   it("raises nothing for none / not applicable answers", () => {
     expect(safetyFlags({ bolting: { na: true }, transportation_risks: { na: true } })).toEqual([]);
   });

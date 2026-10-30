@@ -4,10 +4,10 @@
  * (shown on hover/click). Values are computed by code from stored records only.
  */
 import type { Tx } from "../db";
-import { diffDays, toDay, type Day } from "../dates";
+import { addDays, diffDays, toDay, type Day } from "../dates";
 import { SourcedContext, type SourcedValue } from "../firewall";
 import { availableHoursPerWeek } from "../intake/derive";
-import type { IntakeAnswers } from "../intake/schema";
+import { DAYS, valueOf, type IntakeAnswers } from "../intake/schema";
 import { computeUtilization, type UnitBasis } from "../utilization";
 import { baseline, current, flatProgress } from "./progress";
 
@@ -81,6 +81,13 @@ export const slug = (s: string) =>
     .replace(/^_|_$/g, "");
 const usDate = (d: Day) => `${d.slice(5, 7)}/${d.slice(8, 10)}/${d.slice(0, 4)}`;
 const fmt = (n: number) => String(Math.round(n * 10) / 10);
+/** A count with its unit, pluralized from the rounded value ("1 hour", "40 hours"). */
+export const withUnit = (n: number, one: string, many = `${one}s`) =>
+  `${fmt(n)} ${fmt(n) === "1" ? one : many}`;
+/** Added to the label of every value whose display already carries its unit. */
+export const UNIT_NOTE = " (renders with its unit; do not write the unit after the token)";
+/** Milestones per domain at each VB-MAPP level (milestones 1-5, 6-10, 11-15). */
+const MILESTONES_PER_DOMAIN = 5;
 
 /** Unit shown after a goal's values. */
 export const measureUnit = (measure: string) =>
@@ -131,7 +138,9 @@ export function buildSourcedContext(b: ClientData, asOf: Day): SourcedContext {
     const disp = `${name}'s ${guardian.relationship.toLowerCase()}`;
     add({
       key: "caregiver.primary",
-      label: "Primary caregiver (relationship)",
+      // The display already names the client ("Bravo's mother"), so the model must not add a name.
+      label:
+        'Primary caregiver, already written as the client\'s name and the relationship (e.g. "[Client]\'s mother"); use the token alone, never put the client\'s name, a possessive, or "the" before it',
       value: disp,
       display: disp,
       source: {
@@ -144,6 +153,42 @@ export function buildSourcedContext(b: ClientData, asOf: Day): SourcedContext {
     });
   }
 
+  // Every diagnosis on record, primary first (loadClientData orders them that way).
+  c.diagnoses.forEach((d, i) => {
+    const n = i + 1;
+    const role = d.isPrimary ? "primary" : "co-occurring";
+    const dsrc = (field: string) => ({
+      kind: "diagnosis",
+      id: d.id,
+      field,
+      description: "Diagnosis record",
+      href: clientHref,
+    });
+    add({
+      key: `dx.${n}.icd10`,
+      label: `Diagnosis ${n} ICD-10 code (${role} diagnosis)`,
+      value: d.icd10Code,
+      display: d.icd10Code,
+      source: dsrc("icd10Code"),
+      facts: [`${role} diagnosis`],
+    });
+    add({
+      key: `dx.${n}.label`,
+      label: `Diagnosis ${n} DSM-5 code and name (${role} diagnosis)`,
+      value: d.dsm5Code,
+      display: `${d.dsm5Code} ${d.dsm5Label}`,
+      source: dsrc("dsm5Label"),
+      facts: [`${role} diagnosis`],
+    });
+    if (d.evaluationDate)
+      add({
+        key: `dx.${n}.eval_date`,
+        label: `Diagnosis ${n} evaluation date (${role} diagnosis)`,
+        value: toDay(d.evaluationDate),
+        display: usDate(toDay(d.evaluationDate)),
+        source: dsrc("evaluationDate"),
+      });
+  });
   const dx = c.diagnoses.find((d) => d.isPrimary) ?? c.diagnoses[0];
   if (dx) {
     add({
@@ -190,6 +235,7 @@ export function buildSourcedContext(b: ClientData, asOf: Day): SourcedContext {
 
   if (b.auth) {
     const a = b.auth;
+    const planType = (b as Partial<PlanBundle>).plan?.type;
     const aHref = `${clientHref}#authorization`;
     const src = (field: string) => ({
       kind: "authorization",
@@ -200,31 +246,44 @@ export function buildSourcedContext(b: ClientData, asOf: Day): SourcedContext {
     });
     add({
       key: "auth.number",
-      label: "Authorization number",
+      label: "Current authorization number (the authorization now in effect, not the requested one)",
       value: a.authNumber,
       display: a.authNumber,
       source: src("authNumber"),
     });
     add({
       key: "auth.start",
-      label: "Authorization start date",
+      label: "Current authorization start date (the authorization now in effect, not the requested period)",
       value: toDay(a.startDate),
       display: usDate(toDay(a.startDate)),
       source: src("startDate"),
     });
     add({
       key: "auth.end",
-      label: "Authorization end date",
+      label: "Current authorization end date (the authorization now in effect, not the requested period)",
       value: toDay(a.endDate),
       display: usDate(toDay(a.endDate)),
       source: src("endDate"),
     });
+    // A reauthorization asks for the period after the current one. Only its start
+    // can be computed; the end depends on what the payor approves.
+    if (planType === "reauth") {
+      const next = addDays(toDay(a.endDate), 1);
+      add({
+        key: "auth.requested_start",
+        label:
+          "Requested (next) authorization period start date: the day after the current authorization ends. The requested end date is not on record.",
+        value: next,
+        display: usDate(next),
+        source: { ...src("endDate"), description: `Day after authorization ${a.authNumber} ends` },
+      });
+    }
     if (a.recommendedHoursPerWeek)
       add({
         key: "plan.recommended_hours",
-        label: "Recommended direct hours per week",
+        label: `Recommended direct hours per week${UNIT_NOTE}`,
         value: a.recommendedHoursPerWeek,
-        display: fmt(a.recommendedHoursPerWeek),
+        display: withUnit(a.recommendedHoursPerWeek, "hour"),
         source: src("recommendedHoursPerWeek"),
       });
     for (const u of a.units) {
@@ -237,18 +296,18 @@ export function buildSourcedContext(b: ClientData, asOf: Day): SourcedContext {
       };
       add({
         key: `auth.${u.cptCode}.units`,
-        label: `Approved ${u.cptCode} units (${u.unitBasis === "auth" ? "per authorization" : `per ${u.unitBasis}`})`,
+        label: `Approved ${u.cptCode} units in the current authorization (${u.unitBasis === "auth" ? "per authorization" : `per ${u.unitBasis}`})${UNIT_NOTE}`,
         value: u.approvedUnits,
-        display: String(u.approvedUnits),
+        display: withUnit(u.approvedUnits, "unit"),
         source: usrc,
       });
       if (u.unitBasis !== "auth") {
         const perWeek = u.unitBasis === "week" ? u.approvedUnits / 4 : ((u.approvedUnits / 4) * 12) / 52;
         add({
           key: `auth.${u.cptCode}.hours_per_week`,
-          label: `Approved ${u.cptCode} hours per week`,
+          label: `Approved ${u.cptCode} hours per week in the current authorization${UNIT_NOTE}`,
           value: perWeek,
-          display: fmt(perWeek),
+          display: withUnit(perWeek, "hour"),
           source: {
             ...usrc,
             description: `${usrc.description} (units ÷ 4${u.unitBasis === "month" ? ", monthly converted to weekly" : ""})`,
@@ -257,9 +316,9 @@ export function buildSourcedContext(b: ClientData, asOf: Day): SourcedContext {
       } else {
         add({
           key: `auth.${u.cptCode}.hours`,
-          label: `Approved ${u.cptCode} hours this authorization`,
+          label: `Approved ${u.cptCode} hours for the whole current authorization${UNIT_NOTE}`,
           value: u.approvedUnits / 4,
-          display: fmt(u.approvedUnits / 4),
+          display: withUnit(u.approvedUnits / 4, "hour"),
           source: { ...usrc, description: `${usrc.description} (units ÷ 4)` },
         });
       }
@@ -279,25 +338,43 @@ export function buildSourcedContext(b: ClientData, asOf: Day): SourcedContext {
     );
     for (const u of util) {
       if (u.pctToDate === null) continue;
+      const perAuth = u.unitBasis === "auth";
+      const usrc = {
+        kind: "service_session",
+        description: `Delivered sessions under authorization ${a.authNumber}`,
+        href: aHref,
+      };
       add({
         key: `util.${u.cptCode}.pct_to_date`,
-        label: `${u.cptCode} delivered as a share of approved to date`,
+        label: `${u.cptCode} delivered as a share of approved to date (current authorization)`,
         value: u.pctToDate,
         display: `${Math.round(u.pctToDate * 100)}%`,
-        source: {
-          kind: "service_session",
-          description: `Delivered sessions under authorization ${a.authNumber}`,
-          href: aHref,
-        },
-        facts: u.flag ? [u.flag === "under" ? "under-delivered" : "over-delivered"] : [],
+        source: usrc,
+        // Per-authorization codes (e.g., reassessment) are used once, so a low share is not a gap.
+        facts: perAuth
+          ? [
+              "approved once per authorization (for example, an assessment code), so a low share to date is expected and is not underutilization",
+            ]
+          : u.flag
+            ? [u.flag === "under" ? "under-delivered" : "over-delivered"]
+            : [],
+      });
+      if (perAuth) continue;
+      const under = u.weeks.filter((w) => w.flag === "under").length;
+      add({
+        key: `util.${u.cptCode}.weeks_under`,
+        label: `Complete weeks in which ${u.cptCode} delivery fell below the under-delivery threshold (current authorization)${UNIT_NOTE}`,
+        value: under,
+        display: withUnit(under, "week"),
+        source: { ...usrc, description: `Weekly delivery under authorization ${a.authNumber}` },
       });
     }
     const cg = b.sessions.filter((s) => s.cptCode === "97156").length;
     add({
       key: "caregiver.97156.sessions",
-      label: "Caregiver training (97156) sessions delivered this authorization",
+      label: `Caregiver training (97156) sessions delivered in the current authorization${UNIT_NOTE}`,
       value: cg,
-      display: String(cg),
+      display: withUnit(cg, "session"),
       source: {
         kind: "service_session",
         description: `97156 sessions under authorization ${a.authNumber}`,
@@ -337,6 +414,12 @@ export function buildSourcedContext(b: ClientData, asOf: Day): SourcedContext {
       display: fmt(totals.total),
       source: src("totals.total"),
     });
+    const byLevel = new Map<string, [string, number][]>();
+    for (const [dk, v] of Object.entries(totals.domains)) {
+      const [lvl, dom] = [dk.slice(1, 2), dk.slice(3)];
+      byLevel.set(lvl, [...(byLevel.get(lvl) ?? []), [dom, v]]);
+    }
+    const facts = vbmappFacts(totals.levels, byLevel);
     for (const [lvl, v] of Object.entries(totals.levels)) {
       if (!v) continue;
       add({
@@ -345,30 +428,19 @@ export function buildSourcedContext(b: ClientData, asOf: Day): SourcedContext {
         value: v,
         display: fmt(v),
         source: src(`totals.levels.${lvl}`),
+        facts: facts.level.get(lvl) ?? [],
       });
-    }
-    const byLevel = new Map<string, [string, number][]>();
-    for (const [dk, v] of Object.entries(totals.domains)) {
-      const [lvl, dom] = [dk.slice(1, 2), dk.slice(3)];
-      byLevel.set(lvl, [...(byLevel.get(lvl) ?? []), [dom, v]]);
     }
     for (const [lvl, doms] of byLevel) {
       if (!(totals.levels[lvl] ?? 0)) continue;
-      const sorted = [...doms].sort((x, y) => x[1] - y[1]);
-      const low = sorted[0]![1];
-      const high = sorted.at(-1)![1];
       for (const [dom, v] of doms) {
-        const facts = [
-          v === low ? `lowest domain in Level ${lvl}` : "",
-          v === high ? `highest domain in Level ${lvl}` : "",
-        ].filter(Boolean);
         add({
           key: `score.L${lvl}.${slug(dom)}.admin${k}`,
           label: `VB-MAPP Level ${lvl} ${dom} score, administration ${k}`,
           value: v,
           display: fmt(v),
           source: src(`totals.domains.L${lvl}.${dom}`),
-          facts,
+          facts: facts.domain.get(`${lvl}:${dom}`) ?? [],
         });
       }
     }
@@ -446,9 +518,9 @@ export function buildSourcedContext(b: ClientData, asOf: Day): SourcedContext {
       });
     add({
       key: `goal.${n}.datapoints`,
-      label: `Goal ${n} number of data points`,
+      label: `Goal ${n} number of data points${UNIT_NOTE}`,
       value: pts.length,
-      display: String(pts.length),
+      display: withUnit(pts.length, "data point"),
       source: src(`Data points recorded for goal ${n}`),
     });
     const gsrc = (field: string) => ({
@@ -494,9 +566,9 @@ export function buildSourcedContext(b: ClientData, asOf: Day): SourcedContext {
   for (const [k, label, v] of counts)
     add({
       key: `goals.count.${k}`,
-      label,
+      label: `${label}${UNIT_NOTE}`,
       value: v,
-      display: String(v),
+      display: withUnit(v, "goal"),
       source: {
         kind: "goal_records",
         id: c.id,
@@ -510,9 +582,9 @@ export function buildSourcedContext(b: ClientData, asOf: Day): SourcedContext {
   if (avail !== null && b.intake)
     add({
       key: "intake.availability_hours",
-      label: "Family availability, hours per week",
+      label: `Family availability, hours per week${UNIT_NOTE}`,
       value: avail,
-      display: fmt(avail),
+      display: withUnit(avail, "hour"),
       source: {
         kind: "intake",
         id: b.intake.id,
@@ -520,15 +592,16 @@ export function buildSourcedContext(b: ClientData, asOf: Day): SourcedContext {
         description: "Parent intake availability grid",
         href: `${clientHref}/intake`,
       },
+      facts: availabilityFacts(answers),
     });
   for (const id of ["tantrums", "aggression_frequency"]) {
     const a = answers[id] as { value?: { count: number; per: string; durationMinutes: number } } | undefined;
     if (a?.value && b.intake) {
       add({
         key: `intake.${id}.count`,
-        label: `Parent-reported ${id.replace("_frequency", "").replace("_", " ")} episodes per ${a.value.per}`,
+        label: `Parent-reported ${id.replace("_frequency", "").replace("_", " ")} episodes per ${a.value.per}, renders as "N episodes"; write "per ${a.value.per}" after it`,
         value: a.value.count,
-        display: String(a.value.count),
+        display: withUnit(a.value.count, "episode"),
         source: {
           kind: "intake",
           id: b.intake.id,
@@ -539,9 +612,9 @@ export function buildSourcedContext(b: ClientData, asOf: Day): SourcedContext {
       });
       add({
         key: `intake.${id}.minutes`,
-        label: `Parent-reported typical ${id.replace("_frequency", "").replace("_", " ")} duration in minutes`,
+        label: `Parent-reported typical ${id.replace("_frequency", "").replace("_", " ")} duration in minutes${UNIT_NOTE}`,
         value: a.value.durationMinutes,
-        display: String(a.value.durationMinutes),
+        display: withUnit(a.value.durationMinutes, "minute"),
         source: {
           kind: "intake",
           id: b.intake.id,
@@ -553,4 +626,62 @@ export function buildSourcedContext(b: ClientData, asOf: Day): SourcedContext {
     }
   }
   return ctx;
+}
+
+/** Days with and without availability on the intake grid, as words only. */
+export function availabilityFacts(answers: IntakeAnswers): string[] {
+  const grid = valueOf<Record<string, number[]>>(answers.availability);
+  if (!grid) return [];
+  const on = DAYS.filter((d) => (grid[d] ?? []).length > 0);
+  const off = DAYS.filter((d) => !(grid[d] ?? []).length);
+  return [
+    on.length ? `family is available on ${on.join(", ")}` : "",
+    off.length ? `family is not available on ${off.join(", ")}` : "",
+  ].filter(Boolean);
+}
+
+/**
+ * Qualitative VB-MAPP facts, written so the model cannot misread them: a level
+ * where every milestone is met is mastered, and the highest level reached (when
+ * lower levels exist and few of its milestones are met) is only emerging, so its domains are never ranked as
+ * strengths or weaknesses.
+ */
+export function vbmappFacts(levels: Record<string, number>, byLevel: Map<string, [string, number][]>) {
+  const level = new Map<string, string[]>();
+  const domain = new Map<string, string[]>();
+  const reached = Object.keys(levels)
+    .filter((l) => (levels[l] ?? 0) > 0)
+    .sort();
+  // The highest level reached is "emerging" while under a quarter of its milestones are met.
+  const top = reached.length > 1 ? reached.at(-1)! : undefined;
+  const topMax = top ? (byLevel.get(top)?.length ?? 0) * MILESTONES_PER_DOMAIN : 0;
+  const emerging = top && (levels[top] ?? 0) < topMax / 4 ? top : undefined;
+  for (const [lvl, doms] of byLevel) {
+    if (!(levels[lvl] ?? 0)) continue;
+    const mastered = doms.length > 0 && doms.every(([, v]) => v >= MILESTONES_PER_DOMAIN);
+    const lf: string[] = [];
+    if (mastered) lf.push(`every Level ${lvl} milestone is met: Level ${lvl} is mastered`);
+    if (lvl === emerging)
+      lf.push(
+        `highest level reached: the client is only beginning Level ${lvl}, so low scores here mark where new learning starts, not weaknesses`,
+      );
+    level.set(lvl, lf);
+    const values = doms.map(([, v]) => v);
+    const low = Math.min(...values);
+    const high = Math.max(...values);
+    for (const [dom, v] of doms) {
+      const f: string[] = [];
+      if (v >= MILESTONES_PER_DOMAIN) f.push(`every ${dom} milestone at Level ${lvl} is met`);
+      if (lvl === emerging)
+        f.push(`Level ${lvl} is only emerging: do not rank this domain as a strength or a weakness`);
+      else if (low === high) {
+        if (!mastered) f.push(`same score as every other Level ${lvl} domain`);
+      } else {
+        if (v === low) f.push(`lowest domain in Level ${lvl}`);
+        if (v === high) f.push(`highest domain in Level ${lvl}`);
+      }
+      domain.set(`${lvl}:${dom}`, f);
+    }
+  }
+  return { level, domain };
 }

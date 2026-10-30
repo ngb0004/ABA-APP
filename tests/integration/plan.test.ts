@@ -102,17 +102,117 @@ describe("AI drafting through the single LLM module", () => {
     setLlmProvider(
       new MockProvider([
         "Total was {{score.total.admin9}}.",
-        "[Client] is authorized for {{auth.97153.hours_per_week}} hours weekly.",
+        "[Client] is authorized for {{auth.97153.hours_per_week}} weekly.",
       ]),
     );
     const r = await draftSection(bcba, planId, "service_recommendations", AS_OF);
     expect(r.attempts).toBe(2);
-    expect(r.text).toBe("{{client.name}} is authorized for {{auth.97153.hours_per_week}} hours weekly.");
+    expect(r.text).toBe("{{client.name}} is authorized for {{auth.97153.hours_per_week}} weekly.");
+    // The draft response carries the rendered text, so the page can show it at once.
+    expect(r.html).toContain(">40 hours<");
     const v = await planView(bcba, planId, AS_OF);
     const html = v.sections.find((s) => s.key === "service_recommendations")!.html;
     expect(html).toContain('data-key="auth.97153.hours_per_week"');
-    expect(html).toContain(">40<");
-    expect(html).toMatch(/title="Approved 97153 hours per week. Source: Authorization SYN-AUTH-2002, 97153/);
+    // Hour values render with their unit, so the model never writes "1 hours".
+    expect(html).toContain(">40 hours<");
+    expect(html).toMatch(
+      /title="Approved 97153 hours per week in the current authorization \(renders with its unit[^"]*Source: Authorization SYN-AUTH-2002, 97153/,
+    );
+  });
+
+  it("labels the current authorization and adds the requested period start on a reauth", async () => {
+    const v = await planView(bcba, planId, AS_OF);
+    const get = (k: string) => v.sourced.find((x) => x.key === k);
+    const end = get("auth.end")!;
+    expect(end.label).toMatch(/^Current authorization end date/);
+    const next = get("auth.requested_start")!;
+    expect(next.label).toMatch(/Requested \(next\) authorization period start date/);
+    const d = new Date(`${end.value}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + 1);
+    expect(next.value).toBe(d.toISOString().slice(0, 10));
+    // No requested end date is invented.
+    expect(v.sourced.some((x) => x.key.startsWith("auth.requested_end"))).toBe(false);
+    const caregiver = get("auth.97156.hours_per_week")!;
+    expect(caregiver.display).toMatch(/^\d+(\.\d)? hours?$/);
+  });
+
+  it("sends every diagnosis, the reauth context, other section titles, and narrowed goal figures", async () => {
+    const mock = new MockProvider();
+    setLlmProvider(mock);
+    await draftSection(bcba, planId, "diagnosis_and_referral", AS_OF);
+    const dxPayload = JSON.parse(mock.calls.at(-1)!.user) as {
+      availableValues: { key: string; label: string; facts?: string[] }[];
+      otherSections: string[];
+      requestContext: string;
+    };
+    const dxKeys = dxPayload.availableValues.map((x) => x.key);
+    expect(dxKeys).toEqual(expect.arrayContaining(["dx.1.icd10", "dx.1.label", "dx.2.icd10", "dx.2.label"]));
+    expect(dxPayload.availableValues.find((x) => x.key === "dx.2.icd10")!.facts).toEqual([
+      "co-occurring diagnosis",
+    ]);
+    expect(dxPayload.otherSections).toContain("Crisis and Safety Plan");
+    expect(dxPayload.otherSections).not.toContain("Diagnosis, Referral, and Diagnostic Evaluation");
+    expect(dxPayload.requestContext).toMatch(/^Reauthorization/);
+    expect(mock.calls.at(-1)!.system).toMatch(/\[BCBA: add/);
+    expect(mock.calls.at(-1)!.system).toMatch(/never address the BCBA/);
+
+    // Behavior reduction sees only its own goals' figures; the BIP sees none.
+    await draftSection(bcba, planId, "behavior_reduction_goals", AS_OF);
+    const red = JSON.parse(mock.calls.at(-1)!.user) as {
+      availableValues: { key: string }[];
+      goals: { goalNumber: string; objective?: string }[];
+    };
+    const redGoals = new Set(red.goals.map((g) => `${g.goalNumber}.`));
+    const goalKeys = red.availableValues.map((x) => x.key).filter((k) => k.startsWith("goal."));
+    expect(goalKeys.length).toBeGreaterThan(0);
+    for (const k of goalKeys)
+      expect(
+        [...redGoals].some((p) => k.startsWith(p)),
+        k,
+      ).toBe(true);
+    expect(red.goals.every((g) => typeof g.objective === "string")).toBe(true);
+
+    await draftSection(bcba, planId, "behavior_intervention_plan", AS_OF);
+    const bip = JSON.parse(mock.calls.at(-1)!.user) as {
+      availableValues: { key: string }[];
+      goals: { objective?: string }[];
+    };
+    expect(bip.availableValues.some((x) => x.key.startsWith("goal."))).toBe(false);
+    expect(bip.goals.length).toBeGreaterThan(0);
+    expect(bip.goals.some((g) => "objective" in g)).toBe(false);
+
+    await draftSection(bcba, planId, "medical_necessity", AS_OF);
+    const mn = JSON.parse(mock.calls.at(-1)!.user) as { availableValues: { key: string }[] };
+    expect(mn.availableValues.some((x) => /^(goal|score)\./.test(x.key))).toBe(false);
+  });
+
+  it("sends aggression to the crisis plan as a safety flag and intake answer, never restricted fields", async () => {
+    const mock = new MockProvider();
+    setLlmProvider(mock);
+    await draftSection(bcba, planId, "crisis_plan", AS_OF);
+    const call = mock.calls.at(-1)!;
+    const payload = JSON.parse(call.user) as {
+      staffSafetyFlags: string[];
+      intake: { fields: Record<string, unknown> };
+      availableValues: { key: string }[];
+    };
+    expect(payload.staffSafetyFlags).toContain("Aggression toward others (moderate)");
+    expect(payload.intake.fields.aggression).toBeDefined();
+    expect(payload.availableValues.map((x) => x.key)).toContain("intake.aggression_frequency.count");
+    expect(call.user).not.toContain("suicidal_behavior");
+  });
+
+  it("drops a possessive or 'the' put before the caregiver value", async () => {
+    setLlmProvider(
+      new MockProvider([
+        "[Client]'s [Caregiver] attends sessions. The [Caregiver] practices daily, as reported by the {{caregiver.primary}}.",
+      ]),
+    );
+    const r = await draftSection(bcba, planId, "transition_fade_plan", AS_OF);
+    expect(r.text).toBe(
+      "{{caregiver.primary}} attends sessions. {{caregiver.primary}} practices daily, as reported by {{caregiver.primary}}.",
+    );
+    expect(r.html).not.toContain('data-key="client.name"');
   });
 });
 
