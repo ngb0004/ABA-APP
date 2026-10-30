@@ -95,10 +95,18 @@ export function authEvents(
   });
 
   // Outcome measures: the same date. Which ones are actually due (their cadence lapses before the
-  // next authorization) is on the client's Payor requirements page; here the rule's list is named.
+  // next authorization) is on the client's Payor requirements page; here the rule's lists are named.
+  // The next authorization is always a reauthorization, whatever this one's kind, so the reauth
+  // cadences apply (free-text entries such as "two_year_review" are not measures).
   for (const r of a.rules.filter((x) => x.type === "outcome_measure_schedule")) {
-    const list = (a.kind === "initial" ? r.params.initial : r.params.every_6_months) as string[] | undefined;
-    if (list?.length)
+    const list = [
+      ...new Set(
+        (["every_6_months", "annually", "every_2_years"] as const)
+          .flatMap((k) => (Array.isArray(r.params[k]) ? (r.params[k] as string[]) : []))
+          .filter((m) => !/review/i.test(m)),
+      ),
+    ];
+    if (list.length)
       ev.push({
         date: assessmentsDue,
         clientId,

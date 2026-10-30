@@ -619,7 +619,10 @@ const EVALUATORS: Record<RuleType, Evaluator> = {
     const list = (k: string) => (Array.isArray(p[k]) ? (p[k] as string[]) : []);
     // Each measure is due within its cadence; a measure listed under several cadences takes the shortest.
     const due = new Map<string, { months: number; cadence: string }>();
-    if (ctx.plan?.type === "initial" || ctx.authorization?.kind === "initial")
+    // The list is the one for what is requested next. With a current authorization (of either
+    // kind) that is a reauthorization; otherwise an initial plan, or no plan and no authorization yet.
+    const authorization = currentAuthorization(ctx.authorization, ctx.asOf);
+    if (!authorization && (ctx.plan ? ctx.plan.type === "initial" : !ctx.authorization))
       for (const m of list("initial")) due.set(m, { months: 6, cadence: "at baseline" });
     else
       for (const [k, months, cadence] of [
@@ -635,7 +638,6 @@ const EVALUATORS: Record<RuleType, Evaluator> = {
     if (!due.size) return NA("No outcome measures due");
     // Due for the coming reauthorization when the cadence lapses before the next authorization
     // starts; due by the current authorization's end minus the practice's days (BCBA answer #44).
-    const authorization = currentAuthorization(ctx.authorization, ctx.asOf);
     const daysBefore = ctx.assessmentDueDays ?? DEFAULT_ASSESSMENT_DUE_DAYS;
     const missing: string[] = [];
     const evidence: string[] = [];

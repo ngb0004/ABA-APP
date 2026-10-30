@@ -529,6 +529,53 @@ describe("review fixes: rules the app cannot fully decide warn instead of failin
     );
   });
 
+  it("outcome measures during an initial authorization are the coming reauth's, not the baseline list", () => {
+    const r = verified(
+      find("tricare_east", "outcome_measure_schedule", (x) => x.source.key === "checklist_2026"),
+    );
+    const om = (title: string, date: string) => att("outcome_measure", title, date);
+    // A current initial authorization 2026-05-01 to 2026-10-31; the Vineland-3 given at intake.
+    const auth = {
+      ...ctx3.authorization!,
+      kind: "initial" as const,
+      startDate: "2026-05-01",
+      endDate: "2026-10-31",
+    };
+    const intake = [
+      om("Vineland-3", "2026-04-15"),
+      om("SRS-2", "2026-04-15"),
+      om("PDDBI parent", "2026-09-01"),
+      om("PSI", "2026-09-01"),
+    ];
+    for (const plan of [null, ctx3.plan, { ...ctx3.plan!, type: "initial" as const }]) {
+      const res = evaluateRule(r, {
+        ...ctx3,
+        plan,
+        authorization: auth,
+        assessments: [],
+        attachments: intake,
+      });
+      // Vineland-3 and SRS-2 are annual: not due until 2027-04-15.
+      expect(res.message).not.toMatch(/Vineland|SRS|baseline/);
+      expect(res.schedule).toContain(
+        "Vineland-3 last given 2026-04-15 · next due 2027-04-15, after the authorization ends 2026-10-31",
+      );
+      // The six-month teacher/BCBA PDDBI is checked for the first reauth.
+      expect(res.status).toBe("fail");
+      expect(res.message).toMatch(/PDDBI teacher or BCBA \(every six months; /);
+    }
+    // An initial request with no authorization yet uses the baseline list.
+    const first = evaluateRule(r, {
+      ...ctx3,
+      plan: { ...ctx3.plan!, type: "initial" as const },
+      authorization: null,
+      assessments: [],
+      attachments: intake,
+    });
+    expect(first.message).not.toMatch(/teacher/);
+    expect(first.schedule!.some((x) => x.startsWith("Vineland-3"))).toBe(true);
+  });
+
   it("plan content that applies only to reauths or school services is gated", () => {
     const reauthOnly = verified(find("ga_medicaid", "plan_content", (x) => x.params.when === "reauth"));
     expect(evaluateRule(reauthOnly, ctx1).status).toBe("n/a");

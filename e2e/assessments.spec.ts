@@ -236,6 +236,9 @@ test("assessments in a plan: choose them, the section is flagged for a redraft, 
   const panel = page.getByTestId("plan-assessments");
   await panel.locator("summary").click();
   await expect(panel.getByTestId("plan-assessments-window")).toContainText("Default window: 6 months");
+  // The text describes what a reset selects; it says when the plan's selection differs.
+  await expect(panel.getByTestId("plan-assessments-window")).toContainText("Reset to default checks");
+  await expect(panel.getByTestId("plan-assessments-differs")).toHaveCount(0);
   const rows = panel.getByTestId("plan-assessment");
   const vineland = rows.filter({ hasText: /^Vineland-3/ });
   await expect(vineland).toHaveCount(2);
@@ -287,11 +290,27 @@ test("assessments in a plan: choose them, the section is flagged for a redraft, 
   await section.getByTestId("draft-assessment_results").click();
   await expect(section.getByTestId("redraft-assessment_results")).toHaveCount(0);
 
-  // Reset to default goes back to the six-month window (and flags the section again).
+  await expect(page.getByTestId("plan-assessments-differs")).toBeVisible();
+
+  // Reset to default asks first, naming what it unchecks and that sections reopen; dismissing
+  // changes nothing.
+  let asked = "";
+  page.once("dialog", (d) => {
+    asked = d.message();
+    void d.dismiss();
+  });
+  await page.getByTestId("plan-assessments-reset").click();
+  await expect.poll(() => asked).toContain("Unchecks:");
+  expect(asked.match(/^- Vineland-3/gm)).toHaveLength(2);
+  expect(asked).toContain("reopened for a redraft");
+  await expect(vineland.nth(1).getByRole("checkbox")).toBeChecked();
+  // Accepting goes back to the six-month window (and flags the section again).
+  page.once("dialog", (d) => void d.accept());
   await page.getByTestId("plan-assessments-reset").click();
   await expect(page.getByTestId("plan-assessments-note")).toHaveText("Saved. One section needs a redraft.");
   await expect(vineland.nth(0).getByRole("checkbox")).not.toBeChecked();
   await expect(vineland.nth(1).getByRole("checkbox")).not.toBeChecked();
+  await expect(page.getByTestId("plan-assessments-differs")).toHaveCount(0);
 
   // Requirements: TRICARE outcome measures come from the confirmed assessments. Charlie's
   // authorization ends in eleven days: the PDDBI parent form (six-monthly, about 200 days ago)

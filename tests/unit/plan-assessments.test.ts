@@ -685,15 +685,29 @@ describe("outcome measure due dates from confirmed assessments", () => {
     expect(due.schedule).toEqual([`SRS-2 last given 2024-10-01 · overdue since 2026-10-10 ${WHY}`]);
   });
 
-  it("initial: a baseline that lapses (six months) before the next authorization is due", () => {
+  it("initial authorization: the coming reauth's cadences apply, not the baseline list", () => {
+    const rr = rule({ initial: ["Vineland-3", "SRS-2"], annually: ["Vineland-3"], every_6_months: ["PSI"] });
+    const r = evaluateRule(
+      rr,
+      ctxWith([given("vineland_3", "2026-03-01"), given("srs_2", "2026-03-01")], "initial"),
+    );
+    // The Vineland-3 is annual (due 2027-03-01); SRS-2 is baseline only; the six-monthly PSI is checked.
+    expect(r.status).toBe("fail");
+    expect(r.message).toBe("Outcome measures due: PSI (every six months; overdue since 2026-10-10)");
+    expect(r.schedule).toContain(
+      "Vineland-3 last given 2026-03-01 · next due 2027-03-01, after the authorization ends 2026-11-09",
+    );
+  });
+
+  it("initial request with no authorization yet: the baseline list, six months from the last administration", () => {
     const rr = rule({ initial: ["Vineland-3", "SRS-2"], annually: ["Vineland-3"] });
     const r = evaluateRule(
       rr,
-      ctxWith([given("vineland_3", "2026-09-01"), given("srs_2", "2026-03-01")], "initial"),
+      ctxWith([given("vineland_3", "2026-09-01"), given("srs_2", "2026-03-01")], "initial", noAuth),
     );
     expect(r.status).toBe("fail");
     expect(r.message).toBe(
-      "Outcome measures due: SRS-2 (at baseline; last given 2026-03-01; overdue since 2026-10-10)",
+      "Outcome measures due: SRS-2 (at baseline; last given 2026-03-01; overdue since 2026-09-01)",
     );
   });
 

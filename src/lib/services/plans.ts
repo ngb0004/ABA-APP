@@ -254,6 +254,15 @@ export async function planView(ctx: OrgCtx, planId: string, asOf: Day) {
         )
       : null;
     const blockers = exportBlockers(checks);
+    // Where a reset (and a new plan) takes its default selection from. Nothing records the window
+    // that set an older plan's boxes, so the panel describes what a reset would select.
+    const window = assessmentWindow(rules);
+    const byDefault = new Set(
+      defaultAssessmentSelection(
+        b.assessments,
+        assessmentWindowStart(toDay(b.plan.createdAt), window.months),
+      ),
+    );
     const catalog = assessmentCatalog();
     const assessmentOptions = newestFirst([
       ...b.assessments.map((a) => assessmentItem(catalog, b.client.id, a)),
@@ -265,13 +274,16 @@ export async function planView(ctx: OrgCtx, planId: string, asOf: Day) {
       status: i.status,
       vbmapp: i.source === "vbmapp_import",
       selected: i.source === "vbmapp_import" || b.plan.assessmentIds.includes(i.id),
+      byDefault: i.source === "vbmapp_import" || byDefault.has(i.id),
     }));
-    // Where a reset (and a new plan) takes its default selection from.
-    const window = assessmentWindow(rules);
     return {
       bundle: b,
       assessmentOptions,
-      assessmentWindow: { ...window, label: assessmentWindowLabel(window) },
+      assessmentWindow: {
+        ...window,
+        label: assessmentWindowLabel(window),
+        createdOn: toDay(b.plan.createdAt),
+      },
       sourced: sourced.values(),
       sections,
       goals,

@@ -76,6 +76,31 @@ describe("calendar generation", () => {
     );
   });
 
+  it("names the coming reauth's measures for an initial authorization, not the baseline list", () => {
+    const ev = authEvents({
+      ...base,
+      kind: "initial",
+      rules: [
+        rule("outcome_measure_schedule", {
+          initial: ["PDDBI_parent", "Vineland-3"],
+          every_6_months: ["PDDBI_parent", "PDDBI_teacher_or_BCBA"],
+          annually: ["Vineland-3"],
+          every_2_years: ["two_year_review"],
+        }),
+      ],
+    });
+    expect(ev.find((x) => x.kind === "outcome_measures_due")!.label).toBe(
+      "Outcome measures due if they lapse before the next authorization (30 days before the authorization ends): PDDBI parent, PDDBI teacher or BCBA, Vineland-3",
+    );
+    // A rule with only a baseline list has nothing due for the next authorization.
+    const baseline = authEvents({
+      ...base,
+      kind: "initial",
+      rules: [rule("outcome_measure_schedule", { initial: ["Vineland-3"] })],
+    });
+    expect(baseline.some((x) => x.kind === "outcome_measures_due")).toBe(false);
+  });
+
   it("keeps only events within the next 60 days, sorted", () => {
     const ev = caseloadCalendar([{ ...base, rules: [] }], "2026-10-02", 60);
     expect(ev.every((e) => e.date >= "2026-10-02" && e.date <= "2026-12-01")).toBe(true);

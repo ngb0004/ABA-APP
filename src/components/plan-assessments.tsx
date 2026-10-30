@@ -3,16 +3,9 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { send } from "./actions";
+import { resetConfirmText, type PlanAssessmentOption } from "./plan-assessments-reset";
 
-export type PlanAssessmentOption = {
-  id: string;
-  typeName: string;
-  administeredOn: string | null;
-  status: "draft" | "confirmed";
-  /** VB-MAPP administrations (verified) are always used. */
-  vbmapp: boolean;
-  selected: boolean;
-};
+export type { PlanAssessmentOption };
 
 /**
  * "Assessments used in this plan": a collapsed checklist. Each box saves on its own; there is
@@ -25,6 +18,8 @@ export function PlanAssessments(props: {
   canEdit: boolean;
   /** Where the default selection comes from: "Default window: 6 months", or a payor rule's. */
   windowLabel: string;
+  /** The plan's creation date, which the default window counts back from. */
+  createdOn: string;
 }) {
   const router = useRouter();
   const stored = props.options.filter((o) => o.selected && !o.vbmapp).map((o) => o.id);
@@ -39,6 +34,7 @@ export function PlanAssessments(props: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const differs = props.options.some((o) => !o.vbmapp && chosen.has(o.id) !== o.byDefault);
   const used = props.options.filter((o) => (o.vbmapp ? o.selected : chosen.has(o.id))).length;
 
   async function toggle(id: string, on: boolean) {
@@ -68,6 +64,13 @@ export function PlanAssessments(props: {
   }
 
   async function reset() {
+    const text = resetConfirmText(props.options, chosen);
+    if (text === null) {
+      setError(null);
+      setNote("Already the default selection.");
+      return;
+    }
+    if (!window.confirm(text)) return;
     setBusy(true);
     setError(null);
     setNote(null);
@@ -88,9 +91,15 @@ export function PlanAssessments(props: {
         Assessments used in this plan <span className="muted">({used})</span>
       </summary>
       <p className="muted" data-testid="plan-assessments-window">
-        {props.windowLabel}. Confirmed assessments given in the window before the plan was created start
-        checked; choose others as needed.
+        {props.windowLabel}. Reset to default checks the confirmed assessments given in this window before the
+        plan was created ({props.createdOn}) and unchecks the rest; choose others as needed.
       </p>
+      {differs && (
+        <p className="muted" data-testid="plan-assessments-differs">
+          This plan&apos;s selection differs from that default (chosen by hand, or set under an earlier
+          window).
+        </p>
+      )}
       {!props.options.length ? (
         <p className="muted">
           No assessments on record. <a href={`/clients/${props.clientId}/assessments`}>Add one</a>.
