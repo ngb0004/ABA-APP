@@ -20,7 +20,8 @@
     "totp": "tsx scripts/totp.ts",
     "postinstall": "prisma generate",
     "payors:sync": "tsx scripts/payor-sync.ts",
-    "rules:watch": "tsx scripts/rules-watch.ts"
+    "rules:watch": "tsx scripts/rules-watch.ts",
+    "curator:set": "tsx scripts/set-curator.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.3.0",

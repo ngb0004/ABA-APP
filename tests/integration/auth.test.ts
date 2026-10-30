@@ -32,6 +32,7 @@ describe("email + password + TOTP MFA", () => {
       orgId: sampleOrg.id,
       userId: bcba.id,
       role: "BCBA",
+      isPlatformCurator: false,
     });
   });
 });

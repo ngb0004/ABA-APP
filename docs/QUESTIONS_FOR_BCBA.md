@@ -57,7 +57,7 @@ Each question lists the default the build uses today. Defaults are the safer cho
 
 ## Uploaded payor documents
 
-29. **How long does a verification against an uploaded document last?** Some official documents have no public copy (the 2026 TRICARE East handbook, the Humana Military FAQ), so a BCBA uploads the PDF and nothing can watch it for changes. *Default:* verifications against an uploaded copy last at most 90 days (180 for a watched document), and uploading a new edition re-checks every quoted sentence. Uploads that look like a client record (a name, date of birth, or member ID) are rejected, and uploads are off on the demo site. (`UNWATCHED_CEILING_DAYS` in `src/lib/rules-watch/status.ts`)
+29. **How long does a verification against an uploaded document last?** Some official documents have no public copy (the 2026 TRICARE East handbook, the Humana Military FAQ), so a Yoma rule reviewer (platform curator) uploads the PDF and nothing can watch it for changes. *Default:* verifications against an uploaded copy last at most 90 days (180 for a watched document), and uploading a new edition re-checks every quoted sentence. Uploads that look like a client record (a name, date of birth, or member ID) are rejected, and uploads are off on the demo site. (`UNWATCHED_CEILING_DAYS` in `src/lib/rules-watch/status.ts`)
 
 ## Payors by state and plan type
 

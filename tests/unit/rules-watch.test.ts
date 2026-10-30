@@ -267,7 +267,7 @@ describe("trust status", () => {
     ).toBe("stale");
     expect(
       computeTrust({ section: "803", doc: uploaded, latest: null, evidence: [], today }).reasons[0],
-    ).toMatch(/upload it/);
+    ).toMatch(/no public copy; not yet confirmed/);
   });
   it("expires, and a later revoke cancels a verification", () => {
     expect(

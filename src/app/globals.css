@@ -670,8 +670,23 @@ svg {
   display: inline;
   margin: 0;
 }
-.verify-form {
+.verify-form,
+.report-form {
   max-width: 420px;
+}
+.rule-quote summary {
+  cursor: pointer;
+}
+.rule-quote blockquote {
+  margin: 4px 0 0 0;
+  padding-left: 10px;
+  border-left: 3px solid var(--border-strong);
+  color: var(--text);
+}
+.report-form textarea {
+  width: 100%;
+  min-height: 70px;
+  font-family: inherit;
 }
 .legend {
   margin: 0;

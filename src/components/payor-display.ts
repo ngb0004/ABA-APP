@@ -62,17 +62,25 @@ export const TIER_LEGEND: [string, string][] = [
   ["T2", "written payor correspondence with a named responder or reference number"],
   ["T3", "a payor portal chat transcript"],
   ["T4", "a phone answer with a reference number"],
-  ["T5", "a secondary source such as a practice checklist; cannot verify a rule"],
+  ["T5", "a secondary source such as a practice checklist; never enough to verify a rule"],
 ];
 
 /** What the trust statuses mean. */
 export const STATUS_LEGEND: [string, string, string][] = [
-  ["verified", "verified", "A BCBA matched the rule to a sentence in the current official document."],
+  [
+    "verified",
+    "verified",
+    "Yoma's reviewers confirmed the rule against a sentence in the current official document.",
+  ],
   [
     "stale",
     "needs re-check",
-    "The document changed, broke, or reached its next scheduled revision since it was verified.",
+    "The document changed, broke, or reached its next scheduled revision since it was verified. Warnings only until Yoma's reviewers re-check it.",
   ],
-  ["unverified", "unverified", "Nobody has matched the rule to the official document yet. Warnings only."],
+  [
+    "unverified",
+    "unverified",
+    "Yoma's reviewers have not yet confirmed the rule against the current document. Warnings only.",
+  ],
   ["unsourced", "no source", "No document is recorded for this rule. Warnings only."],
 ];

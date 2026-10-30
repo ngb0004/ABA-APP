@@ -41,16 +41,19 @@ model Org {
 }
 
 model User {
-  id             String    @id @default(uuid()) @db.Uuid
-  email          String    @unique
-  name           String
-  passwordHash   String
-  totpSecret     String?
-  mfaEnabled     Boolean   @default(false)
+  id                String    @id @default(uuid()) @db.Uuid
+  email             String    @unique
+  name              String
+  passwordHash      String
+  totpSecret        String?
+  mfaEnabled        Boolean   @default(false)
   /// Consecutive wrong authenticator codes across sessions; locks MFA for a while when too high.
-  failedMfaCount Int       @default(0)
-  mfaLockedUntil DateTime?
-  createdAt      DateTime  @default(now())
+  failedMfaCount    Int       @default(0)
+  mfaLockedUntil    DateTime?
+  createdAt         DateTime  @default(now())
+  /// Yoma staff who curate the payor rule library (verify rules against official documents).
+  /// Not an org role: set only by scripts/set-curator.ts. A trigger rejects changes by the app role.
+  isPlatformCurator Boolean   @default(false)
 
   memberships Membership[]
   sessions    AuthSession[]
@@ -466,6 +469,27 @@ model RuleEvidence {
 
   @@index([orgId, lineageKey, createdAt])
   @@map("rule_evidence")
+}
+
+/// A problem with a library rule, reported by someone in the practice ("doesn't match my
+/// denial letter"). Yoma's curators review open reports; the rule itself is never changed here.
+model RuleReport {
+  id           String    @id @default(uuid()) @db.Uuid
+  orgId        String    @map("org_id") @db.Uuid
+  lineageKey   String
+  /// The rule row the report was made from (for display; the lineage is what curators fix).
+  ruleId       String?   @db.Uuid
+  /// doesnt_match_letter | outdated | wrong_for_state_plan | other
+  reason       String
+  note         String    @default("")
+  createdById  String    @db.Uuid
+  createdAt    DateTime  @default(now())
+  resolvedAt   DateTime?
+  resolvedById String?   @db.Uuid
+  resolution   String?
+
+  @@index([orgId, resolvedAt, createdAt])
+  @@map("rule_report")
 }
 
 // ---------------------------------------------------------------- goals

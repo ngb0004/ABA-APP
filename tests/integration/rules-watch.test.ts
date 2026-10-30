@@ -13,10 +13,17 @@ import {
 } from "@/lib/services/rules-watch";
 import { syncPayorLibrary } from "@/lib/payors/library";
 import { loadPayorSeed } from "@/lib/payors/load";
-import { ctxAs, org } from "../helpers/ctx";
+import { authenticator } from "otplib";
+import { POST as revokeRoute } from "@/app/api/payors/rules/[id]/revoke/route";
+import { POST as verifyRoute } from "@/app/api/payors/rules/[id]/verify/route";
+import { loginWithPassword, SESSION_COOKIE, verifyMfa } from "@/lib/auth/session";
+import { DEMO_PASSWORD } from "../../seed/synthetic/dataset";
+import { ctxAs, curatorCtx, curatorUser, org, userOf } from "../helpers/ctx";
 import { fakeFetch } from "../helpers/fake-fetch";
 
 const bcba = ctxAs("BCBA");
+// Verifying rules and uploading official copies is curation: a platform curator does it.
+const curator = curatorCtx;
 const rulesOf = (payorKey: string) =>
   withOrg(bcba, async (tx) =>
     loadRules(
@@ -173,40 +180,77 @@ describe("rule trust from sources", () => {
 describe("verify with proof", () => {
   const QUOTE = "email it to: ABA@Evernorth.com* (preferred)";
 
-  it("only a BCBA can verify, the quote must be in the current document, and numbers must appear in it", async () => {
+  it("only a curator can verify, the quote must be in the current document, and numbers must appear in it", async () => {
     const rule = (await rulesOf("cigna_evernorth")).find((r) => r.type === "submission_channel")!;
     await expect(
       verifyRuleWithQuote(ctxAs("AUTH_COORDINATOR"), rule.id, { quote: QUOTE }),
     ).rejects.toMatchObject({ status: 403 });
+    // A practice's BCBA is not a curator, even with the real quote.
+    await expect(verifyRuleWithQuote(bcba, rule.id, { quote: QUOTE })).rejects.toMatchObject({ status: 403 });
     await expect(
-      verifyRuleWithQuote(bcba, rule.id, { quote: "submit everything by carrier pigeon to the plan" }),
+      verifyRuleWithQuote(curator, rule.id, { quote: "submit everything by carrier pigeon to the plan" }),
     ).rejects.toMatchObject({ status: 422 });
     const limit = (await rulesOf("cigna_evernorth")).find((r) => r.type === "unit_limit")!;
     const evernorth = await withOrg(bcba, (tx) =>
       tx.payorDocument.findFirstOrThrow({ where: { key: "evernorth_aba_pa_928213d" } }),
     );
     await expect(
-      verifyRuleWithQuote(bcba, limit.id, { quote: QUOTE, documentId: evernorth.id }),
+      verifyRuleWithQuote(curator, limit.id, { quote: QUOTE, documentId: evernorth.id }),
     ).rejects.toThrow(/Missing: 97151, 6/);
     // The checklist can never verify a rule.
     const checklist = await withOrg(bcba, (tx) =>
       tx.payorDocument.findFirstOrThrow({ where: { key: "checklist_2026" } }),
     );
     await expect(
-      verifyRuleWithQuote(bcba, limit.id, { quote: QUOTE, documentId: checklist.id }),
+      verifyRuleWithQuote(curator, limit.id, { quote: QUOTE, documentId: checklist.id }),
     ).rejects.toThrow(/secondary source/);
   });
 
   it("verifies with a real sentence from the Evernorth form, then revokes", async () => {
     const rule = (await rulesOf("cigna_evernorth")).find((r) => r.type === "submission_channel")!;
-    await verifyRuleWithQuote(bcba, rule.id, { quote: QUOTE });
+    await verifyRuleWithQuote(curator, rule.id, { quote: QUOTE });
     let now = (await rulesOf("cigna_evernorth")).find((r) => r.id === rule.id)!;
     expect(now.trust).toMatchObject({ status: "verified", tier: "T1" });
     expect(now.verified).toBe(true);
-    await revokeRuleVerification(bcba, rule.id, "Form revised");
+    await revokeRuleVerification(curator, rule.id, "Form revised");
     now = (await rulesOf("cigna_evernorth")).find((r) => r.id === rule.id)!;
     expect(now.trust!.status).toBe("unverified");
-    await verifyRuleWithQuote(bcba, rule.id, { quote: QUOTE });
+    await verifyRuleWithQuote(curator, rule.id, { quote: QUOTE });
+  });
+
+  it("the verify and revoke API routes return 403 to a practice BCBA and work for a curator", async () => {
+    const rule = (await rulesOf("cigna_evernorth")).find((r) => r.type === "submission_channel")!;
+    const call = async (path: string, token: string, body: unknown) => {
+      const handler = path.endsWith("/verify") ? verifyRoute : revokeRoute;
+      const res = await handler(
+        new Request(`http://localhost${path}`, {
+          method: "POST",
+          headers: { cookie: `${SESSION_COOKIE}=${token}`, "content-type": "application/json" },
+          body: JSON.stringify(body),
+        }),
+        { params: Promise.resolve({ id: rule.id }) },
+      );
+      return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+    };
+    const signIn = async (u: { email: string; totpSecret: string }) => {
+      const s = await loginWithPassword(u.email, DEMO_PASSWORD);
+      await verifyMfa(s!.token, authenticator.generate(u.totpSecret));
+      return s!.token;
+    };
+    const bcbaToken = await signIn(userOf("BCBA"));
+    const curatorToken = await signIn(curatorUser);
+    const denied = await call(`/api/payors/rules/${rule.id}/verify`, bcbaToken, { quote: QUOTE });
+    expect(denied.status).toBe(403);
+    expect(String(denied.body.error)).toMatch(/Report a problem/);
+    expect((await call(`/api/payors/rules/${rule.id}/revoke`, bcbaToken, {})).status).toBe(403);
+    expect(
+      (await call(`/api/payors/rules/${rule.id}/revoke`, curatorToken, { note: "re-check" })).status,
+    ).toBe(200);
+    const ok = await call(`/api/payors/rules/${rule.id}/verify`, curatorToken, { quote: QUOTE });
+    expect(ok.status).toBe(200);
+    expect(ok.body.evidenceId).toBeTruthy();
+    const now = (await rulesOf("cigna_evernorth")).find((r) => r.id === rule.id)!;
+    expect(now.trust!.status).toBe("verified");
   });
 
   it("evidence is append-only, even for the table owner", async () => {
@@ -249,7 +293,7 @@ describe("verify with proof", () => {
     const rule = (await rulesOf("cigna_evernorth")).find((r) => r.type === "form_address")!;
     await withOrg(bcba, (tx) => tx.payorRule.update({ where: { id: rule.id }, data: { lineageKey: "" } }));
     await expect(
-      verifyRuleWithQuote(bcba, rule.id, { quote: "email it to: ABA@Evernorth.com* (preferred)" }),
+      verifyRuleWithQuote(curator, rule.id, { quote: "email it to: ABA@Evernorth.com* (preferred)" }),
     ).rejects.toMatchObject({ status: 409 });
     expect((await rulesOf("cigna_evernorth")).find((r) => r.id === rule.id)!.verified).toBe(false);
     await withOrg(bcba, (tx) => syncPayorLibrary(tx, org.id));
@@ -274,33 +318,34 @@ describe("uploaded official copies (documents with no public URL)", () => {
   it("before an upload, its rules say to upload the document", async () => {
     const r = await outcomeRule();
     expect(r.trust!.status).toBe("unverified");
-    expect(r.trust!.reasons[0]).toMatch(/upload it under Sources/);
+    expect(r.trust!.reasons[0]).toMatch(/no public copy; not yet confirmed/);
     expect(r.source.quote).toMatch(/Vineland 3 and SRS-2 are due every year/);
     expect(r.source.page).toBe("30");
   });
 
-  it("only a BCBA can upload, only to unwatched official documents, and only a text PDF", async () => {
+  it("only a curator can upload, only to unwatched official documents, and only a text PDF", async () => {
     const doc = await docByKey(HANDBOOK);
     const data = pdf("synthetic-handbook.pdf");
     await expect(uploadOfficialCopy(ctxAs("AUTH_COORDINATOR"), doc.id, { data })).rejects.toMatchObject({
       status: 403,
     });
+    await expect(uploadOfficialCopy(bcba, doc.id, { data })).rejects.toMatchObject({ status: 403 });
     const watched = await docByKey("aetna_cpb_0648");
-    await expect(uploadOfficialCopy(bcba, watched.id, { data })).rejects.toMatchObject({ status: 409 });
+    await expect(uploadOfficialCopy(curator, watched.id, { data })).rejects.toMatchObject({ status: 409 });
     const checklist = await docByKey("checklist_2026");
-    await expect(uploadOfficialCopy(bcba, checklist.id, { data })).rejects.toMatchObject({ status: 422 });
+    await expect(uploadOfficialCopy(curator, checklist.id, { data })).rejects.toMatchObject({ status: 422 });
     await expect(
-      uploadOfficialCopy(bcba, doc.id, { data: Buffer.from("not a pdf at all ".repeat(50)) }),
+      uploadOfficialCopy(curator, doc.id, { data: Buffer.from("not a pdf at all ".repeat(50)) }),
     ).rejects.toMatchObject({ status: 422 });
     await expect(
-      uploadOfficialCopy(bcba, doc.id, { data, effectiveDate: "next Tuesday" }),
+      uploadOfficialCopy(curator, doc.id, { data, effectiveDate: "next Tuesday" }),
     ).rejects.toMatchObject({ status: 422 });
   });
 
   it("rejects anything that looks like a client's record, and stores nothing", async () => {
     const doc = await docByKey(HANDBOOK);
     await expect(
-      uploadOfficialCopy(bcba, doc.id, { data: pdf("synthetic-client-letter.pdf") }),
+      uploadOfficialCopy(curator, doc.id, { data: pdf("synthetic-client-letter.pdf") }),
     ).rejects.toThrow(/client's information/);
     const n = await withOrg(bcba, (tx) => tx.payorDocumentSnapshot.count({ where: { documentId: doc.id } }));
     expect(n).toBe(0);
@@ -311,7 +356,7 @@ describe("uploaded official copies (documents with no public URL)", () => {
     process.env.DEMO_MODE = "true";
     try {
       await expect(
-        uploadOfficialCopy(bcba, doc.id, { data: pdf("synthetic-handbook.pdf") }),
+        uploadOfficialCopy(curator, doc.id, { data: pdf("synthetic-handbook.pdf") }),
       ).rejects.toMatchObject({ status: 403 });
     } finally {
       delete process.env.DEMO_MODE;
@@ -320,7 +365,7 @@ describe("uploaded official copies (documents with no public URL)", () => {
 
   it("an uploaded copy lets a BCBA verify rules against it, for at most 90 days", async () => {
     const doc = await docByKey(HANDBOOK);
-    const up = await uploadOfficialCopy(bcba, doc.id, {
+    const up = await uploadOfficialCopy(curator, doc.id, {
       data: pdf("synthetic-handbook.pdf"),
       versionLabel: "2026",
     });
@@ -328,8 +373,8 @@ describe("uploaded official copies (documents with no public URL)", () => {
     const snap = await withOrg(bcba, (tx) =>
       tx.payorDocumentSnapshot.findFirstOrThrow({ where: { documentId: doc.id } }),
     );
-    expect(snap).toMatchObject({ origin: "upload", uploadedById: bcba.userId, versionLabel: "2026" });
-    expect(await uploadOfficialCopy(bcba, doc.id, { data: pdf("synthetic-handbook.pdf") })).toMatchObject({
+    expect(snap).toMatchObject({ origin: "upload", uploadedById: curator.userId, versionLabel: "2026" });
+    expect(await uploadOfficialCopy(curator, doc.id, { data: pdf("synthetic-handbook.pdf") })).toMatchObject({
       unchanged: true,
     });
     // The watcher leaves uploaded documents alone.
@@ -337,7 +382,7 @@ describe("uploaded official copies (documents with no public URL)", () => {
     expect(checks.some((c) => c.key === HANDBOOK)).toBe(false);
 
     const rule = await outcomeRule();
-    await verifyRuleWithQuote(bcba, rule.id, { quote: rule.source.quote! });
+    await verifyRuleWithQuote(curator, rule.id, { quote: rule.source.quote! });
     const after = await outcomeRule();
     expect(after.trust).toMatchObject({ status: "verified", tier: "T1" });
     const days = (Date.parse(after.trust!.verifiedUntil!) - Date.now()) / 86_400_000;
@@ -361,16 +406,16 @@ describe("uploads: audit and edition dates", () => {
     const doc = await docByKey(HANDBOOK);
     const before = await count("source:upload_rejected", doc.id);
     await expect(
-      uploadOfficialCopy(bcba, doc.id, {
+      uploadOfficialCopy(curator, doc.id, {
         data: readFileSync("fixtures/payor-docs/synthetic-client-letter.pdf"),
       }),
     ).rejects.toMatchObject({ status: 422 });
-    await expect(uploadOfficialCopy(bcba, doc.id, { data: Buffer.from("nope") })).rejects.toMatchObject({
+    await expect(uploadOfficialCopy(curator, doc.id, { data: Buffer.from("nope") })).rejects.toMatchObject({
       status: 422,
     });
     for (const effectiveDate of ["2026-13-01", "2026-00-10", "2026-02-30"])
       await expect(
-        uploadOfficialCopy(bcba, doc.id, {
+        uploadOfficialCopy(curator, doc.id, {
           data: readFileSync("fixtures/payor-docs/synthetic-handbook.pdf"),
           effectiveDate,
         }),
@@ -381,7 +426,7 @@ describe("uploads: audit and edition dates", () => {
     );
     for (const r of rows) expect(JSON.stringify(r.meta)).not.toMatch(/Childname|Date of Birth/);
     // The handbook fixture was uploaded earlier in this file: the same file again is recorded as unchanged.
-    await uploadOfficialCopy(bcba, doc.id, {
+    await uploadOfficialCopy(curator, doc.id, {
       data: readFileSync("fixtures/payor-docs/synthetic-handbook.pdf"),
     });
     expect(await count("source:upload_unchanged", doc.id)).toBeGreaterThanOrEqual(1);
@@ -390,8 +435,8 @@ describe("uploads: audit and edition dates", () => {
   it("a corrected copy without a date keeps the previous edition date", async () => {
     const doc = await docByKey("humana_aba_faq_xpbb0825");
     const pdf = readFileSync("fixtures/payor-docs/synthetic-handbook.pdf");
-    await uploadOfficialCopy(bcba, doc.id, { data: pdf, effectiveDate: "2027-01-01" });
-    const r = await uploadOfficialCopy(bcba, doc.id, {
+    await uploadOfficialCopy(curator, doc.id, { data: pdf, effectiveDate: "2027-01-01" });
+    const r = await uploadOfficialCopy(curator, doc.id, {
       data: readFileSync("fixtures/payor-docs/synthetic-handbook-corrected.pdf"),
     });
     expect(r.unchanged).toBe(false);
@@ -449,7 +494,7 @@ describe("document renames (run last: they change document rows)", () => {
     expect(doc.locator).toBeNull();
     expect(doc.url).toBeNull();
     // Not 409 ("fetched automatically") any more: the upload is judged on the file.
-    await expect(uploadOfficialCopy(bcba, doc.id, { data: Buffer.from("x") })).rejects.toMatchObject({
+    await expect(uploadOfficialCopy(curator, doc.id, { data: Buffer.from("x") })).rejects.toMatchObject({
       status: 422,
     });
   });

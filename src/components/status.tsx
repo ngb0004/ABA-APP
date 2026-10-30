@@ -59,7 +59,7 @@ export function RuleSource({
   inheritedName?: string | null;
 }) {
   return (
-    <span className="muted">
+    <div className="muted rule-source">
       {r.source.url ? (
         <a href={r.source.url} target="_blank" rel="noreferrer">
           {r.source.name}
@@ -78,12 +78,15 @@ export function RuleSource({
           · verified until {r.trust.verifiedUntil} (then re-check)
         </span>
       )}
-      {showReasons && r.source.quote && (
-        <span style={{ display: "block" }}>Source says: &ldquo;{r.source.quote}&rdquo;</span>
-      )}
       {showReasons && r.trust && r.trust.status !== "verified" && r.trust.reasons.length > 0 && (
         <span style={{ display: "block" }}>{r.trust.reasons.slice(0, 2).join(" · ")}</span>
       )}
-    </span>
+      {showReasons && r.source.quote && (
+        <details className="rule-quote" data-testid="rule-quote">
+          <summary>The sentence this rule came from</summary>
+          <blockquote>&ldquo;{r.source.quote}&rdquo;</blockquote>
+        </details>
+      )}
+    </div>
   );
 }

@@ -3,6 +3,7 @@
  */
 import { Prisma } from "@prisma/client";
 import { audit, sha256 } from "../audit";
+import { requireCurator } from "../auth/curator";
 import { db, withOrg, type OrgCtx } from "../db";
 import { toDay } from "../dates";
 import { HttpError } from "../log";
@@ -136,9 +137,9 @@ export async function watchOrgSources(
 const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
- * A BCBA uploads the official copy of a payor document that has no public URL
- * (for example, a provider handbook behind a portal). Public payor publications
- * only: anything that looks like a client's record is rejected and not stored.
+ * A curator uploads the official copy of a payor document that has no public URL
+ * (for example, a provider handbook behind a portal), so rules can be verified against it.
+ * Public payor publications only: anything that looks like a client's record is rejected and not stored.
  */
 export async function uploadOfficialCopy(
   ctx: OrgCtx,
@@ -146,6 +147,7 @@ export async function uploadOfficialCopy(
   input: { data: Buffer; versionLabel?: string | null; effectiveDate?: string | null },
 ) {
   requirePermission(ctx.role, "payor:verify");
+  await requireCurator(ctx);
   if (isDemo()) throw new HttpError(403, "Uploading payor documents is turned off on the demo site.");
   const doc = await withOrg(ctx, (tx) => tx.payorDocument.findUniqueOrThrow({ where: { id: documentId } }));
   if (doc.secondary)
@@ -296,7 +298,7 @@ export async function watchAllOrgs(fetcher?: FetchLike) {
 }
 
 /**
- * Verify a rule with proof: the reviewer pastes a sentence from the current
+ * Verify a rule with proof (platform curators only): the reviewer pastes a sentence from the current
  * official document. Code checks the sentence is really there and that every
  * number in the rule appears in it. The evidence covers the rule's lineage
  * (the rule and the copies other payors inherit).
@@ -307,6 +309,7 @@ export async function verifyRuleWithQuote(
   input: { quote: string; section?: string | null; documentId?: string | null; note?: string | null },
 ) {
   requirePermission(ctx.role, "payor:verify");
+  await requireCurator(ctx);
   return withOrg(ctx, async (tx) => {
     const rule = await tx.payorRule.findUniqueOrThrow({ where: { id: ruleId } });
     if (!rule.lineageKey)
@@ -371,8 +374,10 @@ export async function verifyRuleWithQuote(
   });
 }
 
+/** Withdraw a verification (platform curators only). */
 export async function revokeRuleVerification(ctx: OrgCtx, ruleId: string, note: string | null) {
   requirePermission(ctx.role, "payor:verify");
+  await requireCurator(ctx);
   return withOrg(ctx, async (tx) => {
     const rule = await tx.payorRule.findUniqueOrThrow({ where: { id: ruleId } });
     if (!rule.lineageKey)

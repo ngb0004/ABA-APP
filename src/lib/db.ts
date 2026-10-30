@@ -10,7 +10,13 @@ import { AsyncLocalStorage } from "node:async_hooks";
  * model. Outside withOrg() the RLS policies return no org-scoped rows at all.
  */
 
-export type OrgCtx = { orgId: string; userId: string | null; role: Role | null };
+export type OrgCtx = {
+  orgId: string;
+  userId: string | null;
+  role: Role | null;
+  /** Yoma staff curating the payor rule library (not an org role). For display; services re-check it. */
+  isPlatformCurator?: boolean;
+};
 
 type PendingAudit = { action: string; entityType: string; ids: string[] };
 type Store = { ctx: OrgCtx; events: PendingAudit[] };
@@ -37,6 +43,8 @@ export const AUDITED_MODELS = new Set([
   "PlanSectionRevision",
   "PayorLetter",
   "Packet",
+  // Free text from the practice about a rule; audited like client data in case a note slips through.
+  "RuleReport",
 ]);
 
 const READ_OPS = new Set([

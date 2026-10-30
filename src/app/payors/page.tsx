@@ -5,6 +5,7 @@ import { CheckSourcesButton } from "@/components/check-sources";
 import { paramEntries, plural, STATUS_LEGEND, TIER_LEGEND } from "@/components/payor-display";
 import { isDemo } from "@/lib/demo";
 import { RuleSource, Status } from "@/components/status";
+import { ReportRule, ResolveReport } from "@/components/report-rule";
 import { VerifyRule } from "@/components/verify-rule";
 import { withOrg } from "@/lib/db";
 import { toDay } from "@/lib/dates";
@@ -13,6 +14,8 @@ import type { RevisionRow } from "@/lib/rules-watch/parsers";
 import { ALL_STATES, groupByState } from "@/lib/payors/groups";
 import { LINE_OF_BUSINESS_LABELS, type LineOfBusiness } from "@/lib/payors/types";
 import { loadRules } from "@/lib/services/payors";
+import { listOpenReports } from "@/lib/services/rule-reports";
+import { REPORT_REASON_LABELS } from "@/lib/payors/report-reasons";
 import { orgSettings } from "@/lib/services/clients";
 import { requirePageCtx } from "@/lib/server/page-session";
 
@@ -49,7 +52,10 @@ export default async function PayorsPage({
     });
     return { payors, docs, statesServed: orgSettings(org.settings).statesServed };
   });
-  const canVerify = can(ctx.role, "payor:verify");
+  const canCheck = can(ctx.role, "payor:verify");
+  // Verifying rules is Yoma's curation job: only platform curators see those controls (the API re-checks).
+  const curator = ctx.isPlatformCurator && canCheck;
+  const reports = curator ? await listOpenReports(ctx) : [];
   const demo = isDemo();
   // The version the payor shows, else when we got the copy; null when there is no copy at all.
   const currentLabel = (s: { versionLabel: string | null; fetchedAt: Date; origin: string } | undefined) =>
@@ -81,11 +87,57 @@ export default async function PayorsPage({
   return (
     <>
       <h1>Payor rules</h1>
-      <p className="alert warn">
-        Every rule carries its evidence. A rule becomes verified only when a BCBA matches it to a sentence in
-        the current official document, and it falls back to &quot;needs re-check&quot; when that document
-        changes, breaks, or reaches its next scheduled revision. Unverified rules only ever produce warnings.
+      <p className="alert warn" data-testid="payor-intro">
+        These rules come from each payor&apos;s official documents, and each one shows the sentence it came
+        from. &quot;Unverified&quot; means Yoma&apos;s reviewers have not yet confirmed the rule against the
+        current document, so it only ever produces warnings, never a block. If a rule doesn&apos;t match what
+        you&apos;re seeing in a benefits check, an authorization letter, or a denial, use &quot;Report a
+        problem&quot; on that rule.
       </p>
+      {curator && (
+        <div className="panel" data-testid="open-reports">
+          <h2 style={{ marginTop: 0 }}>Open rule reports</h2>
+          <p className="muted">
+            You are signed in as a Yoma rule reviewer. Verify controls appear on each rule below.
+          </p>
+          {reports.length ? (
+            <div className="table-wrap">
+              <table className="stack">
+                <thead>
+                  <tr>
+                    <th>Reported</th>
+                    <th>Rule</th>
+                    <th>What&apos;s wrong</th>
+                    <th>Note</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {reports.map((r) => (
+                    <tr key={r.id} data-report={r.id}>
+                      <td className="muted" data-label="Reported">
+                        {toDay(r.createdAt)}
+                      </td>
+                      <td data-label="Rule">
+                        {r.payorName ?? "Unknown payor"}: {r.ruleType?.replace(/_/g, " ") ?? r.lineageKey}
+                      </td>
+                      <td data-label="What's wrong">{REPORT_REASON_LABELS[r.reason] ?? r.reason}</td>
+                      <td data-label="Note" style={{ whiteSpace: "pre-wrap" }}>
+                        {r.note || <span className="muted">None</span>}
+                      </td>
+                      <td data-label="">
+                        <ResolveReport reportId={r.id} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="muted">No open reports.</p>
+          )}
+        </div>
+      )}
       <div className="row" style={{ marginBottom: 8 }}>
         <span className="badge verified">{count("verified")} verified</span>
         <span className="badge stale">{count("stale")} need re-check</span>
@@ -144,7 +196,7 @@ export default async function PayorsPage({
           Checked daily. A new version, a broken link, or a change-log entry for a cited section flags the
           affected rules.
         </p>
-        {canVerify && <CheckSourcesButton />}
+        {canCheck && <CheckSourcesButton />}
         <div className="table-wrap">
           <table className="stack">
             <thead>
@@ -180,18 +232,20 @@ export default async function PayorsPage({
                           ) : (
                             d.name
                           )}
-                          {d.secondary && <div className="muted">Secondary source: cannot verify a rule</div>}
+                          {d.secondary && (
+                            <div className="muted">Secondary source: never enough to verify a rule</div>
+                          )}
                           {uploadOnly && (
                             <div className="muted" data-testid={`upload-note-${d.key}`}>
                               No public copy to watch.{" "}
                               {s?.origin === "upload"
-                                ? `Official copy uploaded ${toDay(s.fetchedAt)}.${demo ? "" : " Upload the new edition when the payor publishes one."}`
-                                : demo
-                                  ? "Uploads are turned off on the demo site, so rules that cite this document cannot be verified here."
-                                  : "Upload the official copy to verify rules against it."}
+                                ? `Official copy on file from ${toDay(s.fetchedAt)}.${curator && !demo ? " Upload the new edition when the payor publishes one." : ""}`
+                                : curator && !demo
+                                  ? "Upload the official copy to verify rules against it."
+                                  : "Yoma's reviewers check this document by hand."}
                             </div>
                           )}
-                          {uploadOnly && canVerify && !demo && (
+                          {uploadOnly && curator && !demo && (
                             <details>
                               <summary className="muted">Upload official copy</summary>
                               <p className="muted">
@@ -272,7 +326,7 @@ export default async function PayorsPage({
           {g.payors.map((p) => {
             const stale = p.rules.filter((r) => r.trust?.status === "stale").length;
             const verifiedCount = p.rules.filter((r) => r.verified).length;
-            // Documents this payor's rules cite, listed first in the verify dialog.
+            // Documents this payor's rules cite, listed first in the curator's verify dialog.
             const citedIds = [
               ...new Set(p.rules.map((r) => (r.source.key ? docByKey.get(r.source.key)?.id : undefined))),
             ].filter((x): x is string => !!x);
@@ -315,7 +369,7 @@ export default async function PayorsPage({
                       <tr>
                         <th>Type</th>
                         <th>Parameters</th>
-                        <th>Source, evidence and verification</th>
+                        <th>Source and status</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -341,7 +395,7 @@ export default async function PayorsPage({
                             <td>
                               <RuleSource r={r} inheritedName={payorName(r.inheritedFrom)} />
                               <div style={{ marginTop: 6 }}>
-                                {canVerify && !r.inheritedFrom && (
+                                {curator && !r.inheritedFrom && (
                                   <VerifyRule
                                     ruleId={r.id}
                                     verified={r.verified}
@@ -355,8 +409,9 @@ export default async function PayorsPage({
                                   />
                                 )}
                                 {r.inheritedFrom && (
-                                  <span className="muted">Verified through {payorName(r.inheritedFrom)}</span>
+                                  <div className="muted">Status follows {payorName(r.inheritedFrom)}</div>
                                 )}
+                                {!curator && <ReportRule ruleId={r.id} />}
                               </div>
                             </td>
                           </tr>

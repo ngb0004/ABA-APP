@@ -3,6 +3,7 @@
  * deleted and re-created with deterministic IDs. Synthetic data only.
  */
 import { Prisma, PrismaClient } from "@prisma/client";
+import { setPlatformCurator } from "../../src/lib/auth/curator";
 import { hashPassword } from "../../src/lib/auth/local";
 import { withOrg, type Tx } from "../../src/lib/db";
 import { addMonths, toDay, type Day } from "../../src/lib/dates";
@@ -38,9 +39,29 @@ const ORG_TABLES = [
   "goal_template",
 ];
 
+/**
+ * The synthetic curator gets the platform flag the same way staff do: setPlatformCurator() over the
+ * owner connection (the database rejects the app role changing it). Audit-logged like any grant.
+ */
+async function seedCurators(org: SynOrg) {
+  const curators = org.users.filter((u) => u.platformCurator);
+  if (!curators.length) return;
+  const url = process.env.DIRECT_DATABASE_URL;
+  if (!url) {
+    console.warn("DIRECT_DATABASE_URL is not set: the synthetic curator account is not a curator.");
+    return;
+  }
+  const owner = new PrismaClient({ datasourceUrl: url, errorFormat: "minimal" });
+  try {
+    for (const u of curators) await setPlatformCurator(owner, u.email, true, "seed");
+  } finally {
+    await owner.$disconnect();
+  }
+}
+
 /** seededAsOf marks the dataset date; it commits with the org's data, so it also marks a completed seed. */
-export async function seedOrg(org: SynOrg, asOf: Day) {
-  const ctx = { orgId: org.id, userId: null, role: null };
+export async function seedOrg(fullOrg: SynOrg, asOf: Day) {
+  const ctx = { orgId: fullOrg.id, userId: null, role: null };
   const prisma = new PrismaClient({ datasourceUrl: process.env.DATABASE_URL });
   // Hosted demo: the password comes from the host's settings (never the one in this repo),
   // and each user sets up their own authenticator on first sign-in.
@@ -48,6 +69,8 @@ export async function seedOrg(org: SynOrg, asOf: Day) {
   const demoPassword = process.env.DEMO_PASSWORD ?? "";
   if (demo && demoPassword.length < 12)
     throw new Error("DEMO_PASSWORD (12+ characters) is required in demo mode");
+  // The hosted demo has no rule curator: a shared password must never verify payor rules.
+  const org = demo ? { ...fullOrg, users: fullOrg.users.filter((u) => !u.platformCurator) } : fullOrg;
   const creds = (u: SynOrg["users"][number]) => ({
     passwordHash: hashPassword(demo ? demoPassword : u.password),
     totpSecret: demo ? null : u.totpSecret,
@@ -68,6 +91,7 @@ export async function seedOrg(org: SynOrg, asOf: Day) {
   // Everyone signed in to this practice signs in again after a reload (including people added in Settings).
   await prisma.authSession.deleteMany({ where: { orgId: org.id } });
   await prisma.$disconnect();
+  await seedCurators(org);
 
   await withOrg(ctx, async (tx) => {
     for (const t of ORG_TABLES)
@@ -321,7 +345,9 @@ export async function seedAll(asOf: Day = toDay(new Date())) {
 if (process.argv[1] && /seed\/synthetic\/index\.ts$/.test(process.argv[1])) {
   seedAll()
     .then((ds) => {
-      const users = ds.orgs.flatMap((o) => o.users);
+      const users = ds.orgs
+        .flatMap((o) => o.users)
+        .filter((u) => process.env.DEMO_MODE !== "true" || !u.platformCurator);
       console.log(
         `Seeded ${ds.orgs.length} synthetic orgs, ${ds.orgs.reduce((n, o) => n + o.clients.length, 0)} synthetic clients (asOf ${ds.asOf}).`,
       );
@@ -330,7 +356,8 @@ if (process.argv[1] && /seed\/synthetic\/index\.ts$/.test(process.argv[1])) {
           ? "Demo logins (password: DEMO_PASSWORD; each person sets up an authenticator app at first sign-in):"
           : "Demo logins (synthetic only; password for all: synthetic-demo-only). Get a TOTP code with: pnpm totp <email>",
       );
-      for (const u of users) console.log(`  ${u.role.padEnd(16)} ${u.email}`);
+      for (const u of users)
+        console.log(`  ${u.role.padEnd(16)} ${u.email}${u.platformCurator ? " (platform curator)" : ""}`);
       process.exit(0);
     })
     .catch((e) => {

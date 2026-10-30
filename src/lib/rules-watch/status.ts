@@ -103,7 +103,7 @@ export function computeTrust(input: {
     const verifiedUntil = [ceiling, latest?.nextRevision].filter(Boolean).sort()[0]!;
     if (doc.health === "broken")
       reasons.push(
-        `Source is unreachable${doc.lastError ? ` (${doc.lastError})` : ""}; re-check when it is back`,
+        `Source is unreachable${doc.lastError ? ` (${doc.lastError})` : ""}; to be re-checked when it is back`,
       );
     if (!watched) {
       // Uploaded by hand: expiry (above) is the only clock.
@@ -117,7 +117,7 @@ export function computeTrust(input: {
         reasons.push("The document changed and the quoted sentence no longer appears");
     }
     if (today >= verifiedUntil)
-      reasons.push(`Verification expired ${verifiedUntil}; re-check the current document`);
+      reasons.push(`Verification expired ${verifiedUntil}; awaiting a re-check against the current document`);
     if (reasons.length)
       return { status: "stale", tier: current.tier, reasons, verifiedUntil, verifiedAt: current.createdAt };
     return {
@@ -129,7 +129,7 @@ export function computeTrust(input: {
     };
   }
 
-  const secondaryNote = `Only a secondary source (${doc.name}); verify against an official document`;
+  const secondaryNote = `Only a secondary source (${doc.name}); not yet confirmed against an official document`;
   if (doc.secondary && input.relatedChanges?.length)
     return {
       status: "stale",
@@ -166,7 +166,7 @@ export function computeTrust(input: {
       status: "stale",
       tier: null,
       reasons: [
-        `New version since the one cited (${latest!.versionLabel ?? latest!.effectiveDate}); re-check`,
+        `New version since the one cited (${latest!.versionLabel ?? latest!.effectiveDate}); awaiting a re-check`,
       ],
       verifiedUntil: null,
       verifiedAt: null,
@@ -176,7 +176,9 @@ export function computeTrust(input: {
     return {
       status: "stale",
       tier: null,
-      reasons: ["The document's content changed since it was first fetched; re-check the rule against it"],
+      reasons: [
+        "The document's content changed since it was first fetched; awaiting a re-check of the rule against it",
+      ],
       verifiedUntil: null,
       verifiedAt: null,
     };
@@ -190,7 +192,7 @@ export function computeTrust(input: {
     tier: null,
     reasons: [
       doc.watched === false && !latest
-        ? "Official document with no public copy: upload it under Sources, then verify"
+        ? "Official document with no public copy; not yet confirmed by Yoma's reviewers"
         : "Cited official document, not yet checked",
       ...note,
     ],

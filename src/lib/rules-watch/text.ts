@@ -153,3 +153,36 @@ export function looksLikeClientRecord(text: string): boolean {
     if (looksLikeName(m[1]!) && looksLikeName(m[2]!) && !m[3]) return true;
   return false;
 }
+
+/** A member, subscriber, or Medicaid ID, or an SSN: synthetic SYN- ids, letter prefixes with long digit runs. */
+const ID_PATTERNS: RegExp[] = [
+  /\bSYN-[A-Z0-9-]+/i,
+  /\b[A-Z]{1,4}-?\d{6,}\b/i,
+  /\b\d{8,}\b/,
+  /\b\d{3}-\d{2}-\d{4}\b/,
+  /\b(?:member|subscriber|medicaid|patient|client|beneficiary|policy)\s*(?:id|number|no\.?|#)\s*(?:is|was)?\s*[:#]?\s*[A-Z]{0,4}-?\d{4,}/i,
+];
+const BIRTH_WORDS = /\b(?:dob|d\.o\.b\.?|date of birth|birth ?date|birthday|born (?:on|in))\b/i;
+/** "my client Jane Doe", "for patient John Smith": a person word followed by a capitalized first and last name. */
+const PERSON_THEN_NAME =
+  /\b(?:client|patient|child|member|learner|kid|son|daughter|subscriber|beneficiary|student)(?:'s)?\s+(?:named\s+|is\s+)?([A-Z][a-z'-]+)\s+([A-Z][a-z'-]+)/g;
+const NOT_NAMES = new Set(
+  "name id plan plans treatment medicaid medicare tricare insurance services service record records letter policy portal handbook manual benefits benefit coverage health care advantage choice select".split(
+    " ",
+  ),
+);
+
+/**
+ * A rule problem report is about the payor's rule, never about a client. Notes that look like they
+ * carry a client's name, date of birth, or member ID are rejected (not stored). Errs toward rejecting.
+ */
+export function looksLikePhiInNote(note: string): boolean {
+  const t = normalizeText(note);
+  if (!t) return false;
+  if (looksLikeClientRecord(t)) return true;
+  if (BIRTH_WORDS.test(t)) return true;
+  if (ID_PATTERNS.some((re) => re.test(t))) return true;
+  for (const m of t.matchAll(PERSON_THEN_NAME))
+    if (!NOT_NAMES.has(m[1]!.toLowerCase()) && !NOT_NAMES.has(m[2]!.toLowerCase())) return true;
+  return false;
+}

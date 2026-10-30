@@ -19,6 +19,8 @@ export type SessionInfo = {
   orgId: string | null;
   role: Role | null;
   mfaVerified: boolean;
+  /** Platform curator flag, read from the user row on every request (never stored on the session). */
+  isPlatformCurator: boolean;
 };
 
 /** Step 1: password. Creates a session that is not usable until MFA passes. */
@@ -93,7 +95,11 @@ async function recordMfaFailure(s: SessionInfo, action: string) {
 
 /** After a correct code: bind the session to the user's org and role. */
 async function completeSignIn(s: SessionInfo): Promise<SessionInfo> {
-  await db().user.update({ where: { id: s.userId }, data: { failedMfaCount: 0, mfaLockedUntil: null } });
+  const user = await db().user.update({
+    where: { id: s.userId },
+    data: { failedMfaCount: 0, mfaLockedUntil: null },
+    select: { isPlatformCurator: true },
+  });
   const memberships = await withUser(s.userId, (tx) =>
     tx.membership.findMany({ where: { userId: s.userId } }),
   );
@@ -113,6 +119,7 @@ async function completeSignIn(s: SessionInfo): Promise<SessionInfo> {
     orgId: updated.orgId,
     role: updated.role,
     mfaVerified: true,
+    isPlatformCurator: user.isPlatformCurator,
   };
 }
 
@@ -182,9 +189,15 @@ export async function getSessionByToken(
   opts: { allowUnverified?: boolean } = {},
 ): Promise<SessionInfo | null> {
   if (!token) return null;
-  const s = await db().authSession.findUnique({ where: { tokenHash: hashToken(token) } });
-  if (!s || s.expiresAt < new Date()) return null;
+  const row = await db().authSession.findUnique({
+    where: { tokenHash: hashToken(token) },
+    include: { user: { select: { isPlatformCurator: true } } },
+  });
+  if (!row || row.expiresAt < new Date()) return null;
+  const { user, ...s } = row;
   if (!s.mfaVerified && !opts.allowUnverified) return null;
+  // Curator rights need a fully signed-in session.
+  const isPlatformCurator = s.mfaVerified && user.isPlatformCurator;
   if (s.orgId) {
     // The membership is the authority, not the copy on the session: a removed or re-roled
     // person loses access (or gets the new role) on their next request.
@@ -195,9 +208,23 @@ export async function getSessionByToken(
       await db().authSession.deleteMany({ where: { id: s.id } });
       return null;
     }
-    return { id: s.id, userId: s.userId, orgId: s.orgId, role: m.role, mfaVerified: s.mfaVerified };
+    return {
+      id: s.id,
+      userId: s.userId,
+      orgId: s.orgId,
+      role: m.role,
+      mfaVerified: s.mfaVerified,
+      isPlatformCurator,
+    };
   }
-  return { id: s.id, userId: s.userId, orgId: s.orgId, role: s.role, mfaVerified: s.mfaVerified };
+  return {
+    id: s.id,
+    userId: s.userId,
+    orgId: s.orgId,
+    role: s.role,
+    mfaVerified: s.mfaVerified,
+    isPlatformCurator,
+  };
 }
 
 export async function logout(token: string | undefined) {
@@ -218,5 +245,5 @@ export function tokenFromCookieHeader(header: string | null): string | null {
 export async function ctxFromRequest(req: Request): Promise<OrgCtx> {
   const s = await getSessionByToken(tokenFromCookieHeader(req.headers.get("cookie")));
   if (!s || !s.orgId) throw new HttpError(401, "Not authenticated");
-  return { orgId: s.orgId, userId: s.userId, role: s.role };
+  return { orgId: s.orgId, userId: s.userId, role: s.role, isPlatformCurator: s.isPlatformCurator };
 }

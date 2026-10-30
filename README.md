@@ -26,6 +26,9 @@ Sign in with a demo account (password `synthetic-demo-only` for all), then enter
 | Auth coordinator             | `coordinator@sample-practice.test` |
 | Parent                       | `parent@sample-practice.test`      |
 | BCBA, second org (isolation) | `bcba@other-practice.test`         |
+| Yoma rule reviewer (curator) | `curator@yoma-staff.test`          |
+
+The rule reviewer is a BCBA member of the sample practice with the platform curator flag: only curators verify payor rules and review "Report a problem" reports. The flag is set only from the command line: `pnpm curator:set <email> [--revoke]` (uses `DIRECT_DATABASE_URL`). Not created on the hosted demo.
 
 The AI runs on a deterministic mock by default (`LLM_PROVIDER=mock`). To draft with Claude on synthetic data, set `LLM_PROVIDER=anthropic`, `LLM_MODEL`, and `ANTHROPIC_API_KEY` in `.env`.
 

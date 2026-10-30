@@ -38,6 +38,11 @@ export type SynUser = {
   password: string;
   totpSecret: string;
   role: "BCBA" | "BCaBA" | "RBT" | "AUTH_COORDINATOR" | "PARENT";
+  /**
+   * Yoma staff who curate the payor rule library (not an org role). Signing in needs an org, so the
+   * synthetic curator is a BCBA member of the sample practice. Not created on the hosted demo.
+   */
+  platformCurator?: boolean;
 };
 export type SynSession = {
   id: string;
@@ -344,6 +349,15 @@ export function buildDataset(asOf: Day): SynDataset {
       password: DEMO_PASSWORD,
       totpSecret: "MFRGGZDFMZTWQ2LKNNWG23TPOBYXE43U",
       role: "PARENT",
+    },
+    {
+      id: sid("user:curator"),
+      email: "curator@yoma-staff.test",
+      name: "Robin Curator (Yoma rule reviewer)",
+      password: DEMO_PASSWORD,
+      totpSecret: "NBSWY3DPO5XXE3DEMFZGK4TJNZTWC3DF",
+      role: "BCBA",
+      platformCurator: true,
     },
   ];
 

@@ -76,3 +76,53 @@ test("the payor rules page groups insurers by state, with nationwide payors on t
   await expect(page).toHaveURL(/states=all/);
   await expect(page.getByTestId("state-filter")).toContainText("Showing every state");
 });
+
+test("a BCBA sees payor rules read-only and can report a problem; a curator reviews reports and verifies", async ({
+  page,
+}) => {
+  await login(page, "bcba@sample-practice.test");
+  await page.goto("/payors");
+  await expect(page.getByTestId("payor-intro")).toContainText("Yoma's reviewers have not yet confirmed");
+  await expect(page.getByTestId("open-reports")).toHaveCount(0);
+  const ga = page.locator('[data-payor="ga_medicaid"]');
+  if (!(await ga.evaluate((el) => (el as HTMLDetailsElement).open)))
+    await ga.locator("summary").first().click();
+  // Read-only: no verify controls, the source sentence collapsed, one action per rule.
+  await expect(ga.locator('[data-testid^="verify-"]')).toHaveCount(0);
+  await expect(page.getByText("Verify with a quote")).toHaveCount(0);
+  const quote = ga.getByTestId("rule-quote").first();
+  await expect(quote.locator("blockquote")).toBeHidden();
+  await quote.locator("summary").click();
+  await expect(quote.locator("blockquote")).toBeVisible();
+  const row = ga.locator("[data-rule]").first();
+  const ruleId = (await row.getAttribute("data-rule"))!;
+  // The verify API refuses a practice BCBA.
+  expect(
+    (await page.request.post(`/api/payors/rules/${ruleId}/verify`, { data: { quote: "x" } })).status(),
+  ).toBe(403);
+  await row.getByTestId(`report-${ruleId}`).click();
+  const form = row.getByTestId(`report-form-${ruleId}`);
+  await expect(form).toContainText("Don't include client names");
+  await form.getByLabel("What's wrong?").selectOption("doesnt_match_letter");
+  await form.getByLabel("Details (optional)").fill("Denial for client Alpha Testchild says something else");
+  await form.getByTestId(`submit-report-${ruleId}`).click();
+  await expect(form.getByRole("alert")).toContainText("looks like it has a client's information");
+  await form
+    .getByLabel("Details (optional)")
+    .fill("Our denial letter says reassessments are due every 6 months.");
+  await form.getByTestId(`submit-report-${ruleId}`).click();
+  await expect(row.getByTestId(`report-sent-${ruleId}`)).toBeVisible();
+
+  // The curator (a BCBA of the sample practice with the platform flag) sees the report and verify controls.
+  await page.context().clearCookies();
+  await login(page, "curator@yoma-staff.test");
+  await page.goto("/payors");
+  const reports = page.getByTestId("open-reports");
+  await expect(reports).toContainText("Our denial letter says reassessments are due every 6 months.");
+  await expect(reports).toContainText("Doesn't match my authorization letter or denial");
+  await expect(page.locator(`[data-rule="${ruleId}"] [data-testid="verify-${ruleId}"]`)).toBeAttached();
+  await expect(page.locator(`[data-testid="report-${ruleId}"]`)).toHaveCount(0);
+  page.once("dialog", (d) => d.accept("Checked against the current manual; no change needed"));
+  await reports.locator('[data-testid^="resolve-"]').first().click();
+  await expect(reports).toContainText("No open reports");
+});

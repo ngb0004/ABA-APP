@@ -6,11 +6,13 @@ import type { OrgCtx } from "../db";
 import { loadOr404 } from "./not-found";
 
 /** For server components: a fully authenticated org context, or redirect to login. */
-export async function requirePageCtx(): Promise<OrgCtx & { role: NonNullable<OrgCtx["role"]> }> {
+export async function requirePageCtx(): Promise<
+  OrgCtx & { role: NonNullable<OrgCtx["role"]>; isPlatformCurator: boolean }
+> {
   const token = (await cookies()).get(SESSION_COOKIE)?.value;
   const s = await getSessionByToken(token);
   if (!s || !s.orgId || !s.role) redirect("/login");
-  return { orgId: s.orgId, userId: s.userId, role: s.role };
+  return { orgId: s.orgId, userId: s.userId, role: s.role, isPlatformCurator: s.isPlatformCurator };
 }
 
 export { asOfToday } from "./as-of";
