@@ -303,3 +303,67 @@ test("goal data entry by an RBT, and practice settings and team by a BCBA", asyn
   await row.getByRole("menuitem", { name: "Remove from practice" }).click();
   await expect(page.getByTestId("team")).not.toContainText("echo.newhire@sample-practice.test");
 });
+
+test("a BCBA removes a goal added by mistake and discontinues a goal with data, from the goal's one menu", async ({
+  page,
+}) => {
+  await login(page, "bcba@sample-practice.test");
+  const client = await api(page, "POST", "/api/clients", {
+    firstName: "Echo",
+    lastName: "Testchild",
+    dob: "2021-03-04",
+    serviceAddress: { line1: "5 Fiction Way", city: "Example City", state: "GA", zip: "30000" },
+    guardians: [{ name: "Sam Testchild", relationship: "father", legalCustody: true, canSign: true }],
+    fictional: true,
+  });
+  await page.goto(`/clients/${client.id}/goals`);
+  await page.getByText(/Browse 18 domains/).click();
+  const library = page.getByRole("button", { name: "Add", exact: true });
+  await library.nth(0).click();
+  await expect(page.getByTestId("goal-menu-1")).toBeVisible();
+  await library.nth(1).click();
+  await expect(page.getByTestId("goal-menu-2")).toBeVisible();
+
+  // One menu per goal card; no loose Edit button.
+  await expect(page.getByRole("button", { name: "Edit goal" })).toHaveCount(0);
+
+  // Goal 1 gets data, so it can only be discontinued.
+  const box = page.getByTestId("goal-data-1");
+  await box.locator("summary").click();
+  const form = page.getByTestId("data-form-1");
+  await form.getByLabel("Date").fill("2026-10-20");
+  await form.getByLabel(/Percent correct|Count per session|Minutes/).fill("40");
+  await form.getByTestId("data-form-1-submit").click();
+  await expect(box).toContainText("2026-10-20");
+  await page.getByRole("button", { name: "Actions for Goal 1" }).click();
+  await expect(page.getByRole("menuitem", { name: "Remove" })).toHaveCount(0);
+  await page.getByRole("menuitem", { name: "Discontinue…" }).click();
+  const dialog = page.getByRole("dialog", { name: "Discontinue Goal 1" });
+  await dialog.getByLabel(/^Reason/).fill("Family asked to focus on other goals.");
+  await dialog.getByLabel("Date discontinued").fill("2026-10-21");
+  await dialog.getByRole("button", { name: "Discontinue goal" }).click();
+  await expect(page.getByTestId("discontinued-1")).toContainText("discontinued 2026-10-21");
+  await expect(page.getByTestId("discontinued-reason-1")).toContainText(
+    "Family asked to focus on other goals.",
+  );
+  // The data stays.
+  await expect(page.getByTestId("goal-data-1")).toContainText("1 points");
+
+  // Goal 2 was added by mistake: Remove, after a confirm.
+  page.once("dialog", (d) => {
+    expect(d.message()).toBe("Remove this goal? It was added by mistake and has no data.");
+    void d.accept();
+  });
+  await page.getByRole("button", { name: "Actions for Goal 2" }).click();
+  await page.getByRole("menuitem", { name: "Remove" }).click();
+  await expect(page.getByTestId("goal-menu-2")).toHaveCount(0);
+
+  // Resume puts goal 1 back in progress.
+  await page.getByRole("button", { name: "Actions for Goal 1" }).click();
+  await page.getByRole("menuitem", { name: "Resume" }).click();
+  await page
+    .getByRole("dialog", { name: "Resume Goal 1?" })
+    .getByRole("button", { name: "Resume goal" })
+    .click();
+  await expect(page.getByTestId("discontinued-1")).toHaveCount(0);
+});

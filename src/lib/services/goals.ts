@@ -12,6 +12,7 @@ import { requirePermission } from "../permissions";
 import { buildSourcedContext, loadClientData } from "../plan/context";
 import { goalGraphSvg } from "../plan/graphs";
 import { flatProgress } from "../plan/progress";
+import { goalRemovalBlocker, loadGoalRemovalContext } from "./plans";
 
 export async function goalsView(ctx: OrgCtx, clientId: string, asOf: Day) {
   requirePermission(ctx.role, "client:read");
@@ -25,6 +26,7 @@ export async function goalsView(ctx: OrgCtx, clientId: string, asOf: Day) {
         return renderTokens(t.replace(/\{\{[^}]+\}\}/g, "[missing value]"), sourced, "html");
       }
     };
+    const removal = await loadGoalRemovalContext(tx, clientId);
     const templates = await tx.goalTemplate.findMany({ orderBy: [{ domainNumber: "asc" }, { tier: "asc" }] });
     const latest = data.administrations.at(-1);
     const suggestions = latest
@@ -56,6 +58,11 @@ export async function goalsView(ctx: OrgCtx, clientId: string, asOf: Day) {
           objectiveHtml: render(g.objective),
           rationaleHtml: render(g.rationale),
           placeholders: unresolvedPlaceholders(g.objective, g.rationale, g.sd, g.targetBehavior),
+          // Why "Remove" is not offered (the server applies the same rule), or null when it is.
+          removeBlocker: goalRemovalBlocker(
+            removal.goals.find((r) => r.id === g.id)!,
+            removal,
+          ),
           flat: flatProgress(pts, g.measure, asOf).flat,
           graph: goalGraphSvg({
             title: `Goal ${g.ordinal}: ${g.domain}`,

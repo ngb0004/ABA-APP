@@ -162,6 +162,10 @@ function goalRecordTable(g: PlanBundle["goals"][number]): string {
         : "not locked",
     ],
   ];
+  if (g.progressStatus === "discontinued" && g.discontinuedOn) {
+    rows.push(["Discontinued on", d(g.discontinuedOn)]);
+    if (g.discontinuedReason) rows.push(["Reason discontinued (BCBA)", g.discontinuedReason]);
+  }
   const settings = (g.settings as string[] | null) ?? [];
   if (settings.length) rows.push(["Settings", settings.join(", ")]);
   if (g.barriers.trim()) rows.push(["Barriers", g.barriers]);

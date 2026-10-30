@@ -9,6 +9,7 @@ import { withOrg, type OrgCtx, type Tx } from "../db";
 import { toDay, type Day } from "../dates";
 import { renderTokens, validateBcbaText } from "../firewall";
 import { unresolvedPlaceholders } from "../goals/checks";
+import { goalTokenOrdinals, renumberGoalTokens } from "../goals/renumber";
 import { pseudonymNames } from "../intake/derive";
 import { INTAKE_FIELDS, isNa, type IntakeAnswers } from "../intake/schema";
 import { HttpError } from "../log";
@@ -172,6 +173,7 @@ export async function planView(ctx: OrgCtx, planId: string, asOf: Day) {
       bcbaOnly: SECTION_BY_KEY.get(s.key)?.bcbaOnly ?? false,
       conditional: !!SECTION_BY_KEY.get(s.key)?.condition,
       notApplicableReason: ((s.items ?? {}) as Record<string, ItemState>)[NOT_APPLICABLE_ITEM]?.note ?? null,
+      needsRedraft: !!((s.items ?? {}) as Record<string, ItemState>)[NEEDS_REDRAFT_ITEM],
     }));
     const goals = b.goals.map((g) => ({
       ...g,
@@ -277,7 +279,14 @@ export async function draftSection(ctx: OrgCtx, planId: string, key: string, asO
       );
     await tx.planSection.update({
       where: { id: prep.sectionId },
-      data: { aiDraft: text, content: text, state: "draft", approvedAt: null, approvedById: null },
+      data: {
+        aiDraft: text,
+        content: text,
+        state: "draft",
+        approvedAt: null,
+        approvedById: null,
+        items: withoutRedraftFlag(current.items),
+      },
     });
     await tx.planSectionRevision.create({
       data: {
@@ -294,6 +303,20 @@ export async function draftSection(ctx: OrgCtx, planId: string, key: string, asO
 }
 
 // ---------------------------------------------------------------- edit / items / approve
+
+/**
+ * Where a section is marked for redraft after a goal it covered was removed. Drafting it again
+ * or editing it clears the mark; it cannot be approved while marked.
+ */
+export const NEEDS_REDRAFT_ITEM = "_needs_redraft";
+export const NEEDS_REDRAFT_NOTE =
+  "A goal was removed after this section was written. Draft it again or edit it before approving.";
+
+function withoutRedraftFlag(items: unknown): Prisma.InputJsonValue {
+  const out = { ...((items ?? {}) as Record<string, ItemState>) };
+  delete out[NEEDS_REDRAFT_ITEM];
+  return out as Prisma.InputJsonValue;
+}
 
 function assertOpen(state: string, doing: string) {
   if (state === "approved") throw new HttpError(409, `Section is approved. Reopen it before ${doing}.`);
@@ -316,7 +339,7 @@ export async function editSection(ctx: OrgCtx, planId: string, key: string, cont
       );
     await tx.planSection.update({
       where: { id: section.id },
-      data: { content: v.normalized, state: "edited" },
+      data: { content: v.normalized, state: "edited", items: withoutRedraftFlag(section.items) },
     });
     await tx.planSectionRevision.create({
       data: {
@@ -364,6 +387,8 @@ export async function approveSection(ctx: OrgCtx, planId: string, key: string, a
     assertOpen(section.state, "approving");
     const problems: string[] = [];
     if (!section.content.trim()) problems.push("Section has no content");
+    if (((section.items ?? {}) as Record<string, ItemState>)[NEEDS_REDRAFT_ITEM])
+      problems.push(NEEDS_REDRAFT_NOTE.replace(/\.$/, ""));
     const v = validateBcbaText(section.content, buildSourcedContext(b, asOf));
     if (!v.ok) problems.push(`Invalid value references: ${v.errors.map((e) => e.detail).join(", ")}`);
     const ph = unresolvedPlaceholders(section.content);
@@ -517,7 +542,14 @@ export async function updateGoal(
   },
 ) {
   requirePermission(ctx.role, "goal:write");
+  if (data.progressStatus === "discontinued")
+    throw new HttpError(422, "Use Discontinue in the goal's menu: it records the date and your reason.");
   return withOrg(ctx, async (tx) => {
+    if (data.progressStatus !== undefined) {
+      const cur = await tx.goal.findUniqueOrThrow({ where: { id: goalId } });
+      if (cur.progressStatus === "discontinued")
+        throw new HttpError(422, "This goal is discontinued. Use Resume in the goal's menu first.");
+    }
     // Changing what the goal says (including its dates) sends it back for approval;
     // status, barriers, settings, and a flat-progress explanation do not.
     const changesContent = [
@@ -590,6 +622,243 @@ export async function lockGoalBaseline(ctx: OrgCtx, goalId: string) {
     if (r.count === 0) throw new HttpError(409, "This goal's baseline is already locked");
     await audit(tx, { action: "goal:lock_baseline", entityType: "Goal", entityId: goalId, meta: { date } });
     return { value, date };
+  });
+}
+
+// ---------------------------------------------------------------- remove / discontinue
+
+/** What decides whether a goal can be removed: the client's goals and plans, with section history. */
+export async function loadGoalRemovalContext(tx: Tx, clientId: string) {
+  const goals = await tx.goal.findMany({
+    where: { clientId },
+    include: { _count: { select: { dataPoints: true } } },
+    orderBy: { ordinal: "asc" },
+  });
+  const plans = await tx.plan.findMany({
+    where: { clientId },
+    include: {
+      packet: true,
+      sections: { include: { revisions: { select: { kind: true, createdAt: true } } } },
+    },
+  });
+  return { goals, plans };
+}
+type GoalRemovalContext = Awaited<ReturnType<typeof loadGoalRemovalContext>>;
+type RemovableGoal = GoalRemovalContext["goals"][number];
+
+/** True when a section includes the goal: its drafting context takes the goal, or its text refers to it. */
+function sectionCoversGoal(key: string, text: string, g: { ordinal: number; category: string }) {
+  const def = SECTION_BY_KEY.get(key);
+  const goalsFor = def?.context?.goals;
+  return (
+    goalsFor === true ||
+    (Array.isArray(goalsFor) && goalsFor.includes(g.category)) ||
+    !!def?.valuePrefixes.includes("goals.") ||
+    goalTokenOrdinals(text).includes(g.ordinal) ||
+    /\{\{\s*goals\./.test(text)
+  );
+}
+
+const DISCONTINUE_INSTEAD = "Discontinue it instead.";
+
+/**
+ * Why a goal cannot be removed, or null when it can: only a goal added by mistake (no data,
+ * never approved, never in an approved section, a finalized plan, or an exported packet) can go.
+ */
+export function goalRemovalBlocker(goal: RemovableGoal, rc: GoalRemovalContext): string | null {
+  if (goal._count.dataPoints > 0) return `This goal has data, so it can't be removed. ${DISCONTINUE_INSTEAD}`;
+  if (goal.baselineLockedAt)
+    return `This goal's baseline is locked, so it can't be removed. ${DISCONTINUE_INSTEAD}`;
+  if (goal.status === "approved" || goal.approvedAt)
+    return `This goal was approved, so it can't be removed. ${DISCONTINUE_INSTEAD}`;
+  const since = goal.createdAt;
+  for (const p of rc.plans) {
+    if (p.status === "finalized" && (!p.finalizedAt || p.finalizedAt >= since))
+      return `This goal is in a finalized plan, so it can't be removed. ${DISCONTINUE_INSTEAD}`;
+    const pk = p.packet;
+    if (
+      pk &&
+      (pk.status === "submitted" ||
+        (pk.exportedAt && pk.exportedAt >= since) ||
+        (pk.submittedAt && pk.submittedAt >= since))
+    )
+      return `This goal was in an exported packet, so it can't be removed. ${DISCONTINUE_INSTEAD}`;
+    for (const s of p.sections) {
+      if (!sectionCoversGoal(s.key, s.content, goal)) continue;
+      const approvedWithGoal =
+        s.revisions.some((r) => r.kind === "approve" && r.createdAt >= since) ||
+        (s.state === "approved" && (!s.approvedAt || s.approvedAt >= since));
+      if (approvedWithGoal)
+        return `This goal is part of an approved plan section, so it can't be removed. ${DISCONTINUE_INSTEAD}`;
+    }
+  }
+  // Removing renumbers later goals; approved text that refers to them by number must not change.
+  for (const p of rc.plans)
+    for (const s of p.sections)
+      if (
+        (s.state === "approved" || p.status === "finalized") &&
+        goalTokenOrdinals(s.content).some((k) => k > goal.ordinal)
+      )
+        return `A later goal is referred to in an approved plan section, and removing this one would renumber it. Reopen that section first, or discontinue this goal instead.`;
+  return null;
+}
+
+/** Remove a goal added by mistake. Later goals move down one; drafted sections that covered it are marked for redraft. */
+export async function removeGoal(ctx: OrgCtx, goalId: string) {
+  requirePermission(ctx.role, "goal:approve");
+  return withOrg(ctx, async (tx) => {
+    const { clientId } = await tx.goal.findUniqueOrThrow({
+      where: { id: goalId },
+      select: { clientId: true },
+    });
+    const rc = await loadGoalRemovalContext(tx, clientId);
+    const goal = rc.goals.find((g) => g.id === goalId)!;
+    const blocker = goalRemovalBlocker(goal, rc);
+    if (blocker) throw new HttpError(409, blocker);
+    const removed = goal.ordinal;
+
+    // Open sections written while the goal existed, or that refer to it or a later goal by number.
+    const toRedraft = rc.plans
+      .filter((p) => p.status !== "finalized")
+      .flatMap((p) => p.sections)
+      .filter((s) => (s.state === "draft" || s.state === "edited") && (s.content.trim() || s.aiDraft))
+      .filter((s) => {
+        const text = `${s.content}\n${s.aiDraft ?? ""}`;
+        return (
+          goalTokenOrdinals(text).some((k) => k >= removed) ||
+          (sectionCoversGoal(s.key, text, goal) &&
+            s.revisions.some(
+              (r) => (r.kind === "ai_draft" || r.kind === "edit") && r.createdAt >= goal.createdAt,
+            ))
+        );
+      });
+
+    await tx.goalPhaseChange.deleteMany({ where: { goalId } });
+    await tx.goal.updateMany({
+      where: { replacementForGoalId: goalId },
+      data: { replacementForGoalId: null },
+    });
+    await tx.goal.delete({ where: { id: goalId } });
+
+    const later = rc.goals.filter((g) => g.ordinal > removed);
+    const re = (t: string) => renumberGoalTokens(t, removed);
+    for (const g of later)
+      await tx.goal.update({
+        where: { id: g.id },
+        data: {
+          ordinal: g.ordinal - 1,
+          objective: re(g.objective),
+          rationale: re(g.rationale),
+          sd: re(g.sd),
+          targetBehavior: re(g.targetBehavior),
+          generalization: re(g.generalization),
+          barriers: re(g.barriers),
+          flatExplanation: g.flatExplanation === null ? null : re(g.flatExplanation),
+        },
+      });
+
+    for (const s of toRedraft) {
+      const content = re(s.content);
+      const aiDraft = s.aiDraft === null ? null : re(s.aiDraft);
+      await tx.planSection.update({
+        where: { id: s.id },
+        data: {
+          content,
+          aiDraft,
+          items: {
+            ...((s.items ?? {}) as Record<string, ItemState>),
+            [NEEDS_REDRAFT_ITEM]: { status: "none", note: NEEDS_REDRAFT_NOTE },
+          } as Prisma.InputJsonValue,
+        },
+      });
+      if (content !== s.content)
+        await tx.planSectionRevision.create({
+          data: {
+            orgId: ctx.orgId,
+            sectionId: s.id,
+            kind: "goal_removed",
+            content,
+            diff: lineDiff(s.content, content),
+            userId: ctx.userId,
+          },
+        });
+    }
+    // The goal's domain and category only: no goal text.
+    await audit(tx, {
+      action: "goal:remove",
+      entityType: "Goal",
+      entityId: goalId,
+      meta: {
+        clientId,
+        domain: goal.domain,
+        category: goal.category,
+        ordinal: removed,
+        renumbered: later.length,
+        sectionsToRedraft: toRedraft.length,
+      },
+    });
+  });
+}
+
+export const DISCONTINUE_REASON_MAX = 500;
+
+function isRealDay(s: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const d = new Date(`${s}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+}
+
+/** Discontinue a goal with history: its data and graph stay, reported as discontinued with the date and reason. */
+export async function discontinueGoal(
+  ctx: OrgCtx,
+  goalId: string,
+  input: { reason: string; date: Day },
+  asOf: Day,
+) {
+  requirePermission(ctx.role, "goal:write");
+  const reason = input.reason.trim();
+  if (!reason) throw new HttpError(422, "Say why the goal is being discontinued");
+  if (reason.length > DISCONTINUE_REASON_MAX)
+    throw new HttpError(422, `Keep the reason to ${DISCONTINUE_REASON_MAX} characters or fewer`);
+  if (/\{\{|\}\}/.test(reason))
+    throw new HttpError(422, "Write the reason in your own words, without value references");
+  if (!isRealDay(input.date)) throw new HttpError(422, "Use a real date (YYYY-MM-DD)");
+  if (input.date > asOf) throw new HttpError(422, "The date discontinued cannot be after today");
+  return withOrg(ctx, async (tx) => {
+    const g = await tx.goal.findUniqueOrThrow({ where: { id: goalId } });
+    if (g.progressStatus === "discontinued") throw new HttpError(409, "This goal is already discontinued");
+    if (g.introducedAt && input.date < toDay(g.introducedAt))
+      throw new HttpError(422, "The date discontinued cannot be before the date introduced");
+    await tx.goal.update({
+      where: { id: goalId },
+      data: {
+        progressStatus: "discontinued",
+        discontinuedOn: new Date(`${input.date}T00:00:00Z`),
+        discontinuedReason: reason,
+      },
+    });
+    await audit(tx, {
+      action: "goal:discontinue",
+      entityType: "Goal",
+      entityId: goalId,
+      meta: { from: g.progressStatus, reasonHash: sha256(reason) },
+    });
+  });
+}
+
+/** Put a discontinued goal back in progress; the date and reason are cleared (the audit log keeps the history). */
+export async function resumeGoal(ctx: OrgCtx, goalId: string) {
+  requirePermission(ctx.role, "goal:write");
+  return withOrg(ctx, async (tx) => {
+    const r = await tx.goal.updateMany({
+      where: { id: goalId, progressStatus: "discontinued" },
+      data: { progressStatus: "in_progress", discontinuedOn: null, discontinuedReason: null },
+    });
+    if (r.count === 0) {
+      await tx.goal.findUniqueOrThrow({ where: { id: goalId } });
+      throw new HttpError(409, "This goal is not discontinued");
+    }
+    await audit(tx, { action: "goal:resume", entityType: "Goal", entityId: goalId });
   });
 }
 

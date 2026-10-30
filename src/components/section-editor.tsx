@@ -21,6 +21,8 @@ export function SectionCard(props: {
     /** Conditional sections (group, school, telehealth) can be marked not applicable. */
     conditional?: boolean;
     notApplicableReason?: string | null;
+    /** A goal this section covered was removed: draft again or edit before approving. */
+    needsRedraft?: boolean;
   };
   tokens: { key: string; label: string; display: string }[];
   canDraft: boolean;
@@ -93,6 +95,11 @@ export function SectionCard(props: {
           {na ? "not applicable" : shown.state}
         </span>
       </h2>
+      {s.needsRedraft && !na && (
+        <div className="alert warn" data-testid={`needs-redraft-${s.key}`}>
+          A goal was removed after this section was written. Draft it again or edit it before approving.
+        </div>
+      )}
       {na ? (
         <p className="muted" data-testid={`na-${s.key}`}>
           Not applicable to this request{s.notApplicableReason ? `: ${s.notApplicableReason}` : ""}.

@@ -88,6 +88,7 @@ export default async function PlanPage({ params }: { params: Promise<{ id: strin
             bcbaOnly: s.bcbaOnly,
             conditional: s.conditional,
             notApplicableReason: s.notApplicableReason,
+            needsRedraft: s.needsRedraft,
           }}
           tokens={tokens}
           canDraft={can(ctx.role, "section:draft")}
@@ -101,7 +102,16 @@ export default async function PlanPage({ params }: { params: Promise<{ id: strin
           <div key={g.id} style={{ marginBottom: 16 }}>
             <h3>
               Goal {g.ordinal}: {g.domain} <span className={`badge ${g.status}`}>{g.status}</span>
+              {g.progressStatus === "discontinued" && (
+                <>
+                  {" "}
+                  <span className="badge na">discontinued</span>
+                </>
+              )}
             </h3>
+            {g.progressStatus === "discontinued" && g.discontinuedReason && (
+              <p className="muted">Reason discontinued: {g.discontinuedReason}</p>
+            )}
             <Html html={g.objectiveHtml} />
             <Html html={g.graph} />
           </div>

@@ -21,9 +21,10 @@ export function RowMenu(props: {
    * More actions, each a menu item that opens a dialog titled with its label: a record form, or
    * custom content (given a function that closes the dialog).
    */
-  actions?: ({ label: string } & (
-    { form: FormProps; content?: never } | { content: (close: () => void) => ReactNode; form?: never }
-  ))[];
+  actions?: ({
+    label: string;
+    /** Dialog title, when it should differ from "label: name". */ title?: string;
+  } & ({ form: FormProps; content?: never } | { content: (close: () => void) => ReactNode; form?: never }))[];
   remove?: { url: string; label?: string; confirm: string };
   testId?: string;
 }) {
@@ -60,7 +61,7 @@ export function RowMenu(props: {
   const action = typeof dialog === "number" ? props.actions?.[dialog] : undefined;
   const form = dialog === "edit" ? props.edit : action?.form;
   const close = () => setDialog(null);
-  const title = action ? `${action.label}: ${props.name}` : `Edit ${props.name}`;
+  const title = action ? (action.title ?? `${action.label}: ${props.name}`) : `Edit ${props.name}`;
 
   async function remove() {
     setOpen(false);

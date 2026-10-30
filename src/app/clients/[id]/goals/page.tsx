@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ActionButton, Html } from "@/components/actions";
-import { FlatExplanation, GoalEditor, GoalRecordEditor } from "@/components/goal-editor";
+import { FlatExplanation, GoalMenu, GoalRecordEditor } from "@/components/goal-editor";
 import { RecordForm } from "@/components/record-form";
 import { Status } from "@/components/status";
 import { toDay } from "@/lib/dates";
@@ -80,13 +80,43 @@ export default async function GoalsPage({ params }: { params: Promise<{ id: stri
 
       {v.goals.map((g) => (
         <div className="panel" key={g.id} id={`goal-${g.ordinal}`}>
-          <h2 style={{ marginTop: 0 }}>
-            Goal {g.ordinal}: {g.domain}{" "}
-            <span className="muted">
-              tier {g.tier} · {g.category.replace("_", " ")} · {g.initiationWindow}
-            </span>{" "}
-            <Status s={g.status} />
-          </h2>
+          <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
+            <h2 style={{ marginTop: 0 }}>
+              Goal {g.ordinal}: {g.domain}{" "}
+              <span className="muted">
+                tier {g.tier} · {g.category.replace("_", " ")} · {g.initiationWindow}
+              </span>{" "}
+              <Status s={g.status} />
+              {g.progressStatus === "discontinued" && (
+                <>
+                  {" "}
+                  <span className="badge na" data-testid={`discontinued-${g.ordinal}`}>
+                    discontinued{g.discontinuedOn ? ` ${toDay(g.discontinuedOn)}` : ""}
+                  </span>
+                </>
+              )}
+            </h2>
+            {can(ctx.role, "goal:write") && (
+              <GoalMenu
+                canRemove={can(ctx.role, "goal:approve") && g.removeBlocker === null}
+                goal={{
+                  id: g.id,
+                  ordinal: g.ordinal,
+                  progressStatus: g.progressStatus,
+                  objective: g.objective,
+                  rationale: g.rationale,
+                  masteryAccuracyPct: g.masteryAccuracyPct,
+                  masteryConsecutiveSessions: g.masteryConsecutiveSessions,
+                  masteryInstructors: g.masteryInstructors,
+                }}
+              />
+            )}
+          </div>
+          {g.progressStatus === "discontinued" && g.discontinuedReason && (
+            <p data-testid={`discontinued-reason-${g.ordinal}`}>
+              <em>Reason discontinued:</em> {g.discontinuedReason}
+            </p>
+          )}
           <Html html={g.objectiveHtml} />
           <p>
             <em>Medical necessity (Pattern {g.rationalePattern}):</em>
@@ -180,26 +210,13 @@ export default async function GoalsPage({ params }: { params: Promise<{ id: stri
           {g.flat && can(ctx.role, "goal:write") && (
             <FlatExplanation goalId={g.id} initial={g.flatExplanation} />
           )}
-          <div className="row" style={{ marginTop: 8 }}>
-            {can(ctx.role, "goal:approve") && g.status !== "approved" && (
+          {can(ctx.role, "goal:approve") && g.status !== "approved" && (
+            <div className="row" style={{ marginTop: 8 }}>
               <ActionButton url={`/api/goals/${g.id}/approve`} testId={`approve-goal-${g.ordinal}`}>
                 Approve goal
               </ActionButton>
-            )}
-            {can(ctx.role, "goal:write") && (
-              <GoalEditor
-                goal={{
-                  id: g.id,
-                  objective: g.objective,
-                  rationale: g.rationale,
-                  flatExplanation: g.flatExplanation,
-                  masteryAccuracyPct: g.masteryAccuracyPct,
-                  masteryConsecutiveSessions: g.masteryConsecutiveSessions,
-                  masteryInstructors: g.masteryInstructors,
-                }}
-              />
-            )}
-          </div>
+            </div>
+          )}
         </div>
       ))}
 
