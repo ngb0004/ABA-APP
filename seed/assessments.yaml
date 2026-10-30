@@ -15,6 +15,8 @@
 #   summary: scale keys shown in the list and used in plan text
 #   summary_total: show the sum of the score-of-possible areas as the summary
 #   custom_scales: the BCBA may add areas or scales that are not listed here
+#   aliases (on a type, form, respondent, or scale): other ways the NAME is written in score
+#     reports and spreadsheets, for file imports (abbreviations, shortened names). Names only.
 #   group_by_form: repeats are compared per form (e.g., parent vs teacher)
 # Open questions about these lists: docs/QUESTIONS_FOR_BCBA.md (Assessments).
 
@@ -34,11 +36,17 @@ assessments:
 
   - key: ablls_r
     name: ABLLS-R
+    aliases: [ABLLS]
     group: skills
     # Scored per skill area as a score of the possible points. The BCBA enters "possible" for
     # each area; item counts are not hard-coded here.
     scales:
-      - { key: cooperation, name: Cooperation and Reinforcer Effectiveness, kind: score_of_possible }
+      - {
+          key: cooperation,
+          name: Cooperation and Reinforcer Effectiveness,
+          kind: score_of_possible,
+          aliases: [Cooperation],
+        }
       - { key: visual_performance, name: Visual Performance, kind: score_of_possible }
       - { key: receptive_language, name: Receptive Language, kind: score_of_possible }
       - { key: imitation, name: Imitation, kind: score_of_possible }
@@ -94,24 +102,36 @@ assessments:
 
   - key: vineland_3
     name: Vineland-3
+    aliases: [Vineland, Vineland-III, Vineland Adaptive Behavior Scales]
     group: standardized
     forms:
       - { key: comprehensive_interview, name: Comprehensive Interview Form }
       - { key: domain_interview, name: Domain-Level Interview Form }
-      - { key: parent_caregiver, name: Parent/Caregiver Form }
+      - { key: parent_caregiver, name: Parent/Caregiver Form, aliases: [Parent Form, Caregiver Form] }
       - { key: teacher, name: Teacher Form }
     respondents: &respondents
-      - { key: parent_caregiver, name: Parent or caregiver }
+      - {
+          key: parent_caregiver,
+          name: Parent or caregiver,
+          aliases: [Parent, Caregiver, Parent/Caregiver, Mother, Father, Guardian],
+        }
       - { key: teacher, name: Teacher }
-      - { key: self, name: Self }
-      - { key: clinician, name: Clinician }
+      - { key: self, name: Self, aliases: [Self-report] }
+      - { key: clinician, name: Clinician, aliases: [BCBA, Examiner] }
       - { key: other, name: Other }
     scales:
-      - { key: abc, name: Adaptive Behavior Composite, kind: standard, min: 20, max: 140 }
-      - { key: communication, name: Communication, kind: standard, min: 20, max: 140 }
-      - { key: daily_living, name: Daily Living Skills, kind: standard, min: 20, max: 140 }
-      - { key: socialization, name: Socialization, kind: standard, min: 20, max: 140 }
-      - { key: motor, name: Motor Skills, kind: standard, min: 20, max: 140 }
+      - { key: abc, name: Adaptive Behavior Composite, kind: standard, min: 20, max: 140, aliases: [ABC] }
+      - { key: communication, name: Communication, kind: standard, min: 20, max: 140, aliases: [COM] }
+      - {
+          key: daily_living,
+          name: Daily Living Skills,
+          kind: standard,
+          min: 20,
+          max: 140,
+          aliases: [DLS, Daily Living],
+        }
+      - { key: socialization, name: Socialization, kind: standard, min: 20, max: 140, aliases: [SOC] }
+      - { key: motor, name: Motor Skills, kind: standard, min: 20, max: 140, aliases: [MOT, Motor] }
       - { key: abc_pct, name: Adaptive Behavior Composite percentile, kind: percentile, parent: abc }
       - { key: communication_pct, name: Communication percentile, kind: percentile, parent: communication }
       - {
@@ -181,6 +201,7 @@ assessments:
 
   - key: srs_2
     name: SRS-2
+    aliases: [SRS, Social Responsiveness Scale]
     group: standardized
     forms:
       - { key: preschool, name: Preschool Form }
@@ -188,18 +209,55 @@ assessments:
       - { key: adult, name: Adult Form }
     respondents: *respondents
     scales:
-      - { key: total_t, name: Total, kind: t_score }
+      - { key: total_t, name: Total, kind: t_score, aliases: [SRS-2 Total, Total score] }
       - { key: total_raw, name: Total raw score, kind: raw, parent: total_t }
-      - { key: sci, name: Social Communication and Interaction, kind: t_score, parent: total_t }
-      - { key: rrb, name: Restricted Interests and Repetitive Behavior, kind: t_score, parent: total_t }
-      - { key: social_awareness, name: Social Awareness, kind: t_score, parent: total_t }
-      - { key: social_cognition, name: Social Cognition, kind: t_score, parent: total_t }
-      - { key: social_communication, name: Social Communication, kind: t_score, parent: total_t }
-      - { key: social_motivation, name: Social Motivation, kind: t_score, parent: total_t }
+      - {
+          key: sci,
+          name: Social Communication and Interaction,
+          kind: t_score,
+          parent: total_t,
+          aliases: [SCI],
+        }
+      - {
+          key: rrb,
+          name: Restricted Interests and Repetitive Behavior,
+          kind: t_score,
+          parent: total_t,
+          aliases: [RRB],
+        }
+      - {
+          key: social_awareness,
+          name: Social Awareness,
+          kind: t_score,
+          parent: total_t,
+          aliases: [Awareness],
+        }
+      - {
+          key: social_cognition,
+          name: Social Cognition,
+          kind: t_score,
+          parent: total_t,
+          aliases: [Cognition],
+        }
+      - {
+          key: social_communication,
+          name: Social Communication,
+          kind: t_score,
+          parent: total_t,
+          aliases: [Communication],
+        }
+      - {
+          key: social_motivation,
+          name: Social Motivation,
+          kind: t_score,
+          parent: total_t,
+          aliases: [Motivation],
+        }
     summary: [total_t]
 
   - key: pddbi
     name: PDDBI
+    aliases: [PDD Behavior Inventory]
     group: standardized
     custom_scales: true
     group_by_form: true
@@ -224,6 +282,7 @@ assessments:
 
   - key: psi_4
     name: PSI-4
+    aliases: [PSI, Parenting Stress Index]
     group: standardized
     custom_scales: true
     forms:
@@ -231,22 +290,28 @@ assessments:
       - { key: short_form, name: Short Form }
     respondents: *respondents
     scales:
-      - { key: total_stress_pct, name: Total Stress percentile, kind: percentile }
+      - { key: total_stress_pct, name: Total Stress percentile, kind: percentile, aliases: [Total Stress] }
       - { key: total_stress_raw, name: Total Stress raw score, kind: raw, parent: total_stress_pct }
-      - { key: child_domain_pct, name: Child Domain percentile, kind: percentile }
-      - { key: parent_domain_pct, name: Parent Domain percentile, kind: percentile }
+      - { key: child_domain_pct, name: Child Domain percentile, kind: percentile, aliases: [Child Domain] }
+      - { key: parent_domain_pct, name: Parent Domain percentile, kind: percentile, aliases: [Parent Domain] }
     summary: [total_stress_pct]
 
   - key: sipa
     name: SIPA
+    aliases: [Stress Index for Parents of Adolescents]
     group: standardized
     custom_scales: true
     respondents: *respondents
     scales:
-      - { key: total_stress_pct, name: Total Stress percentile, kind: percentile }
+      - { key: total_stress_pct, name: Total Stress percentile, kind: percentile, aliases: [Total Stress] }
       - { key: total_stress_raw, name: Total Stress raw score, kind: raw, parent: total_stress_pct }
-      - { key: adolescent_domain_pct, name: Adolescent Domain percentile, kind: percentile }
-      - { key: parent_domain_pct, name: Parent Domain percentile, kind: percentile }
+      - {
+          key: adolescent_domain_pct,
+          name: Adolescent Domain percentile,
+          kind: percentile,
+          aliases: [Adolescent Domain],
+        }
+      - { key: parent_domain_pct, name: Parent Domain percentile, kind: percentile, aliases: [Parent Domain] }
     summary: [total_stress_pct]
 
   - key: peak
@@ -262,6 +327,7 @@ assessments:
 
   - key: efl
     name: Essential for Living
+    aliases: [EFL]
     group: skills
     custom_scales: true
     summary_total: true

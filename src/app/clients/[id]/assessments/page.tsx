@@ -10,6 +10,8 @@ import {
   type AssessmentGroup,
 } from "@/lib/assessments/catalog";
 import { formatScore, type AssessmentItem, type DisplayScore } from "@/lib/assessments/view";
+import { IMPORT_ACCEPT } from "@/lib/assessments/extract/detect";
+import { ASSESSMENT_SAMPLE_TYPES, DEMO_SAMPLES, isDemo } from "@/lib/demo";
 import { can, requirePermission } from "@/lib/permissions";
 import { listAssessments } from "@/lib/services/assessments";
 import { asOfToday, orNotFound, requirePageCtx, uuidParam } from "@/lib/server/page-session";
@@ -26,6 +28,7 @@ function Meta({ i }: { i: AssessmentItem }) {
     i.respondentName ? `respondent: ${i.respondentName.toLowerCase()}` : null,
     i.administeredBy ? `by ${i.administeredBy}` : null,
     i.source === "vbmapp_import" ? "from the VB-MAPP workbook" : null,
+    i.source === "import" ? "imported from a file" : null,
   ].filter(Boolean);
   return parts.length ? <span className="muted"> · {parts.join(" · ")}</span> : null;
 }
@@ -35,7 +38,7 @@ export default async function AssessmentsPage({ params }: { params: Promise<{ id
   const ctx = await requirePageCtx();
   requirePermission(ctx.role, "client:read");
   const catalog = assessmentCatalog();
-  const { client, groups } = await orNotFound(() => listAssessments(ctx, id, catalog));
+  const { client, groups, pendingImports } = await orNotFound(() => listAssessments(ctx, id, catalog));
   const canWrite = can(ctx.role, "assessment:write");
   const canConfirm = can(ctx.role, "assessment:confirm");
   const base = `/api/clients/${id}/assessments`;
@@ -54,7 +57,28 @@ export default async function AssessmentsPage({ params }: { params: Promise<{ id
       </p>
       {canWrite && (
         <div className="panel">
-          <AddAssessment url={base} groups={addOptions(catalog, id, asOfToday())} testId="add-assessment" />
+          <AddAssessment
+            url={base}
+            importUrl={`${base}/imports`}
+            groups={addOptions(catalog, id, asOfToday())}
+            accept={IMPORT_ACCEPT}
+            demo={isDemo()}
+            samples={DEMO_SAMPLES.assessments.map((name) => ({ name, type: ASSESSMENT_SAMPLE_TYPES[name] }))}
+            testId="add-assessment"
+          />
+          {pendingImports.length > 0 && (
+            <p data-testid="pending-imports">
+              Imports waiting for review:{" "}
+              {pendingImports.map((p, k) => (
+                <span key={p.id}>
+                  {k > 0 && " · "}
+                  <Link href={`/assessments/imports/${p.id}`}>
+                    {catalogType(catalog, p.typeKey)?.name ?? p.typeKey} ({p.filename})
+                  </Link>
+                </span>
+              ))}
+            </p>
+          )}
         </div>
       )}
       {groups.length === 0 && <p className="muted">No assessments yet.</p>}

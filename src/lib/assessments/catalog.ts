@@ -51,7 +51,9 @@ export const GROUP_LABELS: Record<AssessmentGroup, string> = {
 
 const Key = z.string().regex(/^[a-z][a-z0-9_]{0,47}$/, "Use lowercase letters, digits, and _");
 const Name = z.string().trim().min(1).max(120);
-const Choice = z.object({ key: Key, name: Name }).strict();
+/** Other ways a name is written in score reports and spreadsheets (used by file imports only). */
+const Aliases = z.array(z.string().trim().min(1).max(80)).default([]);
+const Choice = z.object({ key: Key, name: Name, aliases: Aliases }).strict();
 
 const ScaleSchema = z
   .object({
@@ -61,6 +63,7 @@ const ScaleSchema = z
     min: z.number().finite().optional(),
     max: z.number().finite().optional(),
     parent: Key.optional(),
+    aliases: Aliases,
   })
   .strict();
 
@@ -68,6 +71,7 @@ const TypeSchema = z
   .object({
     key: Key,
     name: Name,
+    aliases: Aliases,
     group: z.enum(ASSESSMENT_GROUPS),
     entry: z.enum(["manual", "vbmapp_import"]).default("manual"),
     forms: z.array(Choice).default([]),
@@ -89,13 +93,15 @@ const CatalogSchema = z
 
 export type CatalogScale = z.infer<typeof ScaleSchema>;
 export type CatalogModule = { key: string; name: string; scales: CatalogScale[] };
+export type CatalogChoice = { key: string; name: string; aliases: string[] };
 export type CatalogType = {
   key: string;
   name: string;
+  aliases: string[];
   group: AssessmentGroup;
   entry: "manual" | "vbmapp_import";
-  forms: { key: string; name: string }[];
-  respondents: { key: string; name: string }[];
+  forms: CatalogChoice[];
+  respondents: CatalogChoice[];
   modules: CatalogModule[];
   scales: CatalogScale[];
   summary: string[];
@@ -104,6 +110,19 @@ export type CatalogType = {
   groupByForm: boolean;
 };
 export type Catalog = { version: number; types: CatalogType[] };
+
+/**
+ * A label reduced for comparison: lower case, "&" read as "and", possessives and punctuation
+ * dropped, spacing collapsed. "Daily-Living Skills" and "daily living skills" compare equal.
+ */
+export function normalizeLabel(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/['’]s\b/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
 
 const dupes = (keys: string[]) => keys.filter((k, i) => keys.indexOf(k) !== i);
 
@@ -138,6 +157,15 @@ function problems(types: CatalogType[]): string[] {
       }
       for (const k of t.summary)
         if (!keys.includes(k)) out.push(`${where}: summary scale "${k}" is not one of its scales`);
+      // An import must never have to guess between two scales for one label.
+      const seen = new Map<string, string>();
+      for (const s of scales)
+        for (const a of [s.name, ...s.aliases]) {
+          const n = normalizeLabel(a);
+          const other = seen.get(n);
+          if (other && other !== s.key) out.push(`${where}: "${a}" names both "${other}" and "${s.key}"`);
+          seen.set(n, s.key);
+        }
     }
     if (t.summaryTotal && t.summary.length) out.push(`${t.key}: use either summary or summary_total`);
     if (t.summaryTotal && !t.customScales) {
@@ -167,6 +195,7 @@ export function parseAssessmentCatalog(doc: unknown): Catalog {
   const types: CatalogType[] = r.data.assessments.map((t) => ({
     key: t.key,
     name: t.name,
+    aliases: t.aliases,
     group: t.group,
     entry: t.entry,
     forms: t.forms,

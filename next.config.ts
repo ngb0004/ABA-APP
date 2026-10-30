@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  serverExternalPackages: ["@prisma/client", "playwright", "xlsx"],
+  serverExternalPackages: ["@prisma/client", "playwright", "xlsx", "tesseract.js", "mammoth"],
   experimental: { serverActions: { bodySizeLimit: "5mb" } },
   poweredByHeader: false,
   // The e2e server builds into its own directory so it never collides with `pnpm dev`.

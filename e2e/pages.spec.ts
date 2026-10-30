@@ -17,6 +17,7 @@ test("unknown ids show the normal 404 page with the menu, and the tab still name
     `/plans/${UNKNOWN}`,
     `/plans/${UNKNOWN}/packet`,
     `/vbmapp/imports/${UNKNOWN}`,
+    `/assessments/imports/${UNKNOWN}`,
     "/clients/not-a-uuid",
     "/does-not-exist",
   ]) {

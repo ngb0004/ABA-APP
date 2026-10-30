@@ -20,7 +20,26 @@ export const DEMO_SAMPLES = {
     "reduction.txt",
     "p2p_offer.txt",
   ],
+  /** Score files for assessments other than VB-MAPP (scripts/build-assessment-fixtures.ts). */
+  assessments: [
+    "vineland3_scores.pdf",
+    "srs2_scores.png",
+    "ablls_r_areas.xlsx",
+    "afls_basic_living.csv",
+    "pddbi_parent.txt",
+    "psi4_scores.docx",
+  ],
 } as const;
+
+/** The assessment type (and module) each sample file holds, so the picker can offer the right ones. */
+export const ASSESSMENT_SAMPLE_TYPES: Record<(typeof DEMO_SAMPLES.assessments)[number], string> = {
+  "vineland3_scores.pdf": "vineland_3",
+  "srs2_scores.png": "srs_2",
+  "ablls_r_areas.xlsx": "ablls_r",
+  "afls_basic_living.csv": "afls:basic_living",
+  "pddbi_parent.txt": "pddbi",
+  "psi4_scores.docx": "psi_4",
+};
 export type SampleKind = keyof typeof DEMO_SAMPLES;
 
 export function sampleFile(kind: SampleKind, name: string): Buffer {

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { authenticator } from "otplib";
-import { assertDemoUploadAllowed, DEMO_SAMPLES, sampleFile } from "@/lib/demo";
+import { ASSESSMENT_SAMPLE_TYPES, assertDemoUploadAllowed, DEMO_SAMPLES, sampleFile } from "@/lib/demo";
 import { db } from "@/lib/db";
 import {
   confirmMfaEnrollment,
@@ -20,13 +20,40 @@ afterEach(() => {
 describe("demo mode uploads", () => {
   it("accepts every bundled sample and rejects anything else", () => {
     process.env.DEMO_MODE = "true";
-    for (const k of ["vbmapp", "letters"] as const)
+    for (const k of ["vbmapp", "letters", "assessments"] as const)
       for (const n of DEMO_SAMPLES[k]) expect(() => assertDemoUploadAllowed(sampleFile(k, n))).not.toThrow();
     const edited = Buffer.concat([
       readFileSync("fixtures/letters/denial.txt"),
       Buffer.from("\nReal patient: someone"),
     ]);
     expect(() => assertDemoUploadAllowed(edited)).toThrow(/only the bundled sample files/);
+    // A re-saved copy of a sample score file is not a sample any more.
+    const png = Buffer.concat([readFileSync("fixtures/assessments/srs2_scores.png"), Buffer.from([0])]);
+    expect(() => assertDemoUploadAllowed(png)).toThrow(/only the bundled sample files/);
+  });
+  it("every sample score file is listed with the assessment it holds, and the files are read-only", () => {
+    for (const n of DEMO_SAMPLES.assessments) {
+      expect(ASSESSMENT_SAMPLE_TYPES[n]).toMatch(/^[a-z0-9_]+(:[a-z0-9_]+)?$/);
+      expect(statSync(`fixtures/assessments/${n}`).mode & 0o222).toBe(0);
+    }
+  });
+  it("the demo refuses an uploaded score file that is not a sample", async () => {
+    process.env.DEMO_MODE = "true";
+    const { uploadAssessmentImport } = await import("@/lib/services/assessment-imports");
+    const { clientId, ctxAs } = await import("../helpers/ctx");
+    await expect(
+      uploadAssessmentImport(ctxAs("BCBA"), clientId("client3"), {
+        filename: "mine.txt",
+        data: Buffer.from("Autism Composite: 63"),
+        typeKey: "pddbi",
+      }),
+    ).rejects.toMatchObject({ status: 403 });
+    const ok = await uploadAssessmentImport(ctxAs("BCBA"), clientId("client3"), {
+      filename: "pddbi_parent.txt",
+      data: sampleFile("assessments", "pddbi_parent.txt"),
+      typeKey: "pddbi",
+    });
+    expect(ok.importId).toBeTruthy();
   });
   it("does not restrict uploads outside demo mode", () => {
     expect(() => assertDemoUploadAllowed(Buffer.from("anything"))).not.toThrow();

@@ -32,6 +32,7 @@ const ORG_TABLES = [
   "vbmapp_import",
   "assessment_score",
   "assessment",
+  "assessment_import",
   "intake",
   "service_session",
   "authorization_unit",

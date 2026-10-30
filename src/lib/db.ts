@@ -38,6 +38,7 @@ export const AUDITED_MODELS = new Set([
   "MilestoneScore",
   "Assessment",
   "AssessmentScore",
+  "AssessmentImport",
   "Goal",
   "GoalDataPoint",
   "GoalPhaseChange",

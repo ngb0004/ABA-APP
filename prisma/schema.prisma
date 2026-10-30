@@ -127,20 +127,21 @@ model Client {
   events         String[] @default([])
   createdAt      DateTime @default(now())
 
-  org             Org                    @relation(fields: [orgId], references: [id])
-  diagnoses       Diagnosis[]
-  payors          ClientPayor[]
-  authorizations  Authorization[]
-  sessions        ServiceSession[]
-  intakes         Intake[]
-  vbmappImports   VbmappImport[]
-  administrations VbmappAdministration[]
-  goals           Goal[]
-  plans           Plan[]
-  letters         PayorLetter[]
-  attachments     Attachment[]
-  benefitsChecks  BenefitsCheck[]
-  assessments     Assessment[]
+  org               Org                    @relation(fields: [orgId], references: [id])
+  diagnoses         Diagnosis[]
+  payors            ClientPayor[]
+  authorizations    Authorization[]
+  sessions          ServiceSession[]
+  intakes           Intake[]
+  vbmappImports     VbmappImport[]
+  administrations   VbmappAdministration[]
+  goals             Goal[]
+  plans             Plan[]
+  letters           PayorLetter[]
+  attachments       Attachment[]
+  benefitsChecks    BenefitsCheck[]
+  assessments       Assessment[]
+  assessmentImports AssessmentImport[]
 
   @@map("client")
 }
@@ -411,11 +412,46 @@ model Assessment {
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
-  client Client            @relation(fields: [clientId], references: [id])
-  scores AssessmentScore[]
+  client     Client            @relation(fields: [clientId], references: [id])
+  fromImport AssessmentImport? @relation(fields: [importId], references: [id])
+  scores     AssessmentScore[]
 
   @@index([clientId, administeredOn])
   @@map("assessment")
+}
+
+/// An uploaded score file (Excel, CSV, PDF, image, text, Word) for an assessment other than
+/// VB-MAPP, awaiting BCBA review. Never the file's bytes or text: only its hash, the proposed
+/// scores (catalog keys, numbers, locations, confidence), and flags (PHI detected, never values).
+model AssessmentImport {
+  id          String    @id @default(uuid()) @db.Uuid
+  orgId       String    @map("org_id") @db.Uuid
+  clientId    String    @db.Uuid
+  /// Catalog type (and module) chosen before uploading.
+  typeKey     String
+  module      String?
+  filename    String
+  fileSha256  String
+  mime        String
+  /// xlsx | xls | csv | pdf | image | txt | docx
+  format      String
+  /// pending | confirmed | discarded
+  status      String    @default("pending")
+  phiDetected Boolean   @default(false)
+  phiStripped Boolean   @default(false)
+  /// The proposal: scores with {location, matchedLabel, confidence, flags}, date, form, respondent.
+  parsed      Json
+  flags       Json      @default("[]")
+  reviewerId  String?   @db.Uuid
+  reviewedAt  DateTime?
+  createdById String?   @db.Uuid
+  createdAt   DateTime  @default(now())
+
+  client      Client       @relation(fields: [clientId], references: [id])
+  assessments Assessment[]
+
+  @@index([clientId, createdAt])
+  @@map("assessment_import")
 }
 
 model AssessmentScore {

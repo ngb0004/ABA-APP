@@ -157,7 +157,7 @@ export async function listAssessments(ctx: OrgCtx, clientId: string, catalog: Ca
       select: { id: true, firstName: true, lastName: true },
     });
     if (!client) throw new HttpError(404, "Not found");
-    const [rows, admins] = await Promise.all([
+    const [rows, admins, pendingImports] = await Promise.all([
       tx.assessment.findMany({ where: { clientId }, include: { scores: true } }),
       tx.vbmappAdministration.findMany({
         where: { clientId },
@@ -171,11 +171,16 @@ export async function listAssessments(ctx: OrgCtx, clientId: string, catalog: Ca
           reviewedAt: true,
         },
       }),
+      tx.assessmentImport.findMany({
+        where: { clientId, status: "pending" },
+        select: { id: true, filename: true, typeKey: true, module: true, createdAt: true },
+        orderBy: { createdAt: "desc" },
+      }),
     ]);
     const items: AssessmentItem[] = newestFirst([
       ...rows.map((r) => assessmentItem(catalog, clientId, r)),
       ...admins.map((a) => vbmappItem(catalog, clientId, a)),
     ]);
-    return { client, items, groups: groupAssessments(items, catalog) };
+    return { client, items, groups: groupAssessments(items, catalog), pendingImports };
   });
 }

@@ -1,0 +1,14 @@
+Yoma synthetic sample: fictional scores for testing, not a real report
+
+Assessment: PDDBI
+Form: Parent Form
+Respondent: Parent
+Name: Charlie Testchild
+Date of birth: 01/15/2019
+Rating date: 2026-04-13
+
+Domain T-scores
+Autism Composite ............ 63
+Ritualisms/Resistance to Change ............ 66
+Social Approach Behaviors ............ 38
+Expressive Language ............ 41
