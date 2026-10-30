@@ -3,11 +3,12 @@ import Link from "next/link";
 import { cookies } from "next/headers";
 import { getSessionByToken, SESSION_COOKIE } from "@/lib/auth/session";
 import { LogoutButton } from "@/components/actions";
+import { label } from "@/components/labels";
 import { isDemo } from "@/lib/demo";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "ABA Plan Assistant",
+  title: { default: "ABA Plan Assistant", template: "%s · ABA Plan Assistant" },
   description: "Treatment plan and reauthorization assistant (synthetic data only)",
 };
 export const dynamic = "force-dynamic";
@@ -33,8 +34,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                 {session.role === "BCBA" && <Link href="/audit">Audit log</Link>}
                 {session.role === "BCBA" && <Link href="/settings">Settings</Link>}
               </nav>
-              <span className="muted" style={{ marginLeft: "auto" }}>
-                Role: {session.role}
+              <span className="muted role-label" style={{ marginLeft: "auto" }}>
+                Role: {label(session.role)}
               </span>
               <LogoutButton />
             </>

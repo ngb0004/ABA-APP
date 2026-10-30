@@ -1,21 +1,48 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { sectionDone } from "@/lib/plan/sections";
 import { ActionButton, UploadForm } from "@/components/actions";
-import { DEMO_SAMPLES } from "@/lib/demo";
+import { DEMO_SAMPLES, isDemo } from "@/lib/demo";
 import { AuditPanel } from "@/components/audit-panel";
 import { ChecklistToggle, ExportButton, LetterReview } from "@/components/letter-review";
 import { Status } from "@/components/status";
+import { withOrg } from "@/lib/db";
 import { can } from "@/lib/permissions";
 import { packetView } from "@/lib/services/packets";
 import { planView } from "@/lib/services/plans";
-import { asOfToday, requirePageCtx, uuidParam } from "@/lib/server/page-session";
+import { asOfToday, orNotFound, requirePageCtx, uuidParam } from "@/lib/server/page-session";
+
+export const metadata: Metadata = { title: "Packet and export" };
 
 export default async function PacketPage({ params }: { params: Promise<{ id: string }> }) {
   const id = await uuidParam(params);
   const ctx = await requirePageCtx();
   const asOf = asOfToday();
-  const [pv, plan] = await Promise.all([packetView(ctx, id, asOf), planView(ctx, id, asOf)]);
+  const [pv, plan] = await orNotFound(() =>
+    Promise.all([packetView(ctx, id, asOf), planView(ctx, id, asOf)]),
+  );
   const b = pv.bundle;
+  const initial = plan.bundle.plan.type !== "reauth";
+  // Name the payor document behind each payor-rule row, so similar rows from two payors can be told apart.
+  const ruleIds = pv.checklist.filter((i) => i.key.startsWith("rule:")).map((i) => i.key.slice(5));
+  const ruleSources = new Map(
+    (ruleIds.length
+      ? await withOrg(ctx, (tx) =>
+          tx.payorRule.findMany({
+            where: { id: { in: ruleIds } },
+            select: {
+              id: true,
+              payor: { select: { name: true } },
+              sourceDocument: { select: { name: true } },
+            },
+          }),
+        )
+      : []
+    ).map((r) => [
+      `rule:${r.id}`,
+      r.sourceDocument ? `${r.payor.name}: ${r.sourceDocument.name}` : r.payor.name,
+    ]),
+  );
   const unapproved = plan.sections.filter((s) => !sectionDone(s.state)).length;
   const blocked = unapproved > 0 || plan.blockers.length > 0;
   return (
@@ -24,7 +51,8 @@ export default async function PacketPage({ params }: { params: Promise<{ id: str
         <Link href={`/plans/${id}`}>← Plan</Link>
       </p>
       <h1>
-        Reauth packet: {b.client.firstName} {b.client.lastName}
+        {initial ? "Initial request packet" : "Reauthorization packet"}: {b.client.firstName}{" "}
+        {b.client.lastName}
       </h1>
       <p>
         Hand-off status:{" "}
@@ -50,9 +78,17 @@ export default async function PacketPage({ params }: { params: Promise<{ id: str
             testId="letter-upload"
           />
         )}
+        {can(ctx.role, "letter:upload") && isDemo() && (
+          <p className="muted">
+            Uploading your own files is turned off on the demo site. Only the fictional sample letters below
+            are accepted.
+          </p>
+        )}
         {can(ctx.role, "letter:upload") && (
           <div className="row" style={{ marginTop: 8 }}>
-            <span className="muted">Or load a fictional sample letter:</span>
+            <span className="muted">
+              Or load a fictional sample letter{initial ? " (the samples are reauthorization letters)" : ""}:
+            </span>
             {DEMO_SAMPLES.letters.map((name) => (
               <ActionButton
                 key={name}
@@ -82,7 +118,7 @@ export default async function PacketPage({ params }: { params: Promise<{ id: str
       <div className="panel">
         <h2 style={{ marginTop: 0 }}>Checklist</h2>
         <div className="table-wrap">
-          <table>
+          <table className="stack">
             <thead>
               <tr>
                 <th>Status</th>
@@ -94,15 +130,18 @@ export default async function PacketPage({ params }: { params: Promise<{ id: str
             <tbody>
               {pv.checklist.map((i) => (
                 <tr key={i.key}>
-                  <td>
+                  <td data-label="">
                     <Status s={i.done ? "ok" : i.status} />
                   </td>
-                  <td>
+                  <td data-label="">
                     {i.label}
                     {i.action && <div className="muted">Suggested action: {i.action}</div>}
                   </td>
-                  <td className="muted">{i.source.replace("_", " ")}</td>
-                  <td>
+                  <td className="muted" data-label="Source">
+                    {i.source.replace("_", " ")}
+                    {ruleSources.get(i.key) && <div>{ruleSources.get(i.key)}</div>}
+                  </td>
+                  <td data-label="Done">
                     {i.source !== "auto" && can(ctx.role, "packet:manage") && (
                       <ChecklistToggle planId={id} itemKey={i.key} done={!!i.done} />
                     )}
@@ -118,8 +157,8 @@ export default async function PacketPage({ params }: { params: Promise<{ id: str
         <h2 style={{ marginTop: 0 }}>Export</h2>
         {blocked ? (
           <div className="alert danger" data-testid="export-blocked">
-            Export is blocked: {unapproved} section(s) not approved; {plan.blockers.length} audit check(s)
-            failing.
+            Export is blocked: {unapproved} {unapproved === 1 ? "section" : "sections"} not approved;{" "}
+            {plan.blockers.length} audit {plan.blockers.length === 1 ? "check" : "checks"} failing.
           </div>
         ) : (
           <div className="alert info">All sections approved and the pre-submission audit passes.</div>

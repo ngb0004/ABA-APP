@@ -81,4 +81,15 @@ describe("auth end alerts", () => {
     expect(authEndAlert("2026-10-31", "2026-10-20")!.level).toBe(14);
     expect(authEndAlert("2026-10-31", "2026-11-02")!.level).toBe(0);
   });
+
+  it("words the alert in plain English", () => {
+    expect(authEndAlert("2026-10-31", "2026-10-10")!.message).toBe(
+      "21 days until authorization ends (21-day alert)",
+    );
+    expect(authEndAlert("2026-10-31", "2026-10-30")!.message).toBe(
+      "1 day until authorization ends (14-day alert)",
+    );
+    expect(authEndAlert("2026-10-31", "2026-10-31")!.message).toBe("Authorization ends today (14-day alert)");
+    expect(authEndAlert("2026-10-31", "2026-11-01")!.message).toBe("Authorization ended 1 day ago");
+  });
 });

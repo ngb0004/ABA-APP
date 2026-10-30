@@ -139,13 +139,17 @@ export function authEndAlert(
   settings: CalendarSettings = DEFAULT_CALENDAR_SETTINGS,
 ): AuthAlert | null {
   const daysLeft = diffDays(endDate, asOf);
-  if (daysLeft < 0) return { level: 0, daysLeft, message: `Authorization ended ${-daysLeft} day(s) ago` };
+  const days = (n: number) => `${n} ${n === 1 ? "day" : "days"}`;
+  if (daysLeft < 0) return { level: 0, daysLeft, message: `Authorization ended ${days(-daysLeft)} ago` };
   const reached = [...settings.alertDays].sort((a, b) => a - b).find((d) => daysLeft <= d);
   return reached === undefined
     ? null
     : {
         level: reached,
         daysLeft,
-        message: `${daysLeft} day(s) until authorization ends (${reached}-day alert)`,
+        message:
+          daysLeft === 0
+            ? `Authorization ends today (${reached}-day alert)`
+            : `${days(daysLeft)} until authorization ends (${reached}-day alert)`,
       };
 }

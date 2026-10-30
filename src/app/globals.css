@@ -125,8 +125,16 @@ th {
   color: var(--muted);
   font-weight: 600;
 }
+/* Wide tables scroll inside their box. The edge shadows show that there is more to the side. */
 .table-wrap {
   overflow-x: auto;
+  background:
+    linear-gradient(to right, var(--panel) 30%, transparent) left / 24px 100% no-repeat local,
+    linear-gradient(to left, var(--panel) 30%, transparent) right / 24px 100% no-repeat local,
+    radial-gradient(farthest-side at 0 50%, rgba(0, 0, 0, 0.2), transparent) left / 10px 100% no-repeat scroll,
+    radial-gradient(farthest-side at 100% 50%, rgba(0, 0, 0, 0.2), transparent) right / 10px 100% no-repeat
+      scroll,
+    var(--panel);
 }
 .badge {
   display: inline-block;
@@ -306,4 +314,117 @@ details summary {
 }
 .form-wide {
   grid-column: 1 / -1;
+}
+/* Checkboxes keep their natural size; only text inputs stretch to the grid cell. */
+.form-grid input[type="checkbox"],
+.form-grid input[type="radio"] {
+  width: auto;
+  flex: none;
+  margin: 0;
+}
+
+.alert-source {
+  font-size: 12px;
+  opacity: 0.85;
+}
+
+/* Payor rules */
+.rules-table {
+  table-layout: fixed;
+  min-width: 640px;
+}
+.rules-table col.type {
+  width: 16%;
+}
+.rules-table col.params {
+  width: 38%;
+}
+.rules-table td {
+  overflow-wrap: anywhere;
+}
+.params-list {
+  margin: 0;
+  font-size: 13px;
+}
+.params-list div {
+  margin: 1px 0;
+}
+.params-list dt {
+  display: inline;
+  color: var(--muted);
+}
+.params-list dd {
+  display: inline;
+  margin: 0;
+}
+.verify-form {
+  max-width: 420px;
+}
+.legend {
+  margin: 0;
+  font-size: 13px;
+}
+.legend dt {
+  font-weight: 600;
+  margin-top: 4px;
+}
+.legend dd {
+  margin: 0 0 2px 0;
+}
+
+/* Tables that turn into stacked cards on phones. Each cell carries data-label. */
+@media (max-width: 640px) {
+  table.stack thead {
+    display: none;
+  }
+  table.stack,
+  table.stack tbody,
+  table.stack tr,
+  table.stack td {
+    display: block;
+    width: 100%;
+  }
+  table.stack tr {
+    border-bottom: 1px solid var(--border);
+    padding: 6px 0;
+  }
+  table.stack td {
+    border: 0;
+    padding: 2px 4px;
+    overflow-wrap: anywhere;
+  }
+  table.stack td[data-label]:not([data-label=""])::before {
+    content: attr(data-label) ": ";
+    color: var(--muted);
+    font-weight: 600;
+  }
+
+  /* A compact header: brand and sign-out on one line, the menu on one scrolling line below. */
+  .synthetic-banner {
+    font-size: 12px;
+    padding: 3px 8px;
+  }
+  header.top {
+    gap: 6px 10px;
+    padding: 6px 12px;
+  }
+  header.top nav {
+    order: 3;
+    flex: 1 0 100%;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    white-space: nowrap;
+    gap: 14px;
+    padding-bottom: 2px;
+  }
+  header.top .role-label {
+    display: none;
+  }
+  header.top button {
+    margin-left: auto;
+    padding: 4px 10px;
+  }
+  main {
+    padding: 12px 12px 48px;
+  }
 }

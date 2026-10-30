@@ -1,7 +1,10 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { can } from "@/lib/permissions";
 import { listClients } from "@/lib/services/clients";
 import { requirePageCtx } from "@/lib/server/page-session";
+
+export const metadata: Metadata = { title: "Clients" };
 
 export default async function ClientsPage() {
   const ctx = await requirePageCtx();

@@ -1,4 +1,7 @@
-import { ActionButton, UploadForm } from "@/components/actions";
+import type { Metadata } from "next";
+import { UploadForm } from "@/components/actions";
+import { CheckSourcesButton } from "@/components/check-sources";
+import { paramEntries, plural, STATUS_LEGEND, TIER_LEGEND } from "@/components/payor-display";
 import { isDemo } from "@/lib/demo";
 import { RuleSource, Status } from "@/components/status";
 import { VerifyRule } from "@/components/verify-rule";
@@ -8,6 +11,8 @@ import { can, requirePermission } from "@/lib/permissions";
 import type { RevisionRow } from "@/lib/rules-watch/parsers";
 import { loadRules } from "@/lib/services/payors";
 import { requirePageCtx } from "@/lib/server/page-session";
+
+export const metadata: Metadata = { title: "Payor rules" };
 
 export default async function PayorsPage() {
   const ctx = await requirePageCtx();
@@ -36,13 +41,14 @@ export default async function PayorsPage() {
   });
   const canVerify = can(ctx.role, "payor:verify");
   const demo = isDemo();
+  // The version the payor shows, else when we got the copy; null when there is no copy at all.
+  const currentLabel = (s: { versionLabel: string | null; fetchedAt: Date; origin: string } | undefined) =>
+    s ? (s.versionLabel ?? `${s.origin === "upload" ? "uploaded" : "fetched"} ${toDay(s.fetchedAt)}`) : null;
   const official = docs
     .filter((d) => !d.secondary)
-    .map((d) => ({
-      id: d.id,
-      name: d.name,
-      current: d.snapshots[0]?.versionLabel ?? (d.snapshots[0] ? "fetched" : null),
-    }));
+    .map((d) => ({ id: d.id, name: d.name, current: currentLabel(d.snapshots[0]) }));
+  const docByKey = new Map(docs.map((d) => [d.key, d]));
+  const payorName = (key: string | null) => (key ? (payors.find((p) => p.key === key)?.name ?? key) : null);
   const all = payors.flatMap((p) => p.rules.filter((r) => !r.inheritedFrom));
   const count = (s: string) => all.filter((r) => r.trust?.status === s).length;
 
@@ -54,12 +60,39 @@ export default async function PayorsPage() {
         the current official document, and it falls back to &quot;needs re-check&quot; when that document
         changes, breaks, or reaches its next scheduled revision. Unverified rules only ever produce warnings.
       </p>
-      <div className="row" style={{ marginBottom: 12 }}>
+      <div className="row" style={{ marginBottom: 8 }}>
         <span className="badge verified">{count("verified")} verified</span>
         <span className="badge stale">{count("stale")} need re-check</span>
         <span className="badge unverified">{count("unverified")} unverified</span>
         <span className="badge unsourced">{count("unsourced")} no source</span>
       </div>
+      <details className="panel" data-testid="payor-legend">
+        <summary>What the statuses and tiers mean</summary>
+        <div className="grid2">
+          <dl className="legend">
+            {STATUS_LEGEND.map(([cls, name, text]) => (
+              <div key={cls}>
+                <dt>
+                  <span className={`badge ${cls}`}>{name}</span>
+                </dt>
+                <dd>{text}</dd>
+              </div>
+            ))}
+          </dl>
+          <dl className="legend">
+            <dt>Evidence tiers (strongest first)</dt>
+            {TIER_LEGEND.map(([tier, text]) => (
+              <dd key={tier}>
+                <strong>{tier}</strong>: {text}
+              </dd>
+            ))}
+            <dd className="muted">
+              &quot;Verified until&quot; is the document&apos;s next scheduled revision, or the time limit for
+              that tier of evidence, whichever comes first.
+            </dd>
+          </dl>
+        </div>
+      </details>
 
       <div className="panel">
         <h2 style={{ marginTop: 0 }}>Sources being watched</h2>
@@ -67,13 +100,9 @@ export default async function PayorsPage() {
           Checked daily. A new version, a broken link, or a change-log entry for a cited section flags the
           affected rules.
         </p>
-        {canVerify && (
-          <ActionButton url="/api/payors/sources/check" testId="check-sources">
-            Check sources now
-          </ActionButton>
-        )}
+        {canVerify && <CheckSourcesButton />}
         <div className="table-wrap">
-          <table>
+          <table className="stack">
             <thead>
               <tr>
                 <th>Document</th>
@@ -90,9 +119,10 @@ export default async function PayorsPage() {
                 const changes = ((s?.revisions as RevisionRow[] | undefined) ?? []).filter(
                   (r) => !cited || r.date > cited,
                 );
+                const uploadOnly = !d.secondary && !d.locator;
                 return (
                   <tr key={d.id} data-doc={d.key}>
-                    <td>
+                    <td data-label="">
                       {s?.resolvedUrl || d.url ? (
                         <a href={s?.resolvedUrl || d.url!} target="_blank" rel="noreferrer">
                           {d.name}
@@ -101,15 +131,17 @@ export default async function PayorsPage() {
                         d.name
                       )}
                       {d.secondary && <div className="muted">Secondary source: cannot verify a rule</div>}
-                      {!d.secondary && !d.locator && (
-                        <div className="muted">
+                      {uploadOnly && (
+                        <div className="muted" data-testid={`upload-note-${d.key}`}>
                           No public copy to watch.{" "}
                           {s?.origin === "upload"
-                            ? `Official copy uploaded ${s.fetchedAt.toISOString().slice(0, 10)}; upload the new edition when the payor publishes one.`
-                            : "Upload the official copy to verify rules against it."}
+                            ? `Official copy uploaded ${toDay(s.fetchedAt)}.${demo ? "" : " Upload the new edition when the payor publishes one."}`
+                            : demo
+                              ? "Uploads are turned off on the demo site, so rules that cite this document cannot be verified here."
+                              : "Upload the official copy to verify rules against it."}
                         </div>
                       )}
-                      {!d.secondary && !d.locator && canVerify && !demo && (
+                      {uploadOnly && canVerify && !demo && (
                         <details>
                           <summary className="muted">Upload official copy</summary>
                           <p className="muted">
@@ -131,7 +163,7 @@ export default async function PayorsPage() {
                       {changes.length > 0 && (
                         <details>
                           <summary className="muted">
-                            {changes.length} change(s) since the cited version
+                            {plural(changes.length, "change")} since the cited version
                           </summary>
                           <ul>
                             {changes.map((c, i) => (
@@ -143,20 +175,26 @@ export default async function PayorsPage() {
                         </details>
                       )}
                     </td>
-                    <td>
-                      {!d.secondary && !d.locator && !s ? (
+                    <td data-label="Status">
+                      {uploadOnly && !s ? (
                         <span className="badge unknown">not uploaded</span>
                       ) : (
                         <Status s={d.secondary ? "n/a" : d.health} />
                       )}
                       {d.lastError && <div className="muted">{d.lastError}</div>}
                     </td>
-                    <td className="muted">{d.version}</td>
-                    <td className="muted">{s?.versionLabel ?? (s ? "fetched" : "-")}</td>
-                    <td className="muted">
+                    <td className="muted" data-label="Rules cite">
+                      {d.version}
+                    </td>
+                    <td className="muted" data-label="Current">
+                      {currentLabel(s) ?? "-"}
+                    </td>
+                    <td className="muted" data-label="Last checked">
                       {d.lastCheckedAt
                         ? d.lastCheckedAt.toISOString().slice(0, 16).replace("T", " ")
-                        : "never"}
+                        : d.locator
+                          ? "never"
+                          : "not checked automatically"}
                     </td>
                   </tr>
                 );
@@ -167,57 +205,93 @@ export default async function PayorsPage() {
       </div>
 
       {payors.map((p) => {
-        const own = p.rules.filter((r) => !r.inheritedFrom);
         const stale = p.rules.filter((r) => r.trust?.status === "stale").length;
+        const verifiedCount = p.rules.filter((r) => r.verified).length;
+        // Documents this payor's rules cite, listed first in the verify dialog.
+        const citedIds = [
+          ...new Set(p.rules.map((r) => (r.source.key ? docByKey.get(r.source.key)?.id : undefined))),
+        ].filter((x): x is string => !!x);
+        const secondaryOnly = p.rules.filter(
+          (r) => r.source.key && docByKey.get(r.source.key)?.secondary,
+        ).length;
         return (
           <details className="panel" key={p.id} open={stale > 0 && p.key === "ga_medicaid"}>
             <summary>
               <strong>{p.name}</strong>{" "}
               <span className="muted">
-                ({p.rules.length} rules{p.inherits ? `, inherits ${p.inherits}` : ""};{" "}
-                {p.rules.filter((r) => r.verified).length} verified
+                ({plural(p.rules.length, "rule")}
+                {p.inherits ? `, inherits ${payorName(p.inherits)}` : ""}; {verifiedCount} verified
                 {stale ? `, ${stale} need re-check` : ""})
               </span>
             </summary>
+            {p.rules.length > 0 && secondaryOnly * 2 >= p.rules.length && (
+              <p className="alert warn">
+                {secondaryOnly} of these {plural(p.rules.length, "rule")} rest only on a secondary source,
+                which can never verify a rule. Treat them as reminders until an official document confirms
+                them.
+              </p>
+            )}
             <div className="table-wrap">
-              <table>
+              <table className="rules-table">
+                <colgroup>
+                  <col className="type" />
+                  <col className="params" />
+                  <col />
+                </colgroup>
                 <thead>
                   <tr>
                     <th>Type</th>
                     <th>Parameters</th>
-                    <th>Source and evidence</th>
-                    <th />
+                    <th>Source, evidence and verification</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {p.rules.map((r) => (
-                    <tr key={r.id} data-rule={r.id}>
-                      <td>{r.type.replace(/_/g, " ")}</td>
-                      <td>
-                        <code style={{ fontSize: 12 }}>{JSON.stringify(r.params)}</code>
-                        {r.notes && <div className="muted">{r.notes}</div>}
-                      </td>
-                      <td>
-                        <RuleSource r={r} />
-                      </td>
-                      <td>
-                        {canVerify && !r.inheritedFrom && (
-                          <VerifyRule
-                            ruleId={r.id}
-                            verified={r.verified}
-                            documents={official}
-                            defaultDocumentId={docs.find((d) => d.key === r.source.key)?.id ?? null}
-                            section={r.source.section}
-                            recordedQuote={r.source.quote}
-                          />
-                        )}
-                        {r.inheritedFrom && <span className="muted">Verified through {r.inheritedFrom}</span>}
-                      </td>
-                    </tr>
-                  ))}
-                  {!own.length && !p.rules.length && (
+                  {p.rules.map((r) => {
+                    const entries = paramEntries(r.params);
+                    return (
+                      <tr key={r.id} data-rule={r.id}>
+                        <td>{r.type.replace(/_/g, " ")}</td>
+                        <td>
+                          {entries.length > 0 ? (
+                            <dl className="params-list">
+                              {entries.map(([k, v]) => (
+                                <div key={k}>
+                                  <dt>{k}:</dt> <dd>{v}</dd>
+                                </div>
+                              ))}
+                            </dl>
+                          ) : (
+                            <span className="muted">None</span>
+                          )}
+                          {r.notes && <div className="muted">{r.notes}</div>}
+                        </td>
+                        <td>
+                          <RuleSource r={r} inheritedName={payorName(r.inheritedFrom)} />
+                          <div style={{ marginTop: 6 }}>
+                            {canVerify && !r.inheritedFrom && (
+                              <VerifyRule
+                                ruleId={r.id}
+                                verified={r.verified}
+                                documents={official}
+                                payorDocumentIds={citedIds}
+                                defaultDocumentId={
+                                  r.source.key ? (docByKey.get(r.source.key)?.id ?? null) : null
+                                }
+                                section={r.source.section}
+                                recordedQuote={r.source.quote}
+                              />
+                            )}
+                            {r.inheritedFrom && (
+                              <span className="muted">Verified through {payorName(r.inheritedFrom)}</span>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {!p.rules.length && (
                     <tr>
-                      <td colSpan={4} className="muted">
+                      <td colSpan={3} className="muted">
                         No rules
                       </td>
                     </tr>

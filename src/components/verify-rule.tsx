@@ -3,7 +3,9 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { send } from "./actions";
+import { revokeNoteFromPrompt } from "./payor-display";
 
+/** `current` is the version label or fetch date of the latest copy; null when no copy exists yet. */
 type Doc = { id: string; name: string; current: string | null };
 
 /** Verify a rule with proof: pick the official document, then paste the exact sentence that states the rule. */
@@ -11,6 +13,7 @@ export function VerifyRule({
   ruleId,
   verified,
   documents,
+  payorDocumentIds = [],
   defaultDocumentId,
   section,
   recordedQuote,
@@ -18,6 +21,8 @@ export function VerifyRule({
   ruleId: string;
   verified: boolean;
   documents: Doc[];
+  /** Ids of the documents this payor's own rules cite. They are listed first. */
+  payorDocumentIds?: string[];
   defaultDocumentId: string | null;
   section: string | null;
   /** The sentence the rule was read from, if recorded. The reviewer still has to choose to use it. */
@@ -28,7 +33,9 @@ export function VerifyRule({
   const [docId, setDocId] = useState(
     defaultDocumentId && documents.some((d) => d.id === defaultDocumentId)
       ? defaultDocumentId
-      : (documents[0]?.id ?? ""),
+      : (documents.find((d) => payorDocumentIds.includes(d.id) && d.current)?.id ??
+          documents.find((d) => d.current)?.id ??
+          ""),
   );
   const [sec, setSec] = useState(section ?? "");
   const [quote, setQuote] = useState("");
@@ -37,17 +44,32 @@ export function VerifyRule({
 
   if (verified)
     return (
-      <button
-        className="secondary"
-        onClick={async () => {
-          const note = window.prompt("Why is this verification no longer valid? (optional)") ?? null;
-          const r = await send(`/api/payors/rules/${ruleId}/revoke`, "POST", { note });
-          if (!r.ok) return setError(String(r.data.error));
-          router.refresh();
-        }}
-      >
-        Revoke
-      </button>
+      <span>
+        <button
+          className="secondary"
+          disabled={busy}
+          data-testid={`revoke-${ruleId}`}
+          onClick={async () => {
+            const answer = revokeNoteFromPrompt(
+              window.prompt("Why is this verification no longer valid? (optional)"),
+            );
+            if (!answer.revoke) return;
+            setBusy(true);
+            setError(null);
+            const r = await send(`/api/payors/rules/${ruleId}/revoke`, "POST", { note: answer.note });
+            setBusy(false);
+            if (!r.ok) return setError(String(r.data.error ?? "Request failed"));
+            router.refresh();
+          }}
+        >
+          {busy ? "Working…" : "Revoke"}
+        </button>
+        {error && (
+          <div className="error" role="alert">
+            {error}
+          </div>
+        )}
+      </span>
     );
   if (!open)
     return (
@@ -55,17 +77,34 @@ export function VerifyRule({
         Verify with a quote…
       </button>
     );
+
+  const own = documents.filter((d) => payorDocumentIds.includes(d.id));
+  const others = documents.filter((d) => !payorDocumentIds.includes(d.id));
+  const selected = documents.find((d) => d.id === docId);
+  // A document with no copy cannot be checked against; it stays visible (greyed out) so the cited one is clear.
+  const option = (d: Doc) => (
+    <option key={d.id} value={d.id} disabled={!d.current && d.id !== docId}>
+      {d.name}
+      {d.current ? ` (${d.current})` : " (no copy yet)"}
+    </option>
+  );
   return (
-    <div style={{ minWidth: 260 }}>
+    <div className="verify-form">
       <label>Official document</label>
       <select value={docId} onChange={(e) => setDocId(e.target.value)} style={{ width: "100%" }}>
-        {documents.map((d) => (
-          <option key={d.id} value={d.id}>
-            {d.name}
-            {d.current ? ` (${d.current})` : " (not fetched yet)"}
-          </option>
-        ))}
+        {own.length > 0 && <optgroup label="Cited by this payor">{own.map(option)}</optgroup>}
+        {others.length > 0 &&
+          (own.length > 0 ? (
+            <optgroup label="Other documents">{others.map(option)}</optgroup>
+          ) : (
+            others.map(option)
+          ))}
       </select>
+      {selected && !selected.current && (
+        <div className="muted">
+          There is no copy of this document yet, so a quote cannot be checked against it.
+        </div>
+      )}
       <label>Section</label>
       <input
         value={sec}
@@ -95,7 +134,7 @@ export function VerifyRule({
       />
       <div className="row">
         <button
-          disabled={busy || !docId}
+          disabled={busy || !docId || !selected?.current}
           data-testid={`submit-verify-${ruleId}`}
           onClick={async () => {
             setBusy(true);
