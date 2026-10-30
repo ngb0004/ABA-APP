@@ -75,6 +75,44 @@ const demoUsers = dataset.orgs.flatMap((o) => o.users);
 const sampleOrgId = dataset.orgs[0]!.id;
 const lastOrgId = dataset.orgs.at(-1)!.id;
 
+/** A short, password-free reason: Prisma messages often start with a blank line. */
+function reason(e: unknown): string {
+  if (!(e instanceof Error)) return "startup failed";
+  const code = (e as { code?: string; errorCode?: string }).code ?? (e as { errorCode?: string }).errorCode;
+  const lines = e.message
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l && !/^Invalid `|invocation:$|^→|^\d+ /.test(l));
+  const text = (
+    lines.find((l) =>
+      /can't reach|connect|timed out|authentication|password|does not exist|denied|refused|no space/i.test(l),
+    ) ??
+    lines[0] ??
+    "startup failed"
+  )
+    .replace(/postgres(ql)?:\/\/\S+/g, "[url]")
+    .slice(0, 300);
+  return code ? `${text} (${code})` : text;
+}
+
+/** The Postgres service can still be starting when the app boots: wait for it before failing. */
+async function waitForDatabase() {
+  const deadline = Date.now() + 120_000;
+  for (let attempt = 1; ; attempt++) {
+    const pg = new PrismaClient({ datasourceUrl: admin.toString() });
+    try {
+      await pg.$queryRaw`SELECT 1`;
+      return;
+    } catch (e) {
+      if (Date.now() > deadline) throw e;
+      say(`waiting for the database (attempt ${attempt}): ${reason(e)}`);
+      await new Promise((r) => setTimeout(r, 5000));
+    } finally {
+      await pg.$disconnect().catch(() => {});
+    }
+  }
+}
+
 async function setupRolesAndDatabase() {
   const pg = new PrismaClient({ datasourceUrl: admin.toString() });
   try {
@@ -195,6 +233,8 @@ async function main() {
     NEXT_TELEMETRY_DISABLED: "1",
   };
 
+  say("connecting to the database");
+  await waitForDatabase();
   say("setting up database roles");
   await setupRolesAndDatabase();
   say("applying migrations");
@@ -259,10 +299,4 @@ async function main() {
   setInterval(watch, 24 * 3600_000).unref();
 }
 
-main().catch((e) =>
-  fail(
-    e instanceof Error
-      ? (e.message.split("\n")[0] ?? "startup failed").replace(/postgres(ql)?:\/\/\S+/g, "[url]")
-      : "startup failed",
-  ),
-);
+main().catch((e) => fail(reason(e)));
