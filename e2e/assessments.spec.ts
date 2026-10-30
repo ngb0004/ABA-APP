@@ -231,14 +231,25 @@ test("assessments in a plan: choose them, the section is flagged for a redraft, 
   await page.waitForURL(/\/plans\//);
   const planId = page.url().split("/plans/")[1]!;
 
-  // A collapsed checklist: recent confirmed assessments are chosen, the older Vineland-3 is not.
+  // A collapsed checklist: confirmed assessments from the six-month window are chosen (Charlie's
+  // PSI-4); both Vineland-3 administrations are older (about 200 and 565 days).
   const panel = page.getByTestId("plan-assessments");
   await panel.locator("summary").click();
+  await expect(panel.getByTestId("plan-assessments-window")).toContainText("Default window: 6 months");
   const rows = panel.getByTestId("plan-assessment");
   const vineland = rows.filter({ hasText: /^Vineland-3/ });
   await expect(vineland).toHaveCount(2);
-  await expect(vineland.nth(0).getByRole("checkbox")).toBeChecked();
+  await expect(vineland.nth(0).getByRole("checkbox")).not.toBeChecked();
   await expect(vineland.nth(1).getByRole("checkbox")).not.toBeChecked();
+  await expect(
+    rows
+      .filter({ hasText: /^PSI-4/ })
+      .first()
+      .getByRole("checkbox"),
+  ).toBeChecked();
+  // Choose the newer Vineland-3 before drafting.
+  await vineland.nth(0).getByRole("checkbox").check();
+  await expect(panel.getByTestId("plan-assessments-note")).toHaveText("Saved.");
   const vbmapp = rows.filter({ hasText: "VB-MAPP" }).first().getByRole("checkbox");
   await expect(vbmapp).toBeChecked();
   await expect(vbmapp).toBeDisabled();
@@ -276,22 +287,50 @@ test("assessments in a plan: choose them, the section is flagged for a redraft, 
   await section.getByTestId("draft-assessment_results").click();
   await expect(section.getByTestId("redraft-assessment_results")).toHaveCount(0);
 
-  // Requirements: TRICARE outcome measures come from the confirmed assessments.
+  // Reset to default goes back to the six-month window (and flags the section again).
+  await page.getByTestId("plan-assessments-reset").click();
+  await expect(page.getByTestId("plan-assessments-note")).toHaveText("Saved. One section needs a redraft.");
+  await expect(vineland.nth(0).getByRole("checkbox")).not.toBeChecked();
+  await expect(vineland.nth(1).getByRole("checkbox")).not.toBeChecked();
+
+  // Requirements: TRICARE outcome measures come from the confirmed assessments. Charlie's
+  // authorization ends in eleven days: the PDDBI parent form (six-monthly, about 200 days ago)
+  // was due 30 days before it ends; the Vineland-3 (yearly) lasts into the next authorization.
   await page.goto(`/clients/${c3}/requirements`);
+  const schedule = page.getByTestId("requirements-insurance").first().getByTestId("requirement-schedule");
+  const D = "\\d{4}-\\d{2}-\\d{2}";
   await expect(
-    page
-      .getByTestId("requirements-insurance")
-      .first()
-      .getByTestId("requirement-schedule")
-      .filter({ hasText: /^Vineland-3 last given \d{4}-\d{2}-\d{2}: due by \d{4}-\d{2}-\d{2}$/ })
+    schedule
+      .filter({
+        hasText: new RegExp(
+          `^PDDBI parent last given ${D} · overdue since ${D} \\(30 days before the authorization ends ${D}\\)$`,
+        ),
+      })
       .first(),
   ).toBeVisible();
-  // The packet checklist shows the same line.
+  await expect(
+    schedule
+      .filter({
+        hasText: new RegExp(
+          `^Vineland-3 last given ${D} · next due ${D}, after the authorization ends ${D}$`,
+        ),
+      })
+      .first(),
+  ).toBeVisible();
+  // The packet checklist shows the same lines.
   await page.goto(`/plans/${planId}/packet`);
   await expect(
     page
       .getByTestId("checklist-note")
-      .filter({ hasText: /^Vineland-3 last given .+: due by / })
+      .filter({
+        hasText: /^PDDBI parent last given .+ · overdue since .+ \(30 days before the authorization ends /,
+      })
+      .first(),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByTestId("checklist-note")
+      .filter({ hasText: /^Vineland-3 last given .+ · next due / })
       .first(),
   ).toBeVisible();
 });

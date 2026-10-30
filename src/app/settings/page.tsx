@@ -27,9 +27,10 @@ const settingsFields: FieldSpec[] = [
     type: "number",
   },
   {
-    name: "reassessmentLeadDays",
-    label: "Reassess this many days before the authorization ends",
+    name: "assessmentDueDays",
+    label: "Assessments due before authorization ends (days)",
     type: "number",
+    help: "Reassessments and outcome measures that would lapse before the next authorization are due this many days before the current one ends.",
   },
   {
     name: "statesServed",
@@ -83,7 +84,7 @@ export default async function SettingsPage() {
             npi: raw.npi ?? "",
             taxId: raw.taxId ?? "",
             reauthLeadDays: s.reauthLeadDays,
-            reassessmentLeadDays: s.reassessmentLeadDays,
+            assessmentDueDays: s.assessmentDueDays,
             offices: s.offices,
             statesServed: s.statesServed,
             timeZone: s.timeZone,

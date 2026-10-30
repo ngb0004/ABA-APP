@@ -6,6 +6,8 @@ import type { Prisma } from "@prisma/client";
 import { draftWithFirewall } from "../ai";
 import { assessmentCatalog } from "../assessments/catalog";
 import {
+  assessmentWindow,
+  assessmentWindowLabel,
   assessmentWindowStart,
   defaultAssessmentSelection,
   redraftMarks,
@@ -117,6 +119,15 @@ async function primaryRules(tx: Tx, b: PlanBundle) {
 
 // ---------------------------------------------------------------- create
 
+/** The confirmed assessments of a client given in the `months` before `anchor` (the default selection). */
+async function defaultSelectionFor(tx: Tx, clientId: string, anchor: Day, months: number) {
+  const assessments = await tx.assessment.findMany({
+    where: { clientId },
+    select: { id: true, status: true, administeredOn: true },
+  });
+  return defaultAssessmentSelection(assessments, assessmentWindowStart(anchor, months));
+}
+
 export async function createPlan(ctx: OrgCtx, clientId: string, type: "initial" | "reauth") {
   requirePermission(ctx.role, "plan:create");
   return withOrg(ctx, async (tx) => {
@@ -127,16 +138,9 @@ export async function createPlan(ctx: OrgCtx, clientId: string, type: "initial" 
     });
     const primary = client.payors.find((p) => p.priority === "primary");
     const rules = primary ? await loadApplicableRules(tx, primary) : [];
-    // Default assessments: confirmed ones from the last twelve months (or the authorization period).
-    const auth = client.authorizations[0];
-    const assessments = await tx.assessment.findMany({
-      where: { clientId },
-      select: { id: true, status: true, administeredOn: true },
-    });
-    const assessmentIds = defaultAssessmentSelection(
-      assessments,
-      assessmentWindowStart(toDay(new Date()), auth ? toDay(auth.startDate) : null),
-    );
+    // Default assessments: confirmed ones from the window (six months, or the payor's own rule).
+    const window = assessmentWindow(rules);
+    const assessmentIds = await defaultSelectionFor(tx, clientId, toDay(new Date()), window.months);
     // Record the payor document versions this plan is written against.
     const docs = new Map<string, { key: string; name: string; version: string }>();
     for (const r of rules)
@@ -172,7 +176,12 @@ export async function createPlan(ctx: OrgCtx, clientId: string, type: "initial" 
       action: "plan:create",
       entityType: "Plan",
       entityId: plan.id,
-      meta: { type, assessments: assessmentIds.length },
+      meta: {
+        type,
+        assessments: assessmentIds.length,
+        windowMonths: window.months,
+        windowRule: window.rule?.id ?? null,
+      },
     });
     return plan;
   });
@@ -257,9 +266,12 @@ export async function planView(ctx: OrgCtx, planId: string, asOf: Day) {
       vbmapp: i.source === "vbmapp_import",
       selected: i.source === "vbmapp_import" || b.plan.assessmentIds.includes(i.id),
     }));
+    // Where a reset (and a new plan) takes its default selection from.
+    const window = assessmentWindow(rules);
     return {
       bundle: b,
       assessmentOptions,
+      assessmentWindow: { ...window, label: assessmentWindowLabel(window) },
       sourced: sourced.values(),
       sections,
       goals,
@@ -592,48 +604,90 @@ export async function reopenSection(ctx: OrgCtx, planId: string, key: string) {
 export async function setPlanAssessments(ctx: OrgCtx, planId: string, ids: string[]) {
   requirePermission(ctx.role, "section:edit");
   return withOrg(ctx, async (tx) => {
-    await assertPlanClientActive(tx, planId);
-    const plan = await tx.plan.findUnique({ where: { id: planId }, include: { sections: true } });
-    if (!plan) throw new HttpError(404, "Not found");
-    if (plan.status === "finalized")
-      throw new HttpError(409, "This plan is finalized; its assessments can no longer change");
-    const wanted = [...new Set(ids)];
-    const found = await tx.assessment.findMany({
-      where: { id: { in: wanted }, clientId: plan.clientId },
-      select: { id: true, administeredOn: true },
-      orderBy: [{ administeredOn: "asc" }, { id: "asc" }],
-    });
-    if (found.length !== wanted.length) throw new HttpError(422, "Choose assessments of this client");
-    const next = found.map((a) => a.id);
-    if (sameSelection(plan.assessmentIds, next)) return { changed: false, redraft: [] as string[] };
-    await tx.plan.update({ where: { id: planId }, data: { assessmentIds: next } });
-    // Drafts give no values, so only a change among the confirmed ones reopens sections (a
-    // selected draft flags them when it is confirmed).
-    const confirmed = new Set(
-      (
-        await tx.assessment.findMany({
-          where: { id: { in: [...new Set([...plan.assessmentIds, ...next])] }, status: "confirmed" },
-          select: { id: true },
-        })
-      ).map((a) => a.id),
-    );
-    const usedChanged = !sameSelection(
-      plan.assessmentIds.filter((x) => confirmed.has(x)),
-      next.filter((x) => confirmed.has(x)),
-    );
-    const marks = usedChanged ? await markForRedraft(tx, ctx, plan.sections) : [];
-    await audit(tx, {
-      action: "plan:assessments",
-      entityType: "Plan",
-      entityId: planId,
-      meta: {
-        added: next.filter((x) => !plan.assessmentIds.includes(x)).length,
-        removed: plan.assessmentIds.filter((x) => !next.includes(x)).length,
-        redraft: marks.map((m) => m.key),
-      },
-    });
-    return { changed: true, redraft: marks.map((m) => m.key) };
+    const plan = await editablePlanForAssessments(tx, planId);
+    return applyPlanAssessments(tx, ctx, plan, ids, "plan:assessments", {});
   });
+}
+
+async function editablePlanForAssessments(tx: Tx, planId: string) {
+  await assertPlanClientActive(tx, planId);
+  const plan = await tx.plan.findUnique({ where: { id: planId }, include: { sections: true } });
+  if (!plan) throw new HttpError(404, "Not found");
+  if (plan.status === "finalized")
+    throw new HttpError(409, "This plan is finalized; its assessments can no longer change");
+  return plan;
+}
+
+/**
+ * "Reset to default": the selection a new plan would get, from the window in force now (six
+ * months, or the primary payor's assessment_window rule) counted back from the plan's creation
+ * date. Flags sections for a redraft like any other change. Existing plans keep their stored
+ * selection until a BCBA resets it.
+ */
+export async function resetPlanAssessments(ctx: OrgCtx, planId: string) {
+  requirePermission(ctx.role, "section:edit");
+  return withOrg(ctx, async (tx) => {
+    const plan = await editablePlanForAssessments(tx, planId);
+    const client = await tx.client.findUniqueOrThrow({
+      where: { id: plan.clientId },
+      include: { payors: true },
+    });
+    const primary = client.payors.find((p) => p.priority === "primary");
+    const window = assessmentWindow(primary ? await loadApplicableRules(tx, primary) : []);
+    const ids = await defaultSelectionFor(tx, plan.clientId, toDay(plan.createdAt), window.months);
+    return applyPlanAssessments(tx, ctx, plan, ids, "plan:assessments_reset", {
+      windowMonths: window.months,
+      windowRule: window.rule?.id ?? null,
+    });
+  });
+}
+
+async function applyPlanAssessments(
+  tx: Tx,
+  ctx: OrgCtx,
+  plan: Prisma.PlanGetPayload<{ include: { sections: true } }>,
+  ids: string[],
+  action: string,
+  extraMeta: Record<string, string | number | null>,
+) {
+  const planId = plan.id;
+  const wanted = [...new Set(ids)];
+  const found = await tx.assessment.findMany({
+    where: { id: { in: wanted }, clientId: plan.clientId },
+    select: { id: true, administeredOn: true },
+    orderBy: [{ administeredOn: "asc" }, { id: "asc" }],
+  });
+  if (found.length !== wanted.length) throw new HttpError(422, "Choose assessments of this client");
+  const next = found.map((a) => a.id);
+  if (sameSelection(plan.assessmentIds, next)) return { changed: false, redraft: [] as string[] };
+  await tx.plan.update({ where: { id: planId }, data: { assessmentIds: next } });
+  // Drafts give no values, so only a change among the confirmed ones reopens sections (a
+  // selected draft flags them when it is confirmed).
+  const confirmed = new Set(
+    (
+      await tx.assessment.findMany({
+        where: { id: { in: [...new Set([...plan.assessmentIds, ...next])] }, status: "confirmed" },
+        select: { id: true },
+      })
+    ).map((a) => a.id),
+  );
+  const usedChanged = !sameSelection(
+    plan.assessmentIds.filter((x) => confirmed.has(x)),
+    next.filter((x) => confirmed.has(x)),
+  );
+  const marks = usedChanged ? await markForRedraft(tx, ctx, plan.sections) : [];
+  await audit(tx, {
+    action,
+    entityType: "Plan",
+    entityId: planId,
+    meta: {
+      added: next.filter((x) => !plan.assessmentIds.includes(x)).length,
+      removed: plan.assessmentIds.filter((x) => !next.includes(x)).length,
+      redraft: marks.map((m) => m.key),
+      ...extraMeta,
+    },
+  });
+  return { changed: true, redraft: marks.map((m) => m.key) };
 }
 
 /** Flags sections that use assessments for a redraft; approved ones are reopened. */

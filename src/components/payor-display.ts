@@ -111,6 +111,7 @@ export const RULE_TYPE_LABELS: Record<RuleType, string> = {
   plan_content: "What the treatment plan must cover",
   submission_channel: "Where and how to submit",
   decision_timeframe: "How long the payor takes to decide",
+  assessment_window: "How recent a plan's assessments are by default",
 };
 
 export const REQUIREMENT_STATUS_LABELS: Record<RequirementStatus, string> = {

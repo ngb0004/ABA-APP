@@ -3,6 +3,9 @@ import { assessmentCatalog, parseAssessmentCatalog, toolMatches } from "@/lib/as
 import {
   assessmentsForModel,
   assessmentValues,
+  ASSESSMENT_LOOKBACK_MONTHS,
+  assessmentWindow,
+  assessmentWindowLabel,
   assessmentWindowStart,
   defaultAssessmentSelection,
   redraftMarks,
@@ -18,6 +21,7 @@ import { assessmentItem, type StoredAssessment } from "@/lib/assessments/view";
 import { SourcedContext, validateAiText, tokensIn } from "@/lib/firewall";
 import { suggestFromAreas, tierForShare } from "@/lib/goals/suggest";
 import { evaluateRule } from "@/lib/payors/evaluate";
+import type { EvalContext } from "@/lib/payors/context";
 import type { Rule } from "@/lib/payors/types";
 import { assessmentChecks } from "@/lib/plan/presubmission";
 import type { PlanBundle } from "@/lib/plan/context";
@@ -118,10 +122,69 @@ const all = [vinelandOld, vinelandNew, ablls, draftSrs, other];
 // ---------------------------------------------------------------- selection default
 
 describe("default assessment selection", () => {
-  it("starts twelve months back, or at the authorization start when that is earlier", () => {
-    expect(assessmentWindowStart("2026-10-29", null)).toBe("2025-10-29");
-    expect(assessmentWindowStart("2026-10-29", "2026-05-01")).toBe("2025-10-29");
-    expect(assessmentWindowStart("2026-10-29", "2025-06-01")).toBe("2025-06-01");
+  it("starts six months back by default (BCBA answer #42); the authorization start no longer widens it", () => {
+    expect(ASSESSMENT_LOOKBACK_MONTHS).toBe(6);
+    expect(assessmentWindowStart("2026-10-29")).toBe("2026-04-29");
+    expect(assessmentWindowStart("2026-10-29", 3)).toBe("2026-07-29");
+    expect(assessmentWindowStart("2026-10-29", 12)).toBe("2025-10-29");
+    // Month ends clamp, leap years included.
+    expect(assessmentWindowStart("2026-08-31")).toBe("2026-02-28");
+    expect(assessmentWindowStart("2028-08-31")).toBe("2028-02-29");
+    expect(assessmentWindowStart("2027-05-31", 3)).toBe("2027-02-28");
+  });
+
+  const windowRule = (months: unknown, verified = false, extra: Partial<Rule> = {}): Rule =>
+    ({
+      id: `w${String(months)}`,
+      payorKey: "p",
+      type: "assessment_window",
+      params: { months },
+      verified,
+      source: {
+        key: "doc",
+        name: "Example Payor Manual",
+        version: "2026",
+        section: "4.2 Assessments",
+        url: null,
+      },
+      notes: null,
+      inheritedFrom: null,
+      ...extra,
+    }) as Rule;
+
+  it("uses the primary payor's assessment_window rule when there is one, else six months", () => {
+    expect(assessmentWindow([])).toEqual({ months: 6, rule: null });
+    const w = assessmentWindow([windowRule(3)]);
+    expect(w.months).toBe(3);
+    expect(w.rule).toMatchObject({ id: "w3", verified: false, sourceName: "Example Payor Manual" });
+    expect(assessmentWindowLabel(w)).toBe(
+      "Default window: 3 months, from Example Payor Manual, 4.2 Assessments (unverified)",
+    );
+    expect(assessmentWindowLabel(assessmentWindow([]))).toBe("Default window: 6 months");
+    expect(assessmentWindowLabel(assessmentWindow([windowRule(3, true)]))).toBe(
+      "Default window: 3 months, from Example Payor Manual, 4.2 Assessments",
+    );
+    expect(assessmentWindowLabel(assessmentWindow([windowRule(1, true)]))).toBe(
+      "Default window: 1 month, from Example Payor Manual, 4.2 Assessments",
+    );
+  });
+
+  it("an unverified window still applies (it only selects defaults); the narrowest wins", () => {
+    expect(assessmentWindow([windowRule(3, false), windowRule(4, true)]).months).toBe(3);
+    // Other rule types and malformed windows are ignored.
+    const other = { ...windowRule(2), type: "plan_content" } as Rule;
+    expect(
+      assessmentWindow([other, windowRule(0), windowRule(2.5), windowRule("3"), windowRule(99)]),
+    ).toEqual({
+      months: 6,
+      rule: null,
+    });
+    const unsourced = windowRule(3, false, {
+      source: { key: null, name: null, version: null, section: null, url: null },
+    });
+    expect(assessmentWindowLabel(assessmentWindow([unsourced]))).toBe(
+      "Default window: 3 months, from a payor rule with no source (unverified)",
+    );
   });
 
   it("selects confirmed assessments in the window only, oldest first", () => {
@@ -511,35 +574,73 @@ describe("outcome measure due dates from confirmed assessments", () => {
     administeredOn,
     name: typeKey === "vineland_3" ? "Vineland-3" : typeKey,
   });
-  const ctxWith = (assessments: ReturnType<typeof given>[], type: "initial" | "reauth" = "reauth") =>
+  // Charlie's authorization: 2026-05-12 to 2026-11-09; today 2026-10-29. Assessments are due by
+  // 2026-10-10 (30 days before it ends) when they lapse before 2026-11-10.
+  const ctxWith = (
+    assessments: ReturnType<typeof given>[],
+    type: "initial" | "reauth" = "reauth",
+    extra: Partial<EvalContext> = {},
+  ) =>
     evalContextFor(c3, fullPlan(type), {
       asOf: "2026-10-29",
       attachments: [],
       assessments,
       authorization: { ...evalContextFor(c3).authorization!, kind: type },
+      ...extra,
     });
+  const noAuth = { authorization: null };
+  const WHY = "(30 days before the authorization ends 2026-11-09)";
 
-  it("annually: current within a year, with last given and due by", () => {
+  it("annually: not due when it lasts past the authorization; the line says when it is next due", () => {
     const r = evaluateRule(rule({ annually: ["Vineland-3"] }), ctxWith([given("vineland_3", "2026-04-12")]));
     expect(r.status).toBe("pass");
-    expect(r.schedule).toEqual(["Vineland-3 last given 2026-04-12: due by 2027-04-12"]);
+    expect(r.schedule).toEqual([
+      "Vineland-3 last given 2026-04-12 · next due 2027-04-12, after the authorization ends 2026-11-09",
+    ]);
     expect(r.evidence[0]).toMatch(/Vineland-3: assessment Vineland-3 \(2026-04-12\), due every year/);
+    expect(r.evidence).toContain(
+      "Due 30 days before the authorization ends 2026-11-09 (practice setting) when a measure lapses before the next authorization starts",
+    );
   });
 
-  it("annually: due once a year has passed; the newest administration counts", () => {
+  it("annually: due when it lapses before the next authorization; the newest administration counts", () => {
     const late = evaluateRule(
       rule({ annually: ["Vineland-3"] }),
-      ctxWith([given("vineland_3", "2025-04-12"), given("vineland_3", "2025-10-01")]),
+      ctxWith([given("vineland_3", "2025-04-12"), given("vineland_3", "2025-11-01")]),
     );
     expect(late.status).toBe("fail");
-    expect(late.message).toBe("Outcome measures due: Vineland-3 (every year; last given 2025-10-01)");
-    expect(late.schedule).toEqual(["Vineland-3 last given 2025-10-01: overdue since 2026-10-01"]);
-    // Due on the anniversary itself is still current.
+    expect(late.message).toBe(
+      "Outcome measures due: Vineland-3 (every year; last given 2025-11-01; overdue since 2026-10-10)",
+    );
+    expect(late.schedule).toEqual([`Vineland-3 last given 2025-11-01 · overdue since 2026-10-10 ${WHY}`]);
+    // Before the due-by date it is due, not overdue.
+    const early = evaluateRule(
+      rule({ annually: ["Vineland-3"] }),
+      ctxWith([given("vineland_3", "2025-11-01")], "reauth", { asOf: "2026-10-01" }),
+    );
+    expect(early.status).toBe("fail");
+    expect(early.schedule).toEqual([`Vineland-3 last given 2025-11-01 · due by 2026-10-10 ${WHY}`]);
+    // Lapsing the day the next authorization starts is not due.
     const onDay = evaluateRule(
       rule({ annually: ["Vineland-3"] }),
-      ctxWith([given("vineland_3", "2025-10-29")]),
+      ctxWith([given("vineland_3", "2025-11-10")]),
     );
     expect(onDay.status).toBe("pass");
+    const lastDay = evaluateRule(
+      rule({ annually: ["Vineland-3"] }),
+      ctxWith([given("vineland_3", "2025-11-09")]),
+    );
+    expect(lastDay.status).toBe("fail");
+  });
+
+  it("the practice setting moves the due-by date", () => {
+    const r = evaluateRule(
+      rule({ annually: ["Vineland-3"] }),
+      ctxWith([given("vineland_3", "2025-11-01")], "reauth", { asOf: "2026-10-01", assessmentDueDays: 1 }),
+    );
+    expect(r.schedule).toEqual([
+      "Vineland-3 last given 2025-11-01 · due by 2026-11-08 (1 day before the authorization ends 2026-11-09)",
+    ]);
   });
 
   it("every six months, with form-specific names", () => {
@@ -549,24 +650,31 @@ describe("outcome measure due dates from confirmed assessments", () => {
     );
     expect(r.status).toBe("fail");
     expect(r.message).toBe(
-      "Outcome measures due: PDDBI teacher or BCBA (every six months; last given 2026-01-15)",
+      "Outcome measures due: PDDBI teacher or BCBA (every six months; last given 2026-01-15; overdue since 2026-10-10)",
     );
     expect(r.schedule).toEqual([
-      "PDDBI parent last given 2026-06-01: due by 2026-12-01",
-      "PDDBI teacher or BCBA last given 2026-01-15: overdue since 2026-07-15",
+      "PDDBI parent last given 2026-06-01 · next due 2026-12-01, after the authorization ends 2026-11-09",
+      `PDDBI teacher or BCBA last given 2026-01-15 · overdue since 2026-10-10 ${WHY}`,
     ]);
     // A parent form does not count for the teacher form.
     const parentOnly = evaluateRule(
       rule({ every_6_months: ["PDDBI_teacher_or_BCBA"] }),
       ctxWith([given("pddbi", "2026-10-01", "parent")]),
     );
-    expect(parentOnly.message).toBe("Outcome measures due: PDDBI teacher or BCBA (every six months)");
+    expect(parentOnly.message).toBe(
+      "Outcome measures due: PDDBI teacher or BCBA (every six months; overdue since 2026-10-10)",
+    );
+    expect(parentOnly.schedule).toEqual([
+      `PDDBI teacher or BCBA not given yet · overdue since 2026-10-10 ${WHY}`,
+    ]);
   });
 
   it("'PSI or SIPA' is met by either", () => {
     const r = evaluateRule(rule({ every_6_months: ["PSI or SIPA"] }), ctxWith([given("sipa", "2026-08-01")]));
     expect(r.status).toBe("pass");
-    expect(r.schedule).toEqual(["PSI or SIPA last given 2026-08-01: due by 2027-02-01"]);
+    expect(r.schedule).toEqual([
+      "PSI or SIPA last given 2026-08-01 · next due 2027-02-01, after the authorization ends 2026-11-09",
+    ]);
   });
 
   it("every two years", () => {
@@ -574,20 +682,46 @@ describe("outcome measure due dates from confirmed assessments", () => {
     expect(evaluateRule(rr, ctxWith([given("srs_2", "2025-01-10")])).status).toBe("pass");
     const due = evaluateRule(rr, ctxWith([given("srs_2", "2024-10-01")]));
     expect(due.status).toBe("fail");
-    expect(due.schedule).toEqual(["SRS-2 last given 2024-10-01: overdue since 2026-10-01"]);
+    expect(due.schedule).toEqual([`SRS-2 last given 2024-10-01 · overdue since 2026-10-10 ${WHY}`]);
   });
 
-  it("initial: a baseline from the last six months", () => {
+  it("initial: a baseline that lapses (six months) before the next authorization is due", () => {
     const rr = rule({ initial: ["Vineland-3", "SRS-2"], annually: ["Vineland-3"] });
     const r = evaluateRule(
       rr,
       ctxWith([given("vineland_3", "2026-09-01"), given("srs_2", "2026-03-01")], "initial"),
     );
     expect(r.status).toBe("fail");
-    expect(r.message).toBe("Outcome measures due: SRS-2 (at baseline; last given 2026-03-01)");
+    expect(r.message).toBe(
+      "Outcome measures due: SRS-2 (at baseline; last given 2026-03-01; overdue since 2026-10-10)",
+    );
   });
 
-  it("falls back to attachments when no assessment is on record, or the assessment is past due", () => {
+  it("no current authorization: the cadence date from the last administration", () => {
+    const ok = evaluateRule(
+      rule({ annually: ["Vineland-3"] }),
+      ctxWith([given("vineland_3", "2026-02-01")], "reauth", noAuth),
+    );
+    expect(ok.status).toBe("pass");
+    expect(ok.schedule).toEqual(["Vineland-3 last given 2026-02-01 · due by 2027-02-01"]);
+    const late = evaluateRule(
+      rule({ annually: ["Vineland-3"] }),
+      ctxWith([given("vineland_3", "2025-10-01")], "reauth", noAuth),
+    );
+    expect(late.status).toBe("fail");
+    expect(late.message).toBe(
+      "Outcome measures due: Vineland-3 (every year; last given 2025-10-01; overdue since 2026-10-01)",
+    );
+    expect(late.schedule).toEqual(["Vineland-3 last given 2025-10-01 · overdue since 2026-10-01"]);
+    // An authorization that has ended is not current.
+    const ended = evaluateRule(
+      rule({ annually: ["Vineland-3"] }),
+      ctxWith([given("vineland_3", "2026-02-01")], "reauth", { asOf: "2026-11-10" }),
+    );
+    expect(ended.schedule).toEqual(["Vineland-3 last given 2026-02-01 · due by 2027-02-01"]);
+  });
+
+  it("falls back to attachments when no assessment is on record, or the assessment is older", () => {
     const att = (title: string, documentDate: string) => ({ kind: "outcome_measure", title, documentDate });
     const ctx = {
       ...ctxWith([given("vineland_3", "2025-01-01")]),
@@ -595,7 +729,9 @@ describe("outcome measure due dates from confirmed assessments", () => {
     };
     const r = evaluateRule(rule({ annually: ["Vineland-3"] }), ctx);
     expect(r.status).toBe("pass");
-    expect(r.schedule).toEqual(["Vineland-3 last given 2026-02-01: due by 2027-02-01"]);
+    expect(r.schedule).toEqual([
+      "Vineland-3 last given 2026-02-01 · next due 2027-02-01, after the authorization ends 2026-11-09",
+    ]);
     expect(r.evidence[0]).toMatch(/attachment "Vineland-3"/);
     // Unmapped tool names still work from attachments alone.
     const unmapped = evaluateRule(rule({ annually: ["CBCL"] }), {

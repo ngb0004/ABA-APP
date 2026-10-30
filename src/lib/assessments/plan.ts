@@ -9,21 +9,73 @@
  */
 import { addMonths, toDay, type Day } from "../dates";
 import type { SourcedValue } from "../firewall";
+import type { Rule } from "../payors/types";
 import { SECTION_BY_KEY } from "../plan/sections";
 import { catalogType, KIND_LABELS, type Catalog, type ScaleKind } from "./catalog";
 import { assessmentItem, ordinal, skillsTotal, type AssessmentItem, type StoredAssessment } from "./view";
 
-/** Confirmed assessments this recent are selected by default (BCBA question: Assessments). */
-export const ASSESSMENT_LOOKBACK_MONTHS = 12;
+/**
+ * Confirmed assessments this recent are selected by default (BCBA answer, QUESTIONS #42: "6-month
+ * window is the default for almost all payors; some payors may say 3"). A payor that states its
+ * own window says so in an `assessment_window` rule (data, never code).
+ */
+export const ASSESSMENT_LOOKBACK_MONTHS = 6;
+/** Longest window an `assessment_window` rule may set (anything else is ignored as malformed). */
+export const MAX_ASSESSMENT_WINDOW_MONTHS = 24;
 export const ASSESSMENT_PREFIX = "assessment.";
 
 /**
- * Where the default selection starts: twelve months before the plan was created, or the start
- * of the authorization the plan is written for when that is earlier (its whole period counts).
+ * Where the default selection starts: the window's months before the plan was created. The
+ * authorization's start no longer widens it (a twelve-month authorization would otherwise reach
+ * back past the six months the BCBA set).
  */
-export function assessmentWindowStart(planCreatedOn: Day, authStart: Day | null): Day {
-  const lookback = addMonths(planCreatedOn, -ASSESSMENT_LOOKBACK_MONTHS);
-  return authStart && authStart < lookback ? authStart : lookback;
+export function assessmentWindowStart(planCreatedOn: Day, months = ASSESSMENT_LOOKBACK_MONTHS): Day {
+  return addMonths(planCreatedOn, -months);
+}
+
+/** A valid window length from a rule's params, or undefined. */
+export function windowMonths(params: Record<string, unknown>): number | undefined {
+  const m = params.months;
+  return typeof m === "number" && Number.isInteger(m) && m >= 1 && m <= MAX_ASSESSMENT_WINDOW_MONTHS
+    ? m
+    : undefined;
+}
+
+export type AssessmentWindow = {
+  months: number;
+  /** The payor rule the window came from; null for the default. */
+  rule: { id: string; verified: boolean; sourceName: string | null; section: string | null } | null;
+};
+
+/**
+ * The default window for a plan: the primary payor's `assessment_window` rule when it has one
+ * (the narrowest, if several), else six months. An unverified rule still applies: it only picks
+ * which boxes start checked, and the BCBA can change them. The plan says where it came from.
+ */
+export function assessmentWindow(
+  rules: Pick<Rule, "id" | "type" | "params" | "verified" | "source">[],
+): AssessmentWindow {
+  let best: AssessmentWindow = { months: ASSESSMENT_LOOKBACK_MONTHS, rule: null };
+  for (const r of rules) {
+    if (r.type !== "assessment_window") continue;
+    const m = windowMonths(r.params);
+    if (m === undefined || (best.rule && m >= best.months)) continue;
+    best = {
+      months: m,
+      rule: { id: r.id, verified: r.verified, sourceName: r.source.name, section: r.source.section },
+    };
+  }
+  return best;
+}
+
+/** "Default window: 6 months", or "Default window: 3 months, from <source> (unverified)". */
+export function assessmentWindowLabel(w: AssessmentWindow): string {
+  const len = `${w.months} ${w.months === 1 ? "month" : "months"}`;
+  if (!w.rule) return `Default window: ${len}`;
+  const from = w.rule.sourceName
+    ? [w.rule.sourceName, w.rule.section].filter(Boolean).join(", ")
+    : "a payor rule with no source";
+  return `Default window: ${len}, from ${from}${w.rule.verified ? "" : " (unverified)"}`;
 }
 
 /** Every confirmed assessment administered on or after the window start, oldest first. */

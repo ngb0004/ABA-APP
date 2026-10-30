@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { loadPayorSeed, resolvePayorRules } from "@/lib/payors/load";
 import { evaluateRule, evaluateRules } from "@/lib/payors/evaluate";
-import { RULE_TYPES, type Rule } from "@/lib/payors/types";
+import { RULE_TYPES, SeedRuleSchema, type Rule } from "@/lib/payors/types";
 import {
   credentialsMissingFromQuote,
   numbersMissingFromQuote,
@@ -62,9 +62,35 @@ describe("seed loader", () => {
       for (const r of [...p.rules, ...p.extra_rules])
         if (r.source) expect(seed.documents).toHaveProperty(r.source);
   });
-  it("uses every rule type in the seed", () => {
+  it("uses every rule type in the seed, except types no seeded source document states", () => {
+    // assessment_window: no seeded document states a look-back window for a plan's assessments
+    // (their recency limits count from the requested authorization's start; see QUESTIONS #42).
+    const NOT_STATED = ["assessment_window"];
     const types = new Set(seed.payors.flatMap((p) => rulesFor(p.id).map((r) => r.type)));
-    for (const t of RULE_TYPES) expect(types.has(t)).toBe(true);
+    for (const t of RULE_TYPES) expect(types.has(t), t).toBe(!NOT_STATED.includes(t));
+  });
+  it("validates an assessment_window rule's months (whole months, 1 to 24)", () => {
+    const rule = (months: unknown) => ({ type: "assessment_window", params: { months }, verified: false });
+    expect(SeedRuleSchema.safeParse(rule(3)).success).toBe(true);
+    for (const bad of [0, 25, 2.5, "3", undefined])
+      expect(SeedRuleSchema.safeParse(rule(bad)).success).toBe(false);
+    // Other types are unaffected.
+    expect(SeedRuleSchema.safeParse({ type: "plan_content", params: {}, verified: false }).success).toBe(
+      true,
+    );
+  });
+  it("evaluates an assessment_window rule as information (it only sets a plan's default selection)", () => {
+    const r = (params: Record<string, unknown>, ver = true): Rule => ({
+      ...find("ga_medicaid", "plan_content"),
+      type: "assessment_window",
+      params,
+      verified: ver,
+    });
+    const ok = evaluateRule(r({ months: 3 }), ctx1);
+    expect(ok.status).toBe("pass");
+    expect(ok.message).toBe("New plans select assessments from the last 3 months by default");
+    expect(evaluateRule(r({ months: 3 }, false), ctx1).status).toBe("warn");
+    expect(evaluateRule(r({ months: "three" }), ctx1).message).toMatch(/manual check/);
   });
 });
 
@@ -204,14 +230,20 @@ describe("rule types (evaluated as verified)", () => {
     const r = evaluateRule(verified(find("tricare_east", "outcome_measure_schedule")), ctx3);
     expect(r.status).toBe("fail");
     // Rule keys read as words, and a stale one says it is overdue.
-    expect(r.message).toMatch(/PDDBI parent \(every six months; last given/);
-    expect(r.message).toMatch(/PDDBI teacher or BCBA \(every six months\)/);
-    expect(r.schedule!.find((x) => x.startsWith("PDDBI parent"))).toMatch(
-      /^PDDBI parent last given \d{4}-\d{2}-\d{2}: overdue since \d{4}-\d{2}-\d{2}$/,
+    // Charlie's authorization ends 2026-11-09: due by 2026-10-10, 30 days before.
+    expect(r.message).toMatch(
+      /PDDBI parent \(every six months; last given 2026-04-12; overdue since 2026-10-10\)/,
     );
+    expect(r.message).toMatch(/PDDBI teacher or BCBA \(every six months; overdue since 2026-10-10\)/);
+    expect(r.schedule!.find((x) => x.startsWith("PDDBI parent"))).toBe(
+      "PDDBI parent last given 2026-04-12 · overdue since 2026-10-10 (30 days before the authorization ends 2026-11-09)",
+    );
+    // PSI given about 165 days ago lasts into the next authorization.
     expect(r.message).not.toMatch(/PSI/);
-    // From the confirmed assessments: the Vineland-3 given about two hundred days ago is due within the year.
-    expect(r.schedule).toContain("Vineland-3 last given 2026-04-12: due by 2027-04-12");
+    // From the confirmed assessments: the Vineland-3 given about two hundred days ago is current past this authorization.
+    expect(r.schedule).toContain(
+      "Vineland-3 last given 2026-04-12 · next due 2027-04-12, after the authorization ends 2026-11-09",
+    );
   });
   it("staff_credential: technicians must be RBTs (TRICARE West checklist)", () => {
     const r = verified(find("tricare_west", "staff_credential", (x) => x.params.role === "technician"));
@@ -492,7 +524,9 @@ describe("review fixes: rules the app cannot fully decide warn instead of failin
     expect(evaluateRule(r, ctx("2026-03-01")).status).toBe("pass");
     const late = evaluateRule(r, ctx("2025-04-01"));
     expect(late.status).toBe("fail");
-    expect(late.message).toMatch(/Vineland-3 \(every year; last given 2025-04-01\)/);
+    expect(late.message).toMatch(
+      /Vineland-3 \(every year; last given 2025-04-01; overdue since 2026-10-10\)/,
+    );
   });
 
   it("plan content that applies only to reauths or school services is gated", () => {

@@ -5,7 +5,14 @@ import { ForbiddenError, HttpError } from "@/lib/log";
 import { buildSourcedContext, loadPlanBundle } from "@/lib/plan/context";
 import { confirmAssessment, createAssessment, deleteAssessment } from "@/lib/services/assessments";
 import { evaluateClientRules } from "@/lib/services/payors";
-import { approveSection, createPlan, draftSection, planView, setPlanAssessments } from "@/lib/services/plans";
+import {
+  approveSection,
+  createPlan,
+  draftSection,
+  planView,
+  resetPlanAssessments,
+  setPlanAssessments,
+} from "@/lib/services/plans";
 import { sid } from "../../seed/synthetic/dataset";
 import { AS_OF } from "../helpers/synthetic-eval";
 import { clientId, ctxAs } from "../helpers/ctx";
@@ -21,8 +28,16 @@ const psi = sid("c3:as:psi4");
 let planId: string;
 const created: string[] = [];
 
+let defaultSelection: string[];
 beforeAll(async () => {
   planId = (await createPlan(bcba, charlie, "reauth")).id;
+  defaultSelection = (await withOrg(bcba, (tx) => tx.plan.findUniqueOrThrow({ where: { id: planId } })))
+    .assessmentIds;
+  // The rest of this file works with the selection a plan made under the earlier twelve-month
+  // window stored (existing plans keep theirs): written directly, as the backfill did.
+  await withOrg(bcba, (tx) =>
+    tx.plan.update({ where: { id: planId }, data: { assessmentIds: [vinelandNew, srs, pddbi, psi] } }),
+  );
 });
 afterEach(() => setLlmProvider(null));
 // Other files expect Charlie's seeded assessments: remove the ones made here.
@@ -45,11 +60,14 @@ const selectionOf = async () =>
   (await withOrg(bcba, (tx) => tx.plan.findUniqueOrThrow({ where: { id: planId } }))).assessmentIds;
 
 describe("assessments used in a plan", () => {
-  it("defaults to the confirmed assessments from the last twelve months", async () => {
+  it("defaults to the confirmed assessments from the last six months", async () => {
+    // Charlie: PSI-4 about 165 days ago is in; the Vineland-3, SRS-2, and PDDBI about 200 days ago are not.
+    expect(defaultSelection).toEqual([psi]);
     const ids = await selectionOf();
     for (const id of [vinelandNew, srs, pddbi, psi]) expect(ids).toContain(id);
     expect(ids).not.toContain(vinelandOld);
     const v = await planView(bcba, planId, AS_OF);
+    expect(v.assessmentWindow).toMatchObject({ months: 6, rule: null, label: "Default window: 6 months" });
     const vb = v.assessmentOptions.filter((o) => o.vbmapp);
     expect(vb.length).toBeGreaterThan(0);
     expect(vb.every((o) => o.selected)).toBe(true);
@@ -279,14 +297,111 @@ describe("assessments used in a plan", () => {
   });
 });
 
+describe("a payor's assessment window and reset to default", () => {
+  it("uses the primary payor's assessment_window rule (unverified still applies), shows its source, and resets on request", async () => {
+    const { payorId, doc } = await withOrg(bcba, async (tx) => {
+      const ins = await tx.clientPayor.findFirstOrThrow({
+        where: { clientId: charlie, priority: "primary" },
+      });
+      const doc = await tx.payorDocument.findFirstOrThrow({
+        where: { rules: { some: { payorId: ins.payorId } } },
+      });
+      return { payorId: ins.payorId, doc };
+    });
+    const rule = await withOrg(bcba, (tx) =>
+      tx.payorRule.create({
+        data: {
+          orgId: bcba.orgId,
+          payorId,
+          type: "assessment_window",
+          params: { months: 12 },
+          sourceDocumentId: doc.id,
+          sourceSection: "Test section",
+          lineageKey: "test:assessment_window",
+          ordinal: 9999,
+        },
+      }),
+    );
+    try {
+      // A new plan selects from the payor's twelve months.
+      const fresh = (await createPlan(bcba, charlie, "reauth")).id;
+      const freshIds = (await withOrg(bcba, (tx) => tx.plan.findUniqueOrThrow({ where: { id: fresh } })))
+        .assessmentIds;
+      // (Assessments confirmed earlier in this file are recent, so they are in any window.)
+      const recent = freshIds.filter((x) => created.includes(x));
+      expect(new Set(freshIds)).toEqual(new Set([vinelandNew, srs, pddbi, psi, ...recent]));
+      expect(freshIds).not.toContain(vinelandOld);
+      const createdEv = await withOrg(bcba, (tx) =>
+        tx.auditEvent.findFirstOrThrow({ where: { action: "plan:create", entityId: fresh } }),
+      );
+      expect(createdEv.meta).toMatchObject({ windowMonths: 12, windowRule: rule.id });
+      const v = await planView(bcba, fresh, AS_OF);
+      expect(v.assessmentWindow.months).toBe(12);
+      expect(v.assessmentWindow.label).toBe(
+        `Default window: 12 months, from ${doc.name}, Test section (unverified)`,
+      );
+
+      // An existing plan keeps its stored selection until a BCBA resets it.
+      await setPlanAssessments(bcba, fresh, [psi]);
+      expect(
+        (await withOrg(bcba, (tx) => tx.plan.findUniqueOrThrow({ where: { id: fresh } }))).assessmentIds,
+      ).toEqual([psi]);
+      await expect(resetPlanAssessments(rbt, fresh)).rejects.toThrow(ForbiddenError);
+      const reset = await resetPlanAssessments(bcba, fresh);
+      expect(reset.changed).toBe(true);
+      expect(
+        new Set(
+          (await withOrg(bcba, (tx) => tx.plan.findUniqueOrThrow({ where: { id: fresh } }))).assessmentIds,
+        ),
+      ).toEqual(new Set([vinelandNew, srs, pddbi, psi, ...recent]));
+      const ev = await withOrg(bcba, (tx) =>
+        tx.auditEvent.findFirstOrThrow({ where: { action: "plan:assessments_reset", entityId: fresh } }),
+      );
+      expect(ev.meta).toMatchObject({
+        added: 3 + recent.length,
+        removed: 0,
+        windowMonths: 12,
+        windowRule: rule.id,
+      });
+      // Resetting again changes nothing.
+      expect(await resetPlanAssessments(bcba, fresh)).toEqual({ changed: false, redraft: [] });
+
+      // Without the rule, reset goes back to six months.
+      await withOrg(bcba, (tx) => tx.payorRule.delete({ where: { id: rule.id } }));
+      await resetPlanAssessments(bcba, fresh);
+      expect(
+        new Set(
+          (await withOrg(bcba, (tx) => tx.plan.findUniqueOrThrow({ where: { id: fresh } }))).assessmentIds,
+        ),
+      ).toEqual(new Set([psi, ...recent]));
+      await withOrg(bcba, (tx) => tx.plan.update({ where: { id: fresh }, data: { status: "finalized" } }));
+      await expect(resetPlanAssessments(bcba, fresh)).rejects.toThrow(/finalized/);
+    } finally {
+      await withOrg(bcba, (tx) => tx.payorRule.deleteMany({ where: { id: rule.id } }));
+    }
+  });
+});
+
 describe("payor outcome measures from confirmed assessments", () => {
   it("Charlie's TRICARE schedule shows when the Vineland-3 was last given and when it is due", async () => {
     const { results } = await withOrg(bcba, (tx) => evaluateClientRules(tx, charlie, AS_OF, planId));
     const om = results.filter((r) => r.rule.type === "outcome_measure_schedule" && r.schedule);
     expect(om.length).toBeGreaterThan(0);
     const lines = om.flatMap((r) => r.schedule ?? []);
+    // The Vineland-3 lasts past this authorization; the PDDBI parent form is due 30 days before it ends.
     expect(
-      lines.some((l) => /^Vineland-3 last given \d{4}-\d{2}-\d{2}: due by \d{4}-\d{2}-\d{2}$/.test(l)),
+      lines.some((l) =>
+        /^Vineland-3 last given \d{4}-\d{2}-\d{2} · next due \d{4}-\d{2}-\d{2}, after the authorization ends \d{4}-\d{2}-\d{2}$/.test(
+          l,
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      lines.some((l) =>
+        /^PDDBI parent last given \d{4}-\d{2}-\d{2} · (due by|overdue since) \d{4}-\d{2}-\d{2} \(30 days before the authorization ends \d{4}-\d{2}-\d{2}\)$/.test(
+          l,
+        ),
+      ),
     ).toBe(true);
     // Unverified rules only warn.
     expect(om.every((r) => r.rule.verified || r.status !== "fail")).toBe(true);

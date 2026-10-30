@@ -258,11 +258,55 @@ describe("practice settings and team", () => {
       taxId: null,
       offices: [{ state: "GA", address: "100 Example Way, Peachtree City, GA 30269" }],
       reauthLeadDays: 35,
-      reassessmentLeadDays: 45,
+      assessmentDueDays: 30,
     });
     const after = (await practiceSettings(bcba)).org.settings as Record<string, unknown>;
     expect(after).toMatchObject({ npi: "SYN-NPI-1111111111", reauthLeadDays: 35 });
     expect(after.seededAsOf).toBe((before.settings as Record<string, unknown>).seededAsOf);
+  });
+
+  it("saves the days before the authorization ends that assessments are due (1-120, default 30), audited", async () => {
+    const before = (await practiceSettings(bcba)).org;
+    const s0 = orgSettings(before.settings);
+    expect(orgSettings({}).assessmentDueDays).toBe(30);
+    expect(orgSettings({ assessmentDueDays: "x" }).assessmentDueDays).toBe(30);
+    // The older reassessmentLeadDays meant the same thing; it is not read any more.
+    expect(orgSettings({ reassessmentLeadDays: 45 }).assessmentDueDays).toBe(30);
+    const base = {
+      name: before.name,
+      npi: "SYN-NPI-1111111111",
+      taxId: null,
+      offices: s0.offices,
+      reauthLeadDays: s0.reauthLeadDays,
+    };
+    for (const bad of [0, 121, 2.5, "30", null])
+      await expect(updateSettings(bcba, { ...base, assessmentDueDays: bad })).rejects.toThrow();
+    await expect(updateSettings(bcba, base)).rejects.toThrow();
+    // A stored reassessmentLeadDays is dropped on save, so no second number lingers.
+    await withOrg(bcba, (tx) =>
+      tx.org.update({
+        where: { id: bcba.orgId },
+        data: { settings: { ...(before.settings as object), reassessmentLeadDays: 45 } },
+      }),
+    );
+    await updateSettings(bcba, { ...base, assessmentDueDays: 120 });
+    const saved = (await practiceSettings(bcba)).org.settings as Record<string, unknown>;
+    expect(saved.assessmentDueDays).toBe(120);
+    expect(saved).not.toHaveProperty("reassessmentLeadDays");
+    const ev = await withOrg(bcba, (tx) =>
+      tx.auditEvent.findFirst({
+        where: { action: "org:settings_update", entityId: bcba.orgId },
+        orderBy: { createdAt: "desc" },
+      }),
+    );
+    expect((ev!.meta as { fields: string[] }).fields).toContain("assessmentDueDays");
+    // Charlie's due dates follow the setting.
+    const { results } = await withOrg(bcba, (tx) => evaluateClientRules(tx, clientId("client3"), AS_OF));
+    const lines = results.flatMap((r) => r.schedule ?? []);
+    expect(lines.some((l) => l.includes("(120 days before the authorization ends"))).toBe(true);
+    await updateSettings(bcba, { ...base, assessmentDueDays: 1 });
+    expect(orgSettings((await practiceSettings(bcba)).org.settings).assessmentDueDays).toBe(1);
+    await updateSettings(bcba, { ...base, assessmentDueDays: 30 });
   });
 
   it("saves the states the practice serves, defaulting to its office states until chosen", async () => {
@@ -273,7 +317,7 @@ describe("practice settings and team", () => {
       taxId: null,
       offices: [{ state: "GA", address: "100 Example Way, Peachtree City, GA 30269" }],
       reauthLeadDays: 35,
-      reassessmentLeadDays: 45,
+      assessmentDueDays: 30,
     };
     // Never chosen: the office states.
     expect(orgSettings({ offices: base.offices }).statesServed).toEqual(["GA"]);
@@ -304,7 +348,7 @@ describe("practice settings and team", () => {
       taxId: null,
       offices: s0.offices,
       reauthLeadDays: s0.reauthLeadDays,
-      reassessmentLeadDays: s0.reassessmentLeadDays,
+      assessmentDueDays: s0.assessmentDueDays,
     };
     expect(orgSettings({}).timeZone).toBe("America/New_York");
     expect(orgSettings({ timeZone: "Not/AZone" }).timeZone).toBe("America/New_York");

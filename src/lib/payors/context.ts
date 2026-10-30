@@ -45,4 +45,9 @@ export type EvalContext = {
   /** Org offices for form_address checks: [{state, address}] */
   offices: { state: string; address: string }[];
   packetSubmitted: boolean;
+  /**
+   * Practice setting: assessments (outcome measures, reassessment) are due this many days before
+   * the authorization ends. Defaults to 30 (BCBA answer, QUESTIONS #44).
+   */
+  assessmentDueDays?: number;
 };

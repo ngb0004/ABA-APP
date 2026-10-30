@@ -4,6 +4,7 @@ import type { Tx } from "../db";
 import { ageYears, toDay, type Day } from "../dates";
 import type { EvalContext } from "../payors/context";
 import { evaluateRules, planTypeFit, scopeFindings } from "../payors/evaluate";
+import { assessmentDueDaysOf } from "../payors/measure-due";
 import { sectionDone, sectionsForTopic } from "../plan/sections";
 import type { PlanType, Rule, RuleType } from "../payors/types";
 import type { RevisionRow } from "../rules-watch/parsers";
@@ -346,6 +347,7 @@ export async function buildEvalContext(
       : null,
     offices,
     packetSubmitted: plan?.packet?.status === "submitted",
+    assessmentDueDays: assessmentDueDaysOf(org.settings),
   };
   return { ctx, payorId: primary?.payorId ?? null, authorizationId: auth?.id ?? null };
 }

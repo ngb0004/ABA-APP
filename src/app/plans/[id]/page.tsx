@@ -68,6 +68,7 @@ export default async function PlanPage({ params }: { params: Promise<{ id: strin
         planId={id}
         clientId={b.client.id}
         options={v.assessmentOptions}
+        windowLabel={v.assessmentWindow.label}
         canEdit={can(role, "section:edit") && b.plan.status !== "finalized"}
       />
       <div className="row" style={{ marginBottom: 12 }}>

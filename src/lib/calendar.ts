@@ -4,6 +4,7 @@
  * target a reauth submission) are per-org settings with safe fallbacks.
  */
 import { addDays, addMonths, diffDays, type Day } from "./dates";
+import { DEFAULT_ASSESSMENT_DUE_DAYS } from "./payors/measure-due";
 import type { Rule } from "./payors/types";
 
 export type CalendarEvent = {
@@ -26,14 +27,17 @@ export type CalendarEvent = {
 export type CalendarSettings = {
   /** Days before auth end to target a reauth submission (org setting). */
   reauthLeadDays: number;
-  /** Days before auth end that the reassessment should be completed. */
-  reassessmentLeadDays: number;
+  /**
+   * Days before auth end that assessments are due: the reassessment and outcome measures alike
+   * (BCBA answer #44). Replaced the earlier reassessmentLeadDays (45), which meant the same thing.
+   */
+  assessmentDueDays: number;
   alertDays: number[];
 };
 
 export const DEFAULT_CALENDAR_SETTINGS: CalendarSettings = {
   reauthLeadDays: 30,
-  reassessmentLeadDays: 45,
+  assessmentDueDays: DEFAULT_ASSESSMENT_DUE_DAYS,
   alertDays: [30, 21, 14],
 };
 
@@ -81,26 +85,25 @@ export function authEvents(
     }
   }
   ev.push({ date: target, clientId, kind: "reauth_submission_target", label: "Reauth submission target" });
+  const assessmentsDue = addDays(end, -settings.assessmentDueDays);
+  const before = `${settings.assessmentDueDays} ${settings.assessmentDueDays === 1 ? "day" : "days"} before the authorization ends`;
   ev.push({
-    date: addDays(end, -settings.reassessmentLeadDays),
+    date: assessmentsDue,
     clientId,
     kind: "reassessment_due",
-    label: "Reassessment due",
+    label: `Reassessment due (${before})`,
   });
 
-  // Outcome measures: completed early enough that the report is ready by the submission target.
+  // Outcome measures: the same date. Which ones are actually due (their cadence lapses before the
+  // next authorization) is on the client's Payor requirements page; here the rule's list is named.
   for (const r of a.rules.filter((x) => x.type === "outcome_measure_schedule")) {
-    const timing = a.rules.find(
-      (x) => x.type === "request_timing" && typeof x.params.report_due_days_after_assessment === "number",
-    );
-    const reportDays = timing ? (timing.params.report_due_days_after_assessment as number) : 0;
     const list = (a.kind === "initial" ? r.params.initial : r.params.every_6_months) as string[] | undefined;
     if (list?.length)
       ev.push({
-        date: addDays(target, -reportDays),
+        date: assessmentsDue,
         clientId,
         kind: "outcome_measures_due",
-        label: `Outcome measures due: ${list.join(", ").replace(/_/g, " ")}`,
+        label: `Outcome measures due if they lapse before the next authorization (${before}): ${list.join(", ").replace(/_/g, " ")}`,
         ruleId: r.id,
         verified: r.verified,
       });

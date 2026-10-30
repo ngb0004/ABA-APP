@@ -324,7 +324,8 @@ export const SettingsSchema = z.object({
     )
     .max(20),
   reauthLeadDays: z.number().int().min(1).max(120),
-  reassessmentLeadDays: z.number().int().min(1).max(180),
+  /** Assessments (reassessment, outcome measures) are due this many days before the authorization ends. */
+  assessmentDueDays: z.number().int().min(1).max(120),
   /** Where the practice works: the Payor rules page shows these states (plus nationwide payors) first. */
   statesServed: z
     .array(z.enum(US_STATES))
@@ -875,7 +876,16 @@ export async function updateSettings(ctx: OrgCtx, input: unknown) {
     // Merge: keys this form does not edit (e.g. seededAsOf, alertDays) are kept.
     await tx.org.update({
       where: { id: ctx.orgId },
-      data: { name, settings: { ...(org.settings as object), ...rest } as Prisma.InputJsonValue },
+      data: {
+        name,
+        // reassessmentLeadDays meant the same as assessmentDueDays and is dropped, so no second number lingers.
+        settings: {
+          ...Object.fromEntries(
+            Object.entries(org.settings as object).filter(([k]) => k !== "reassessmentLeadDays"),
+          ),
+          ...rest,
+        } as Prisma.InputJsonValue,
+      },
     });
     await note(tx, "org:settings_update", "Org", ctx.orgId, { fields: Object.keys(v) });
   });

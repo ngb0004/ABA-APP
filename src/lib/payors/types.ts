@@ -17,6 +17,8 @@ export const RULE_TYPES = [
   "plan_content",
   "submission_channel",
   "decision_timeframe",
+  /** How far back a new plan's default assessment selection reaches: params {months}. */
+  "assessment_window",
 ] as const;
 export type RuleType = (typeof RULE_TYPES)[number];
 
@@ -108,24 +110,38 @@ export function possiblePlanTypes(t: PlanType): readonly RulePlanType[] {
   return [t];
 }
 
-export const SeedRuleSchema = z.object({
-  type: z.enum(RULE_TYPES),
-  params: z.record(z.string(), z.unknown()).default({}),
-  source: z.string().nullable().optional(),
-  section: z.string().optional(),
-  /** Page in the official document where the rule was read. */
-  page: z.union([z.number().int().positive(), z.string()]).optional(),
-  /** The official sentence the rule was read from. Pre-fills the verify form; never trusted on its own. */
-  quote: z.string().optional(),
-  /** Kept for the seed format. The app ignores it: a rule's status comes from recorded evidence. */
-  verified: z.boolean(),
-  notes: z.string().optional(),
-  /**
-   * Only for these plan types, when the source says so (e.g., a state mandate that binds fully
-   * insured plans only). Scope, not content: it is not part of the rule's fingerprint.
-   */
-  plan_types: z.array(z.enum(RULE_PLAN_TYPES)).min(1).optional(),
-});
+export const SeedRuleSchema = z
+  .object({
+    type: z.enum(RULE_TYPES),
+    params: z.record(z.string(), z.unknown()).default({}),
+    source: z.string().nullable().optional(),
+    section: z.string().optional(),
+    /** Page in the official document where the rule was read. */
+    page: z.union([z.number().int().positive(), z.string()]).optional(),
+    /** The official sentence the rule was read from. Pre-fills the verify form; never trusted on its own. */
+    quote: z.string().optional(),
+    /** Kept for the seed format. The app ignores it: a rule's status comes from recorded evidence. */
+    verified: z.boolean(),
+    notes: z.string().optional(),
+    /**
+     * Only for these plan types, when the source says so (e.g., a state mandate that binds fully
+     * insured plans only). Scope, not content: it is not part of the rule's fingerprint.
+     */
+    plan_types: z.array(z.enum(RULE_PLAN_TYPES)).min(1).optional(),
+  })
+  .superRefine((r, ctx) => {
+    // A window the plan's default selection uses: whole months, 1 to 24 (src/lib/assessments/plan.ts).
+    const m = r.params.months;
+    if (
+      r.type === "assessment_window" &&
+      !(typeof m === "number" && Number.isInteger(m) && m >= 1 && m <= 24)
+    )
+      ctx.addIssue({
+        code: "custom",
+        path: ["params", "months"],
+        message: "assessment_window: months must be a whole number from 1 to 24",
+      });
+  });
 
 export const LocatorSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("direct"), url: z.string().url() }),

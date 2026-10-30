@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { authEndAlert, authEvents, caseloadCalendar } from "@/lib/calendar";
+import { authEndAlert, authEvents, caseloadCalendar, DEFAULT_CALENDAR_SETTINGS } from "@/lib/calendar";
 import { addMonths } from "@/lib/dates";
 import type { Rule } from "@/lib/payors/types";
 
@@ -30,12 +30,19 @@ describe("calendar generation", () => {
     kind: "reauth" as const,
   };
 
-  it("generates expiration, submission target, reassessment, and 30/21/14-day alerts", () => {
+  it("generates expiration, submission target, reassessment (30 days before the end), and 30/21/14-day alerts", () => {
     const ev = authEvents({ ...base, rules: [] });
     const by = (k: string) => ev.filter((e) => e.kind === k).map((e) => e.date);
     expect(by("auth_expiration")).toEqual(["2026-10-31"]);
     expect(by("reauth_submission_target")).toEqual(["2026-10-01"]);
-    expect(by("reassessment_due")).toEqual(["2026-09-16"]);
+    expect(by("reassessment_due")).toEqual(["2026-10-01"]);
+    expect(ev.find((e) => e.kind === "reassessment_due")!.label).toBe(
+      "Reassessment due (30 days before the authorization ends)",
+    );
+    // The practice setting moves it.
+    const one = authEvents({ ...base, rules: [] }, { ...DEFAULT_CALENDAR_SETTINGS, assessmentDueDays: 1 });
+    expect(one.find((e) => e.kind === "reassessment_due")!.date).toBe("2026-10-30");
+    expect(DEFAULT_CALENDAR_SETTINGS.assessmentDueDays).toBe(30);
     expect(by("auth_alert")).toEqual(["2026-10-01", "2026-10-10", "2026-10-17"]);
   });
 
@@ -49,7 +56,7 @@ describe("calendar generation", () => {
     expect(e.label).toMatch(/97151.*separate/);
   });
 
-  it("applies TRICARE-style window and outcome measures before the submission target", () => {
+  it("applies TRICARE-style window; outcome measures are due with the reassessment, 30 days before the end", () => {
     const ev = authEvents({
       ...base,
       rules: [
@@ -61,13 +68,17 @@ describe("calendar generation", () => {
       ],
     });
     expect(ev.find((x) => x.kind === "reauth_window_opens")!.date).toBe("2026-09-01");
-    // target = max(end - 30, window open) = 2026-10-01; measures due 14 days earlier
-    expect(ev.find((x) => x.kind === "outcome_measures_due")!.date).toBe("2026-09-17");
+    // One date for assessments (BCBA answer #44): the report-days timing no longer moves it.
+    const om = ev.find((x) => x.kind === "outcome_measures_due")!;
+    expect(om.date).toBe("2026-10-01");
+    expect(om.label).toBe(
+      "Outcome measures due if they lapse before the next authorization (30 days before the authorization ends): PDDBI parent, PSI or SIPA",
+    );
   });
 
   it("keeps only events within the next 60 days, sorted", () => {
-    const ev = caseloadCalendar([{ ...base, rules: [] }], "2026-09-20", 60);
-    expect(ev.every((e) => e.date >= "2026-09-20" && e.date <= "2026-11-19")).toBe(true);
+    const ev = caseloadCalendar([{ ...base, rules: [] }], "2026-10-02", 60);
+    expect(ev.every((e) => e.date >= "2026-10-02" && e.date <= "2026-12-01")).toBe(true);
     expect(ev.map((e) => e.date)).toEqual([...ev.map((e) => e.date)].sort());
     expect(ev.some((e) => e.kind === "reassessment_due")).toBe(false);
   });

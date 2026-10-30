@@ -5,6 +5,14 @@
  * (its would-be status is kept in rawStatus).
  */
 import { assessmentCatalog, normalizeLabel, toolMatches, type Catalog } from "../assessments/catalog";
+import { windowMonths } from "../assessments/plan";
+import {
+  currentAuthorization,
+  DEFAULT_ASSESSMENT_DUE_DAYS,
+  measureDue,
+  measureDueLine,
+  measureDueShort,
+} from "./measure-due";
 import { addDays, addMonths, diffDays, type Day } from "../dates";
 import { supervisionByMonth, DIRECT_CODE, SUPERVISION_CODE } from "../supervision";
 import { authWeeks } from "../utilization";
@@ -625,6 +633,10 @@ const EVALUATORS: Record<RuleType, Evaluator> = {
           due.set(m, { months, cadence });
         }
     if (!due.size) return NA("No outcome measures due");
+    // Due for the coming reauthorization when the cadence lapses before the next authorization
+    // starts; due by the current authorization's end minus the practice's days (BCBA answer #44).
+    const authorization = currentAuthorization(ctx.authorization, ctx.asOf);
+    const daysBefore = ctx.assessmentDueDays ?? DEFAULT_ASSESSMENT_DUE_DAYS;
     const missing: string[] = [];
     const evidence: string[] = [];
     const schedule: string[] = [];
@@ -649,23 +661,31 @@ const EVALUATORS: Record<RuleType, Evaluator> = {
         a && { date: a.administeredOn, how: `assessment ${a.name}` },
         att && { date: att.documentDate!, how: `attachment "${att.title}"` },
       ].filter((x): x is { date: Day; how: string } => !!x);
-      const dueBy = (d: Day) => addMonths(d, months);
-      // Current while its next due date has not passed.
-      const current = given.find((g) => dueBy(g.date) >= ctx.asOf);
+      // The newest administration counts (a confirmed assessment wins a tie with an attachment).
       const newest = [...given].sort((x, y) => y.date.localeCompare(x.date))[0];
-      const shown = current ?? newest;
+      const d = measureDue({
+        lastGiven: newest?.date ?? null,
+        cadenceMonths: months,
+        authorization,
+        asOf: ctx.asOf,
+        daysBefore,
+      });
       // The rule's measure key ("PDDBI_teacher_or_BCBA") read as words.
       const label = m.replace(/_/g, " ");
-      if (shown) {
-        const next = dueBy(shown.date);
-        schedule.push(
-          `${label} last given ${shown.date}: ${next < ctx.asOf ? `overdue since ${next}` : `due by ${next}`}`,
+      const line = measureDueLine(label, d);
+      if (line) schedule.push(line);
+      if (newest) evidence.push(`${label}: ${newest.how} (${newest.date}), due ${cadence}`);
+      if (d.due) {
+        const when = measureDueShort(d);
+        missing.push(
+          `${label} (${[cadence, newest ? `last given ${newest.date}` : null, when].filter(Boolean).join("; ")})`,
         );
-        evidence.push(`${label}: ${shown.how} (${shown.date}), due ${cadence}`);
       }
-      if (!current)
-        missing.push(newest ? `${label} (${cadence}; last given ${newest.date})` : `${label} (${cadence})`);
     }
+    if (authorization)
+      evidence.push(
+        `Due ${daysBefore} ${daysBefore === 1 ? "day" : "days"} before the authorization ends ${authorization.endDate} (practice setting) when a measure lapses before the next authorization starts`,
+      );
     if (p.full_publisher_report_required === true)
       evidence.push("Full publisher report required for each measure");
     return missing.length
@@ -788,6 +808,18 @@ const EVALUATORS: Record<RuleType, Evaluator> = {
       p.phone_review === false ? "No phone review" : null,
     ].filter(Boolean) as string[];
     return { status: "pass", message: `Submit via ${parts}`, evidence: ev };
+  },
+
+  assessment_window(p) {
+    const m = windowMonths(p);
+    if (m === undefined) return guidance(p, "Assessment window");
+    return {
+      status: "pass",
+      message: `New plans select assessments from the last ${m} ${m === 1 ? "month" : "months"} by default`,
+      evidence: [
+        "Only sets which assessments start checked on a new plan; the BCBA can change the selection",
+      ],
+    };
   },
 
   decision_timeframe(p) {

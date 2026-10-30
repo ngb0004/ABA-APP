@@ -239,6 +239,14 @@ test("goal data entry by an RBT, and practice settings and team by a BCBA", asyn
   await page.getByRole("link", { name: "Settings" }).click();
   const s = page.getByTestId("settings-form");
   await s.getByLabel(/Submit reauths/).fill("28");
+  // Assessments are due 30 days before the authorization ends unless the practice changes it (1-120).
+  const due = s.getByLabel("Assessments due before authorization ends (days)");
+  await expect(due).toHaveValue("30");
+  await expect(s.getByLabel(/^Reassess this many days/)).toHaveCount(0);
+  await due.fill("121");
+  await s.getByTestId("settings-form-submit").click();
+  await expect(s.getByRole("alert")).toBeVisible();
+  await due.fill("25");
   // Times across the app show in the practice's zone: Eastern until chosen.
   await expect(s.getByLabel(/^Time zone/)).toHaveValue("America/New_York");
   // Common US zones first, then every other zone by region.
@@ -260,6 +268,9 @@ test("goal data entry by an RBT, and practice settings and team by a BCBA", asyn
   await s.getByTestId("settings-form-submit").click();
   await page.reload();
   await expect(page.getByTestId("settings-form").getByLabel(/Submit reauths/)).toHaveValue("28");
+  await expect(
+    page.getByTestId("settings-form").getByLabel("Assessments due before authorization ends (days)"),
+  ).toHaveValue("25");
   await expect(page.getByTestId("picked-statesServed")).toContainText("South Carolina (SC)");
   await page.goto("/payors");
   await expect(page.getByTestId("state-filter")).toContainText("GA, SC");
@@ -276,17 +287,24 @@ test("goal data entry by an RBT, and practice settings and team by a BCBA", asyn
   ]);
   await page.reload();
   await expect(page.getByTestId("picked-statesServed")).toHaveText("None chosen");
-  // Put Georgia back for the other tests.
+  // Put Georgia and the 30 days back for the other tests.
   await page
     .getByTestId("settings-form")
     .getByLabel(/^Add to: States we serve/)
     .selectOption("GA");
+  await page
+    .getByTestId("settings-form")
+    .getByLabel("Assessments due before authorization ends (days)")
+    .fill("30");
   await Promise.all([
     page.waitForResponse((r) => r.url().includes("/api/settings") && r.request().method() === "PUT"),
     page.getByTestId("settings-form").getByTestId("settings-form-submit").click(),
   ]);
   await page.reload();
   await expect(page.getByTestId("picked-statesServed")).toHaveText(/Georgia \(GA\)/);
+  await expect(
+    page.getByTestId("settings-form").getByLabel("Assessments due before authorization ends (days)"),
+  ).toHaveValue("30");
   await page.goto("/settings");
 
   await page.getByTestId("add-member").click();

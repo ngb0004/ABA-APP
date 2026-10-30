@@ -18,6 +18,7 @@ import { supervisionByMonth } from "../supervision";
 import { DEFAULT_TIME_ZONE, isTimeZone } from "../time-format";
 import { computeUtilization, type UnitBasis } from "../utilization";
 import { historicalAsOf, historicalRuleResults, historicalUtilization } from "../inactive-view";
+import { assessmentDueDaysOf } from "../payors/measure-due";
 import { evaluateClientRules, loadApplicableRules } from "./payors";
 
 export function orgSettings(settings: unknown): CalendarSettings & {
@@ -33,7 +34,8 @@ export function orgSettings(settings: unknown): CalendarSettings & {
   const offices = s.offices ?? [];
   return {
     reauthLeadDays: s.reauthLeadDays ?? DEFAULT_CALENDAR_SETTINGS.reauthLeadDays,
-    reassessmentLeadDays: s.reassessmentLeadDays ?? DEFAULT_CALENDAR_SETTINGS.reassessmentLeadDays,
+    // The older reassessmentLeadDays (same meaning) is no longer read: the BCBA set 30 days (#44).
+    assessmentDueDays: assessmentDueDaysOf(s),
     alertDays: s.alertDays ?? DEFAULT_CALENDAR_SETTINGS.alertDays,
     offices,
     // Never chosen: the states the practice has offices in. A saved empty list stays empty.

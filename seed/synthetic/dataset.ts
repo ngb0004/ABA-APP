@@ -356,8 +356,9 @@ export const DEMO_PASSWORD = "synthetic-demo-only";
  * 4: assessments other than VB-MAPP (Vineland-3, SRS-2, PDDBI, PSI-4, ABLLS-R, AFLS).
  * 5: stored assessment token numbers.
  * 6: an inactive (discontinued) client, Golf Testchild.
+ * 7: the assessmentDueDays practice setting (30) replaces reassessmentLeadDays (45).
  */
-export const SEED_VERSION = 6;
+export const SEED_VERSION = 7;
 
 export function buildDataset(asOf: Day): SynDataset {
   const orgId = sid("org:sample-practice");
@@ -1758,7 +1759,7 @@ export function buildDataset(asOf: Day): SynDataset {
           taxId: "SYN-TIN-00-0000000",
           offices: [{ state: "GA", address: "100 Example Way, Peachtree City, GA 30269" }],
           reauthLeadDays: 30,
-          reassessmentLeadDays: 45,
+          assessmentDueDays: 30,
         },
         users,
         clients: [c1, c2, c3, c4],

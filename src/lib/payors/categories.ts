@@ -13,7 +13,7 @@ export const RULE_CATEGORIES: { key: string; label: string; types: RuleType[] }[
     label: "Documents and signatures",
     types: ["required_document", "signature_type", "outcome_measure_schedule"],
   },
-  { key: "plan", label: "Treatment plan content", types: ["plan_content"] },
+  { key: "plan", label: "Treatment plan content", types: ["plan_content", "assessment_window"] },
   {
     key: "services",
     label: "Hours, units, and billing",
