@@ -493,7 +493,7 @@ test("a change made in another tab never wipes what is typed: the BCBA chooses w
 }) => {
   await login(page, "bcba@sample-practice.test");
   const client = await api(page, "POST", "/api/clients", {
-    firstName: "Golf",
+    firstName: "Hotel",
     lastName: "Testchild",
     dob: "2021-05-06",
     serviceAddress: { line1: "7 Fiction Way", city: "Example City", state: "GA", zip: "30000" },
