@@ -10,7 +10,7 @@ import { baseline, BASELINE_POINTS } from "../../src/lib/plan/progress";
 import { loadGoalBank } from "../../src/lib/goals/bank";
 import { masteryDefaults, tokenizeMastery } from "../../src/lib/goals/tokenize";
 import { syncPayorLibrary } from "../../src/lib/payors/library";
-import { buildDataset, sid, type SynOrg } from "./dataset";
+import { buildDataset, SEED_VERSION, sid, type SynOrg } from "./dataset";
 
 const d = (day: Day) => new Date(`${day}T00:00:00Z`);
 
@@ -54,12 +54,15 @@ export async function seedOrg(org: SynOrg, asOf: Day) {
     totpSecret: demo ? null : u.totpSecret,
     mfaEnabled: !demo,
   });
+  // On the demo, a reload keeps the authenticators people already set up (only new accounts start without one).
+  const keepMfa = (c: ReturnType<typeof creds>) => ({ passwordHash: c.passwordHash });
+
   // Users are global identity rows (no RLS): upsert with the demo credentials.
   for (const u of org.users) {
     await prisma.user.upsert({
       where: { email: u.email },
       create: { id: u.id, email: u.email, name: u.name, ...creds(u) },
-      update: { name: u.name, ...creds(u) },
+      update: { name: u.name, ...(demo ? keepMfa(creds(u)) : creds(u)) },
     });
     await prisma.authSession.deleteMany({ where: { userId: u.id } });
   }
@@ -73,9 +76,12 @@ export async function seedOrg(org: SynOrg, asOf: Day) {
       create: {
         id: org.id,
         name: org.name,
-        settings: { ...org.settings, seededAsOf: asOf } as Prisma.InputJsonValue,
+        settings: { ...org.settings, seededAsOf: asOf, seedVersion: SEED_VERSION } as Prisma.InputJsonValue,
       },
-      update: { name: org.name, settings: { ...org.settings, seededAsOf: asOf } as Prisma.InputJsonValue },
+      update: {
+        name: org.name,
+        settings: { ...org.settings, seededAsOf: asOf, seedVersion: SEED_VERSION } as Prisma.InputJsonValue,
+      },
     });
     await tx.membership.createMany({
       data: org.users.map((u) => ({

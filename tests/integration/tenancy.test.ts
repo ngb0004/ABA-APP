@@ -14,7 +14,8 @@ describe("RLS isolation", () => {
       ctxA,
       (tx) => tx.$queryRaw<{ id: string; org_id: string }[]>`SELECT id, org_id::text FROM client`,
     );
-    expect(rows.length).toBe(3);
+    // The seeded clients (other tests may add more to org A).
+    for (const c of orgA.clients) expect(rows.map((r) => r.id)).toContain(c.id);
     expect(rows.every((r) => r.org_id === orgA.id)).toBe(true);
     const direct = await withOrg(ctxA, (tx) =>
       tx.$queryRawUnsafe<unknown[]>(`SELECT * FROM client WHERE org_id = '${orgB.id}'`),

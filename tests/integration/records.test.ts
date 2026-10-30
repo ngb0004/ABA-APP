@@ -1,0 +1,265 @@
+import { beforeAll, describe, expect, it } from "vitest";
+import { withOrg } from "@/lib/db";
+import {
+  addDataPoint,
+  addMember,
+  addSession,
+  changeMemberRole,
+  createClient,
+  deleteAuthorization,
+  deleteDataPoint,
+  deleteDiagnosis,
+  practiceSettings,
+  removeMember,
+  saveAttachment,
+  saveAuthorization,
+  saveClientPayor,
+  saveDiagnosis,
+  updateClient,
+  updateSettings,
+} from "@/lib/services/records";
+import { clientDetail } from "@/lib/services/clients";
+import { evaluateClientRules } from "@/lib/services/payors";
+import { AS_OF, dataset } from "../helpers/synthetic-eval";
+import { clientId, ctxAs, org } from "../helpers/ctx";
+
+const bcba = ctxAs("BCBA");
+const other = dataset.orgs[1]!;
+const otherBcba = { orgId: other.id, userId: other.users[0]!.id, role: "BCBA" as const };
+
+const newClient = {
+  firstName: "Robin",
+  lastName: "Testcase",
+  dob: "2021-04-02",
+  serviceAddress: { line1: "1 Fiction Ln", city: "Example City", state: "GA", zip: "30000" },
+  guardians: [{ name: "Pat Testcase", relationship: "mother", legalCustody: true, canSign: true }],
+  fictional: true,
+};
+
+let cid: string;
+let cignaId: string;
+
+beforeAll(async () => {
+  cid = (await createClient(bcba, newClient)).id;
+  cignaId = (await withOrg(bcba, (tx) => tx.payor.findFirstOrThrow({ where: { key: "cigna_evernorth" } })))
+    .id;
+});
+
+describe("clients", () => {
+  it("creates only synthetic clients, and only with the fictional confirmation", async () => {
+    await expect(createClient(bcba, { ...newClient, fictional: false })).rejects.toThrow(/fictional/);
+    await expect(createClient(ctxAs("RBT"), newClient)).rejects.toMatchObject({ status: 403 });
+    await expect(createClient(bcba, { ...newClient, dob: "2021-02-30" })).rejects.toThrow();
+    const c = await withOrg(bcba, (tx) => tx.client.findUniqueOrThrow({ where: { id: cid } }));
+    expect(c.isSynthetic).toBe(true);
+    const audit = await withOrg(bcba, (tx) =>
+      tx.auditEvent.count({ where: { action: "client:create", entityId: cid } }),
+    );
+    expect(audit).toBe(1);
+  });
+
+  it("updates details; another practice cannot see or change them", async () => {
+    await updateClient(bcba, cid, { preferredName: "Robbie", hasIep: true });
+    const d = await clientDetail(bcba, cid, AS_OF);
+    expect(d.client).toMatchObject({ preferredName: "Robbie", hasIep: true });
+    await expect(updateClient(otherBcba, cid, { hasIep: false })).rejects.toMatchObject({ status: 404 });
+  });
+});
+
+describe("insurance, diagnoses, authorizations", () => {
+  it("member IDs must be synthetic; one primary payor at a time", async () => {
+    const payor = { payorId: cignaId, priority: "primary", memberId: "SYN-CIG-777777" };
+    await expect(saveClientPayor(bcba, cid, null, { ...payor, memberId: "W123456789" })).rejects.toThrow(
+      /SYN-/,
+    );
+    await saveClientPayor(bcba, cid, null, payor);
+    await expect(
+      saveClientPayor(bcba, cid, null, { ...payor, memberId: "SYN-CIG-888888" }),
+    ).rejects.toMatchObject({ status: 409 });
+    // The auth coordinator manages insurance too; an RBT does not.
+    await saveClientPayor(ctxAs("AUTH_COORDINATOR"), cid, null, {
+      ...payor,
+      priority: "secondary",
+      memberId: "SYN-CIG-999999",
+    });
+    await expect(
+      saveClientPayor(ctxAs("RBT"), cid, null, { ...payor, priority: "secondary" }),
+    ).rejects.toMatchObject({ status: 403 });
+  });
+
+  it("keeps one primary diagnosis and never strands a linked goal", async () => {
+    const dx = {
+      dsm5Code: "299.00",
+      dsm5Label: "Autism spectrum disorder",
+      icd10Code: "F84.0",
+      isPrimary: true,
+      evaluationDate: "2026-01-15",
+      deficitAreas: ["communication", "social_interaction"],
+    };
+    const a = await saveDiagnosis(bcba, cid, null, dx);
+    const b = await saveDiagnosis(bcba, cid, null, {
+      ...dx,
+      icd10Code: "F80.2",
+      deficitAreas: ["communication"],
+    });
+    const rows = await withOrg(bcba, (tx) => tx.diagnosis.findMany({ where: { clientId: cid } }));
+    expect(rows.filter((r) => r.isPrimary).map((r) => r.id)).toEqual([b.id]);
+    await expect(saveDiagnosis(bcba, cid, null, { ...dx, icd10Code: "autism" })).rejects.toThrow();
+    // A goal linked through "social_interaction" keeps that area from being removed.
+    const g = await withOrg(bcba, (tx) =>
+      tx.goal.create({
+        data: {
+          orgId: bcba.orgId,
+          clientId: cid,
+          diagnosisId: a.id,
+          deficitArea: "social_interaction",
+          ordinal: 1,
+          domain: "Social",
+          tier: 1,
+          category: "social_play",
+          objective: "Test",
+        },
+      }),
+    );
+    await expect(
+      saveDiagnosis(bcba, cid, a.id, { ...dx, deficitAreas: ["communication"] }),
+    ).rejects.toMatchObject({ status: 409 });
+    await expect(deleteDiagnosis(bcba, cid, a.id)).rejects.toMatchObject({ status: 409 });
+    await withOrg(bcba, (tx) => tx.goal.delete({ where: { id: g.id } }));
+    await deleteDiagnosis(bcba, cid, b.id);
+  });
+
+  it("authorizations: synthetic numbers, sane dates, units as a set, rules evaluate against them", async () => {
+    const auth = {
+      payorId: cignaId,
+      authNumber: "SYN-AUTH-7777",
+      kind: "initial",
+      startDate: "2026-09-01",
+      endDate: "2027-02-28",
+      units: [
+        { cptCode: "97153", approvedUnits: 80, unitBasis: "week" },
+        { cptCode: "97155", approvedUnits: 8, unitBasis: "week" },
+      ],
+    };
+    await expect(saveAuthorization(bcba, cid, null, { ...auth, endDate: "2026-08-01" })).rejects.toThrow(
+      /after/,
+    );
+    await expect(
+      saveAuthorization(bcba, cid, null, { ...auth, units: [...auth.units, auth.units[0]] }),
+    ).rejects.toThrow(/once/);
+    const { id } = await saveAuthorization(bcba, cid, null, auth);
+    await saveAuthorization(bcba, cid, id, {
+      ...auth,
+      units: [{ cptCode: "97153", approvedUnits: 60, unitBasis: "week" }],
+    });
+    const units = await withOrg(bcba, (tx) =>
+      tx.authorizationUnit.findMany({ where: { authorizationId: id } }),
+    );
+    expect(units.map((u) => [u.cptCode, u.approvedUnits])).toEqual([["97153", 60]]);
+    const { results } = await withOrg(bcba, (tx) => evaluateClientRules(tx, cid, AS_OF));
+    expect(results.length).toBeGreaterThan(0);
+
+    // Sessions must fall inside the authorization; then the authorization cannot be deleted.
+    const session = {
+      authorizationId: id,
+      cptCode: "97153",
+      date: "2026-09-02",
+      startMinute: 540,
+      units: 8,
+      providerRole: "RBT",
+      providerId: "RBT-Z",
+    };
+    await expect(addSession(bcba, cid, { ...session, date: "2026-08-02" })).rejects.toThrow(/outside/);
+    await expect(addSession(bcba, cid, { ...session, providerId: "Jane Smith" })).rejects.toThrow(/no names/);
+    await addSession(ctxAs("RBT"), cid, session);
+    await expect(deleteAuthorization(bcba, cid, id)).rejects.toMatchObject({ status: 409 });
+    await expect(
+      saveAuthorization(bcba, cid, id, { ...auth, startDate: "2026-10-01" }),
+    ).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("attachments record metadata only", async () => {
+    const a = await saveAttachment(ctxAs("AUTH_COORDINATOR"), cid, null, {
+      kind: "diagnostic_evaluation",
+      title: "Diagnostic evaluation",
+      documentDate: "2026-01-15",
+    });
+    const row = await withOrg(bcba, (tx) => tx.attachment.findUniqueOrThrow({ where: { id: a.id } }));
+    expect(row).toMatchObject({ kind: "diagnostic_evaluation", caregiverSigned: false });
+    await expect(
+      saveAttachment(ctxAs("RBT"), cid, null, { kind: "other", title: "x" }),
+    ).rejects.toMatchObject({ status: 403 });
+  });
+});
+
+describe("goal data", () => {
+  it("RBTs enter data points; percent values stay in range; locked baseline points stay", async () => {
+    const goal = await withOrg(bcba, (tx) =>
+      tx.goal.findFirstOrThrow({ where: { clientId: clientId("client1"), baselineLockedAt: { not: null } } }),
+    );
+    const p = await addDataPoint(ctxAs("RBT"), goal.id, { date: "2026-10-20", value: 55, trials: 10 });
+    if (goal.measure === "percent")
+      await expect(
+        addDataPoint(ctxAs("RBT"), goal.id, { date: "2026-10-21", value: 120 }),
+      ).rejects.toMatchObject({
+        status: 422,
+      });
+    await deleteDataPoint(ctxAs("RBT"), goal.id, p.id);
+    const first = await withOrg(bcba, (tx) =>
+      tx.goalDataPoint.findFirstOrThrow({ where: { goalId: goal.id }, orderBy: { date: "asc" } }),
+    );
+    await expect(deleteDataPoint(bcba, goal.id, first.id)).rejects.toMatchObject({ status: 409 });
+  });
+});
+
+describe("practice settings and team", () => {
+  it("BCBA edits settings without losing keys the form does not show", async () => {
+    await expect(practiceSettings(ctxAs("RBT"))).rejects.toMatchObject({ status: 403 });
+    const before = (await practiceSettings(bcba)).org;
+    await updateSettings(bcba, {
+      name: before.name,
+      npi: "SYN-NPI-1111111111",
+      taxId: null,
+      offices: [{ state: "GA", address: "100 Example Way, Peachtree City, GA 30269" }],
+      reauthLeadDays: 35,
+      reassessmentLeadDays: 45,
+    });
+    const after = (await practiceSettings(bcba)).org.settings as Record<string, unknown>;
+    expect(after).toMatchObject({ npi: "SYN-NPI-1111111111", reauthLeadDays: 35 });
+    expect(after.seededAsOf).toBe((before.settings as Record<string, unknown>).seededAsOf);
+  });
+
+  it("adds, re-roles, and removes members; always keeps a BCBA", async () => {
+    const m = await addMember(bcba, {
+      email: "new.rbt@sample-practice.test",
+      name: "New RBT",
+      role: "RBT",
+      password: "a-long-temporary-pass",
+    });
+    await expect(
+      addMember(bcba, {
+        email: "new.rbt@sample-practice.test",
+        name: "x",
+        role: "RBT",
+        password: "a-long-temporary-pass",
+      }),
+    ).rejects.toMatchObject({ status: 409 });
+    await expect(
+      addMember(bcba, { email: "short@sample-practice.test", name: "x", role: "RBT", password: "short" }),
+    ).rejects.toThrow(/12/);
+    await changeMemberRole(bcba, m.id, "BCaBA");
+    const team = (await practiceSettings(bcba)).members;
+    expect(team.find((x) => x.id === m.id)).toMatchObject({ role: "BCaBA", mfaEnabled: false });
+    const mine = team.find((x) => x.userId === bcba.userId)!;
+    await expect(removeMember(bcba, mine.id)).rejects.toMatchObject({ status: 409 });
+    // The only BCBA cannot be demoted.
+    const bcbas = team.filter((x) => x.role === "BCBA");
+    if (bcbas.length === 1)
+      await expect(changeMemberRole(bcba, mine.id, "RBT")).rejects.toMatchObject({ status: 409 });
+    await removeMember(bcba, m.id);
+    expect((await practiceSettings(bcba)).members.some((x) => x.id === m.id)).toBe(false);
+    // Another practice's members are invisible.
+    await expect(removeMember(otherBcba, mine.id)).rejects.toMatchObject({ status: 404 });
+    void org;
+  });
+});

@@ -296,6 +296,13 @@ function intakeBase(over: Partial<IntakeAnswers>): IntakeAnswers {
 
 export const DEMO_PASSWORD = "synthetic-demo-only";
 
+/**
+ * Bump when the fictional dataset or the plan structure changes in a way the hosted
+ * demo should pick up: the demo reloads its fictional clients once on the next boot.
+ * 2: 23-section plans and goal records (dates, status, locked baselines).
+ */
+export const SEED_VERSION = 2;
+
 export function buildDataset(asOf: Day): SynDataset {
   const orgId = sid("org:sample-practice");
   const otherOrgId = sid("org:other-sample-practice");

@@ -20,7 +20,8 @@ export function api<P = Record<string, string>>(fn: Handler<P>) {
       const params = await route.params;
       // Record ids are UUIDs; anything else is a 404, not a database error.
       for (const [k, v] of Object.entries((params ?? {}) as Record<string, unknown>))
-        if (k === "id" && (typeof v !== "string" || !UUID.test(v))) throw new HttpError(404, "Not found");
+        if ((k === "id" || k.endsWith("Id")) && (typeof v !== "string" || !UUID.test(v)))
+          throw new HttpError(404, "Not found");
       const out = await fn(req, ctx, params);
       return out instanceof Response ? out : NextResponse.json(out ?? { ok: true });
     } catch (e) {

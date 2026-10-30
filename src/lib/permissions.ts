@@ -31,6 +31,10 @@ export const ACTIONS = [
   "payor:read",
   "payor:verify",
   "audit:read",
+  /** Insurance and authorizations on a client. */
+  "insurance:manage",
+  /** Practice settings and team members. */
+  "org:manage",
   "export:pdf",
 ] as const;
 export type Action = (typeof ACTIONS)[number];
@@ -44,6 +48,7 @@ export const PERMISSIONS: Record<Role, readonly Action[]> = {
   AUTH_COORDINATOR: [
     "client:read",
     "document:manage",
+    "insurance:manage",
     "packet:manage",
     "letter:upload",
     "payor:read",

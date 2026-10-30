@@ -1,0 +1,636 @@
+/**
+ * Data entry: clients, insurance, diagnoses, authorizations, attachments,
+ * sessions, goal data, practice settings, and team members.
+ *
+ * v1.0 holds synthetic data only (CLAUDE.md rule 1), so entry is built to keep
+ * it that way: a new client needs an explicit "this client is fictional"
+ * confirmation, member and authorization numbers must carry the SYN- prefix the
+ * synthetic dataset uses, and attachments record metadata only (no file
+ * contents). Every write goes through withOrg (RLS + audit).
+ */
+import type { Prisma, Role } from "@prisma/client";
+import { z } from "zod";
+import { audit } from "../audit";
+import { hashPassword } from "../auth/local";
+import { withOrg, type OrgCtx, type Tx } from "../db";
+import { dayToDate, toDay } from "../dates";
+import { HttpError, registerSensitiveName } from "../log";
+import { RECORDED_EVENTS } from "../payors/evaluate";
+import { requirePermission } from "../permissions";
+
+// ---------------------------------------------------------------- shared schemas
+
+/** A real calendar date, YYYY-MM-DD. */
+export const DaySchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "Use a date (YYYY-MM-DD)")
+  .refine((s) => {
+    const d = dayToDate(s);
+    return !Number.isNaN(d.getTime()) && toDay(d) === s;
+  }, "Not a real calendar date");
+
+/** Identifiers in v1.0 are synthetic and say so, like the demo data (SYN-AMG-000101). */
+const SynId = z
+  .string()
+  .trim()
+  .regex(
+    /^SYN-[A-Z0-9-]{3,40}$/,
+    "Use a synthetic identifier starting with SYN- (v1.0 holds fictional data only)",
+  );
+
+const Text = (max: number) => z.string().trim().min(1).max(max);
+const OptText = (max: number) =>
+  z
+    .string()
+    .trim()
+    .max(max)
+    .optional()
+    .nullable()
+    .transform((v) => (v ? v : null));
+
+export const DEFICIT_AREAS = [
+  "communication",
+  "social_interaction",
+  "restricted_repetitive_behavior",
+  "adaptive",
+  "safety",
+] as const;
+export const CPT_CODES = [
+  "97151",
+  "97152",
+  "97153",
+  "97154",
+  "97155",
+  "97156",
+  "97157",
+  "97158",
+  "0362T",
+  "0373T",
+] as const;
+export const ATTACHMENT_KINDS = [
+  "diagnostic_evaluation",
+  "iep",
+  "ifsp",
+  "prior_evaluation",
+  "outcome_measure",
+  "payor_form",
+  "other",
+] as const;
+export const SESSION_ROLES = ["BCBA", "BCaBA", "RBT"] as const;
+export const MEMBER_ROLES = ["BCBA", "BCaBA", "RBT", "AUTH_COORDINATOR"] as const;
+
+const Guardian = z.object({
+  name: Text(80),
+  relationship: Text(40),
+  legalCustody: z.boolean(),
+  canSign: z.boolean().default(false),
+});
+
+const ClientFields = z.object({
+  firstName: Text(60),
+  lastName: Text(60),
+  preferredName: OptText(60),
+  dob: DaySchema,
+  sex: OptText(20),
+  serviceAddress: z.object({
+    line1: Text(120),
+    city: Text(60),
+    state: z
+      .string()
+      .trim()
+      .regex(/^[A-Z]{2}$/, "Two-letter state"),
+    zip: z
+      .string()
+      .trim()
+      .regex(/^\d{5}$/, "Five-digit ZIP"),
+  }),
+  guardians: z.array(Guardian).max(6).default([]),
+  hasIep: z.boolean().default(false),
+  events: z.array(z.enum(RECORDED_EVENTS as [string, ...string[]])).default([]),
+});
+export const NewClientSchema = ClientFields.extend({
+  fictional: z.literal(true, { message: "Confirm the client is fictional (v1.0 holds synthetic data only)" }),
+});
+export const ClientUpdateSchema = ClientFields.partial();
+
+export const ClientPayorSchema = z.object({
+  payorId: z.string().uuid(),
+  priority: z.enum(["primary", "secondary"]),
+  memberId: SynId,
+  planName: OptText(80),
+  secondaryDocsSigned: z.boolean().default(false),
+});
+
+export const DiagnosisSchema = z.object({
+  dsm5Code: Text(20),
+  dsm5Label: Text(120),
+  icd10Code: z
+    .string()
+    .trim()
+    .regex(/^[A-Z]\d{2}(\.[A-Z0-9]{1,4})?$/, "ICD-10 code, e.g. F84.0"),
+  isPrimary: z.boolean().default(false),
+  severity: OptText(60),
+  evaluationDate: DaySchema.nullable().optional(),
+  deficitAreas: z.array(z.enum(DEFICIT_AREAS)).min(1, "Choose at least one deficit area"),
+});
+
+export const AuthorizationSchema = z
+  .object({
+    payorId: z.string().uuid(),
+    authNumber: SynId,
+    kind: z.enum(["initial", "reauth"]),
+    startDate: DaySchema,
+    endDate: DaySchema,
+    recommendedHoursPerWeek: z.number().min(0).max(60).nullable().optional(),
+    units: z
+      .array(
+        z.object({
+          cptCode: z.enum(CPT_CODES),
+          approvedUnits: z.number().int().min(0).max(10_000),
+          unitBasis: z.enum(["week", "month", "auth"]),
+        }),
+      )
+      .max(12),
+  })
+  .refine((a) => a.endDate > a.startDate, {
+    message: "End date must be after the start date",
+    path: ["endDate"],
+  })
+  .refine((a) => new Set(a.units.map((u) => u.cptCode)).size === a.units.length, {
+    message: "List each CPT code once",
+    path: ["units"],
+  });
+
+export const AttachmentSchema = z.object({
+  kind: z.enum(ATTACHMENT_KINDS),
+  title: Text(120),
+  documentDate: DaySchema.nullable().optional(),
+  caregiverSigned: z.boolean().default(false),
+});
+
+export const SessionSchema = z.object({
+  authorizationId: z.string().uuid(),
+  cptCode: z.enum(CPT_CODES),
+  date: DaySchema,
+  startMinute: z
+    .number()
+    .int()
+    .min(0)
+    .max(24 * 60 - 15),
+  units: z.number().int().min(1).max(48),
+  providerRole: z.enum(SESSION_ROLES),
+  /** Opaque staff code (e.g. "RBT-A"), never a name. */
+  providerId: z
+    .string()
+    .trim()
+    .regex(/^[A-Za-z0-9-]{1,20}$/, "A short staff code such as RBT-A (no names)"),
+  inPerson: z.boolean().default(true),
+});
+
+export const DataPointSchema = z.object({
+  date: DaySchema,
+  value: z.number().min(0).max(10_000),
+  trials: z.number().int().min(1).max(500).nullable().optional(),
+});
+
+export const SettingsSchema = z.object({
+  name: Text(120),
+  npi: OptText(40),
+  taxId: OptText(40),
+  offices: z
+    .array(
+      z.object({
+        state: z
+          .string()
+          .trim()
+          .regex(/^[A-Z]{2}$/, "Two-letter state"),
+        address: Text(200),
+      }),
+    )
+    .max(20),
+  reauthLeadDays: z.number().int().min(1).max(120),
+  reassessmentLeadDays: z.number().int().min(1).max(180),
+});
+
+export const NewMemberSchema = z.object({
+  email: z.string().trim().toLowerCase().email().max(120),
+  name: Text(80),
+  role: z.enum(MEMBER_ROLES),
+  /** Temporary password; the person sets up their authenticator at first sign-in. */
+  password: z.string().min(12, "At least 12 characters").max(200),
+});
+
+// ---------------------------------------------------------------- helpers
+
+const day = (d: string | null | undefined) => (d ? dayToDate(d) : null);
+
+async function assertOrgPayor(tx: Tx, payorId: string) {
+  // RLS already hides other orgs' payors; a miss is a 422, not a 500.
+  if (!(await tx.payor.findUnique({ where: { id: payorId }, select: { id: true } })))
+    throw new HttpError(422, "Unknown payor");
+}
+
+async function clientOf(tx: Tx, clientId: string) {
+  const c = await tx.client.findUnique({ where: { id: clientId } });
+  if (!c) throw new HttpError(404, "Not found");
+  return c;
+}
+
+const note = (
+  tx: Tx,
+  action: string,
+  entityType: string,
+  entityId: string,
+  meta: Prisma.InputJsonValue = {},
+) => audit(tx, { action, entityType, entityId, meta });
+
+// ---------------------------------------------------------------- clients
+
+export async function createClient(ctx: OrgCtx, input: unknown) {
+  requirePermission(ctx.role, "client:write");
+  const v = NewClientSchema.parse(input);
+  registerSensitiveName(v.firstName);
+  registerSensitiveName(v.lastName);
+  return withOrg(ctx, async (tx) => {
+    const c = await tx.client.create({
+      data: {
+        orgId: ctx.orgId,
+        isSynthetic: true,
+        firstName: v.firstName,
+        lastName: v.lastName,
+        preferredName: v.preferredName,
+        dob: dayToDate(v.dob),
+        sex: v.sex,
+        serviceAddress: v.serviceAddress,
+        guardians: v.guardians,
+        hasIep: v.hasIep,
+        events: v.events,
+      },
+      select: { id: true },
+    });
+    await note(tx, "client:create", "Client", c.id, { synthetic: true });
+    return c;
+  });
+}
+
+export async function updateClient(ctx: OrgCtx, clientId: string, input: unknown) {
+  requirePermission(ctx.role, "client:write");
+  const v = ClientUpdateSchema.parse(input);
+  registerSensitiveName(v.firstName);
+  registerSensitiveName(v.lastName);
+  return withOrg(ctx, async (tx) => {
+    await clientOf(tx, clientId);
+    await tx.client.update({
+      where: { id: clientId },
+      data: {
+        ...v,
+        dob: v.dob ? dayToDate(v.dob) : undefined,
+        serviceAddress: v.serviceAddress,
+        guardians: v.guardians,
+      },
+    });
+    await note(tx, "client:update", "Client", clientId, { fields: Object.keys(v) });
+  });
+}
+
+// ---------------------------------------------------------------- insurance
+
+export async function saveClientPayor(ctx: OrgCtx, clientId: string, id: string | null, input: unknown) {
+  requirePermission(ctx.role, "insurance:manage");
+  const v = ClientPayorSchema.parse(input);
+  return withOrg(ctx, async (tx) => {
+    await clientOf(tx, clientId);
+    await assertOrgPayor(tx, v.payorId);
+    const existing = await tx.clientPayor.findMany({ where: { clientId } });
+    if (id && !existing.some((p) => p.id === id)) throw new HttpError(404, "Not found");
+    // One primary at a time.
+    if (v.priority === "primary" && existing.some((p) => p.priority === "primary" && p.id !== id))
+      throw new HttpError(409, "This client already has a primary payor. Make it secondary first.");
+    const row = id
+      ? await tx.clientPayor.update({ where: { id }, data: v, select: { id: true } })
+      : await tx.clientPayor.create({ data: { orgId: ctx.orgId, clientId, ...v }, select: { id: true } });
+    await note(tx, id ? "insurance:update" : "insurance:create", "ClientPayor", row.id);
+    return row;
+  });
+}
+
+export async function deleteClientPayor(ctx: OrgCtx, clientId: string, id: string) {
+  requirePermission(ctx.role, "insurance:manage");
+  return withOrg(ctx, async (tx) => {
+    const row = await tx.clientPayor.findFirst({ where: { id, clientId } });
+    if (!row) throw new HttpError(404, "Not found");
+    await tx.clientPayor.delete({ where: { id } });
+    await note(tx, "insurance:delete", "ClientPayor", id);
+  });
+}
+
+// ---------------------------------------------------------------- diagnoses
+
+export async function saveDiagnosis(ctx: OrgCtx, clientId: string, id: string | null, input: unknown) {
+  requirePermission(ctx.role, "client:write");
+  const v = DiagnosisSchema.parse(input);
+  return withOrg(ctx, async (tx) => {
+    await clientOf(tx, clientId);
+    if (id && !(await tx.diagnosis.findFirst({ where: { id, clientId } })))
+      throw new HttpError(404, "Not found");
+    if (id) {
+      // Goals link to a diagnosis through its deficit areas: never strand a linked goal.
+      const stranded = await tx.goal.count({
+        where: { diagnosisId: id, deficitArea: { notIn: v.deficitAreas } },
+      });
+      if (stranded)
+        throw new HttpError(409, `${stranded} goal(s) are linked through a deficit area you removed`);
+    }
+    if (v.isPrimary)
+      await tx.diagnosis.updateMany({
+        where: { clientId, ...(id ? { id: { not: id } } : {}) },
+        data: { isPrimary: false },
+      });
+    const data = { ...v, evaluationDate: day(v.evaluationDate) };
+    const row = id
+      ? await tx.diagnosis.update({ where: { id }, data, select: { id: true } })
+      : await tx.diagnosis.create({ data: { orgId: ctx.orgId, clientId, ...data }, select: { id: true } });
+    await note(tx, id ? "diagnosis:update" : "diagnosis:create", "Diagnosis", row.id);
+    return row;
+  });
+}
+
+export async function deleteDiagnosis(ctx: OrgCtx, clientId: string, id: string) {
+  requirePermission(ctx.role, "client:write");
+  return withOrg(ctx, async (tx) => {
+    if (!(await tx.diagnosis.findFirst({ where: { id, clientId } }))) throw new HttpError(404, "Not found");
+    if (await tx.goal.count({ where: { diagnosisId: id } }))
+      throw new HttpError(409, "Goals are linked to this diagnosis. Relink or remove them first.");
+    await tx.diagnosis.delete({ where: { id } });
+    await note(tx, "diagnosis:delete", "Diagnosis", id);
+  });
+}
+
+// ---------------------------------------------------------------- authorizations
+
+export async function saveAuthorization(ctx: OrgCtx, clientId: string, id: string | null, input: unknown) {
+  requirePermission(ctx.role, "insurance:manage");
+  const v = AuthorizationSchema.parse(input);
+  return withOrg(ctx, async (tx) => {
+    await clientOf(tx, clientId);
+    await assertOrgPayor(tx, v.payorId);
+    if (id && !(await tx.authorization.findFirst({ where: { id, clientId } })))
+      throw new HttpError(404, "Not found");
+    const data = {
+      payorId: v.payorId,
+      authNumber: v.authNumber,
+      kind: v.kind,
+      startDate: dayToDate(v.startDate),
+      endDate: dayToDate(v.endDate),
+      recommendedHoursPerWeek: v.recommendedHoursPerWeek ?? null,
+    };
+    let authId: string;
+    if (id) {
+      if (
+        await tx.serviceSession.count({
+          where: {
+            authorizationId: id,
+            OR: [{ date: { lt: data.startDate } }, { date: { gt: data.endDate } }],
+          },
+        })
+      )
+        throw new HttpError(409, "Sessions on record fall outside the new dates");
+      await tx.authorization.update({ where: { id }, data });
+      // Units are replaced as a set.
+      await tx.authorizationUnit.deleteMany({ where: { authorizationId: id } });
+      authId = id;
+    } else
+      authId = (
+        await tx.authorization.create({ data: { orgId: ctx.orgId, clientId, ...data }, select: { id: true } })
+      ).id;
+    if (v.units.length)
+      await tx.authorizationUnit.createMany({
+        data: v.units.map((u) => ({ orgId: ctx.orgId, authorizationId: authId, ...u })),
+      });
+    await note(tx, id ? "authorization:update" : "authorization:create", "Authorization", authId, {
+      codes: v.units.map((u) => u.cptCode),
+    });
+    return { id: authId };
+  });
+}
+
+export async function deleteAuthorization(ctx: OrgCtx, clientId: string, id: string) {
+  requirePermission(ctx.role, "insurance:manage");
+  return withOrg(ctx, async (tx) => {
+    if (!(await tx.authorization.findFirst({ where: { id, clientId } })))
+      throw new HttpError(404, "Not found");
+    if (
+      (await tx.serviceSession.count({ where: { authorizationId: id } })) ||
+      (await tx.plan.count({ where: { authorizationId: id } }))
+    )
+      throw new HttpError(409, "Sessions or plans use this authorization; it cannot be deleted");
+    await tx.authorizationUnit.deleteMany({ where: { authorizationId: id } });
+    await tx.authorization.delete({ where: { id } });
+    await note(tx, "authorization:delete", "Authorization", id);
+  });
+}
+
+// ---------------------------------------------------------------- attachments (metadata only)
+
+export async function saveAttachment(ctx: OrgCtx, clientId: string, id: string | null, input: unknown) {
+  requirePermission(ctx.role, "document:manage");
+  const v = AttachmentSchema.parse(input);
+  return withOrg(ctx, async (tx) => {
+    await clientOf(tx, clientId);
+    if (id && !(await tx.attachment.findFirst({ where: { id, clientId } })))
+      throw new HttpError(404, "Not found");
+    const data = { ...v, documentDate: day(v.documentDate) };
+    const row = id
+      ? await tx.attachment.update({ where: { id }, data, select: { id: true } })
+      : await tx.attachment.create({ data: { orgId: ctx.orgId, clientId, ...data }, select: { id: true } });
+    await note(tx, id ? "attachment:update" : "attachment:create", "Attachment", row.id, { kind: v.kind });
+    return row;
+  });
+}
+
+export async function deleteAttachment(ctx: OrgCtx, clientId: string, id: string) {
+  requirePermission(ctx.role, "document:manage");
+  return withOrg(ctx, async (tx) => {
+    if (!(await tx.attachment.findFirst({ where: { id, clientId } }))) throw new HttpError(404, "Not found");
+    await tx.attachment.delete({ where: { id } });
+    await note(tx, "attachment:delete", "Attachment", id);
+  });
+}
+
+// ---------------------------------------------------------------- sessions and goal data
+
+export async function addSession(ctx: OrgCtx, clientId: string, input: unknown) {
+  requirePermission(ctx.role, "data:enter");
+  const v = SessionSchema.parse(input);
+  return withOrg(ctx, async (tx) => {
+    const auth = await tx.authorization.findFirst({ where: { id: v.authorizationId, clientId } });
+    if (!auth) throw new HttpError(422, "Choose one of this client's authorizations");
+    const date = dayToDate(v.date);
+    if (date < auth.startDate || date > auth.endDate)
+      throw new HttpError(422, "The session date is outside the authorization");
+    const row = await tx.serviceSession.create({
+      data: { orgId: ctx.orgId, clientId, ...v, providerRole: v.providerRole as Role, date },
+      select: { id: true },
+    });
+    await note(tx, "session:create", "ServiceSession", row.id, { cptCode: v.cptCode });
+    return row;
+  });
+}
+
+export async function deleteSession(ctx: OrgCtx, clientId: string, id: string) {
+  requirePermission(ctx.role, "data:enter");
+  return withOrg(ctx, async (tx) => {
+    if (!(await tx.serviceSession.findFirst({ where: { id, clientId } })))
+      throw new HttpError(404, "Not found");
+    await tx.serviceSession.delete({ where: { id } });
+    await note(tx, "session:delete", "ServiceSession", id);
+  });
+}
+
+export async function addDataPoint(ctx: OrgCtx, goalId: string, input: unknown) {
+  requirePermission(ctx.role, "data:enter");
+  const v = DataPointSchema.parse(input);
+  return withOrg(ctx, async (tx) => {
+    const g = await tx.goal.findUnique({ where: { id: goalId } });
+    if (!g) throw new HttpError(404, "Not found");
+    if (g.measure === "percent" && v.value > 100)
+      throw new HttpError(422, "A percent goal's value is 0 to 100");
+    const row = await tx.goalDataPoint.create({
+      data: { orgId: ctx.orgId, goalId, date: dayToDate(v.date), value: v.value, trials: v.trials ?? null },
+      select: { id: true },
+    });
+    await note(tx, "goal_data:create", "GoalDataPoint", row.id, { goalId });
+    return row;
+  });
+}
+
+export async function deleteDataPoint(ctx: OrgCtx, goalId: string, id: string) {
+  requirePermission(ctx.role, "data:enter");
+  return withOrg(ctx, async (tx) => {
+    const p = await tx.goalDataPoint.findFirst({ where: { id, goalId } });
+    if (!p) throw new HttpError(404, "Not found");
+    // A locked baseline came from the first three points; those stay.
+    const g = await tx.goal.findUniqueOrThrow({ where: { id: goalId } });
+    if (g.baselineDate && p.date <= g.baselineDate)
+      throw new HttpError(409, "This data point is part of the locked baseline");
+    await tx.goalDataPoint.delete({ where: { id } });
+    await note(tx, "goal_data:delete", "GoalDataPoint", id, { goalId });
+  });
+}
+
+// ---------------------------------------------------------------- practice settings
+
+export async function practiceSettings(ctx: OrgCtx) {
+  requirePermission(ctx.role, "org:manage");
+  return withOrg(ctx, async (tx) => {
+    const org = await tx.org.findUniqueOrThrow({ where: { id: ctx.orgId } });
+    const members = await tx.membership.findMany({ include: { user: true }, orderBy: { role: "asc" } });
+    return {
+      org,
+      members: members.map((m) => ({
+        id: m.id,
+        userId: m.userId,
+        role: m.role,
+        name: m.user.name,
+        email: m.user.email,
+        mfaEnabled: m.user.mfaEnabled,
+      })),
+    };
+  });
+}
+
+export async function updateSettings(ctx: OrgCtx, input: unknown) {
+  requirePermission(ctx.role, "org:manage");
+  const v = SettingsSchema.parse(input);
+  return withOrg(ctx, async (tx) => {
+    const org = await tx.org.findUniqueOrThrow({ where: { id: ctx.orgId } });
+    const { name, ...rest } = v;
+    // Merge: keys this form does not edit (e.g. seededAsOf, alertDays) are kept.
+    await tx.org.update({
+      where: { id: ctx.orgId },
+      data: { name, settings: { ...(org.settings as object), ...rest } as Prisma.InputJsonValue },
+    });
+    await note(tx, "org:settings_update", "Org", ctx.orgId, { fields: Object.keys(v) });
+  });
+}
+
+// ---------------------------------------------------------------- team members
+
+async function assertKeepsABcba(tx: Tx, membershipId: string) {
+  const bcbas = await tx.membership.findMany({ where: { role: "BCBA" }, select: { id: true } });
+  if (bcbas.length === 1 && bcbas[0]!.id === membershipId)
+    throw new HttpError(409, "The practice needs at least one BCBA");
+}
+
+export async function addMember(ctx: OrgCtx, input: unknown) {
+  requirePermission(ctx.role, "org:manage");
+  const v = NewMemberSchema.parse(input);
+  return withOrg(ctx, async (tx) => {
+    // Accounts belong to one practice in v1.0; never attach someone else's account here.
+    if (await tx.user.findUnique({ where: { email: v.email }, select: { id: true } }))
+      throw new HttpError(409, "An account with that email already exists");
+    const user = await tx.user.create({
+      data: { email: v.email, name: v.name, passwordHash: hashPassword(v.password), mfaEnabled: false },
+    });
+    const m = await tx.membership.create({
+      data: { orgId: ctx.orgId, userId: user.id, role: v.role },
+      select: { id: true },
+    });
+    await note(tx, "member:add", "Membership", m.id, { role: v.role });
+    return m;
+  });
+}
+
+export async function changeMemberRole(ctx: OrgCtx, membershipId: string, role: unknown) {
+  requirePermission(ctx.role, "org:manage");
+  const r = z.enum(MEMBER_ROLES).parse(role);
+  return withOrg(ctx, async (tx) => {
+    const m = await tx.membership.findUnique({ where: { id: membershipId } });
+    if (!m) throw new HttpError(404, "Not found");
+    if (m.role === "BCBA" && r !== "BCBA") await assertKeepsABcba(tx, m.id);
+    await tx.membership.update({ where: { id: m.id }, data: { role: r } });
+    // The person's open sessions carry the old role: sign them out.
+    await tx.authSession.deleteMany({ where: { userId: m.userId, orgId: ctx.orgId } });
+    await note(tx, "member:role", "Membership", m.id, { from: m.role, to: r });
+  });
+}
+
+export async function removeMember(ctx: OrgCtx, membershipId: string) {
+  requirePermission(ctx.role, "org:manage");
+  return withOrg(ctx, async (tx) => {
+    const m = await tx.membership.findUnique({ where: { id: membershipId } });
+    if (!m) throw new HttpError(404, "Not found");
+    if (m.userId === ctx.userId) throw new HttpError(409, "You cannot remove yourself");
+    await assertKeepsABcba(tx, m.id);
+    await tx.membership.delete({ where: { id: m.id } });
+    await tx.authSession.deleteMany({ where: { userId: m.userId, orgId: ctx.orgId } });
+    await note(tx, "member:remove", "Membership", m.id, { role: m.role });
+  });
+}
+
+// ---------------------------------------------------------------- read for the records page
+
+export async function clientRecords(ctx: OrgCtx, clientId: string) {
+  requirePermission(ctx.role, "client:read");
+  return withOrg(ctx, async (tx) => {
+    const client = await tx.client.findUnique({
+      where: { id: clientId },
+      include: {
+        payors: { include: { payor: true }, orderBy: { priority: "asc" } },
+        diagnoses: { orderBy: [{ isPrimary: "desc" }, { icd10Code: "asc" }] },
+        authorizations: { include: { units: true, payor: true }, orderBy: { endDate: "desc" } },
+        attachments: { orderBy: { uploadedAt: "desc" } },
+      },
+    });
+    if (!client) throw new HttpError(404, "Not found");
+    registerSensitiveName(client.firstName);
+    registerSensitiveName(client.lastName);
+    const sessions = await tx.serviceSession.findMany({
+      where: { clientId },
+      orderBy: [{ date: "desc" }, { startMinute: "desc" }],
+      take: 60,
+    });
+    const payors = await tx.payor.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true } });
+    return { client, sessions, payors };
+  });
+}

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { can } from "@/lib/permissions";
 import { listClients } from "@/lib/services/clients";
 import { requirePageCtx } from "@/lib/server/page-session";
 
@@ -8,6 +9,13 @@ export default async function ClientsPage() {
   return (
     <>
       <h1>Clients</h1>
+      {can(ctx.role, "client:write") && (
+        <p>
+          <Link className="btn" href="/clients/new" data-testid="new-client">
+            New client
+          </Link>
+        </p>
+      )}
       <div className="panel table-wrap">
         <table>
           <thead>

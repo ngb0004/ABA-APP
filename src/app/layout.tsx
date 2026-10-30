@@ -31,6 +31,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                 <Link href="/clients">Clients</Link>
                 <Link href="/payors">Payor rules</Link>
                 {session.role === "BCBA" && <Link href="/audit">Audit log</Link>}
+                {session.role === "BCBA" && <Link href="/settings">Settings</Link>}
               </nav>
               <span className="muted" style={{ marginLeft: "auto" }}>
                 Role: {session.role}

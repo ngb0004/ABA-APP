@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ActionButton, Html } from "@/components/actions";
 import { FlatExplanation, GoalEditor, GoalRecordEditor } from "@/components/goal-editor";
+import { RecordForm } from "@/components/record-form";
 import { Status } from "@/components/status";
 import { toDay } from "@/lib/dates";
 import { measureUnit } from "@/lib/plan/context";
@@ -88,6 +89,57 @@ export default async function GoalsPage({ params }: { params: Promise<{ id: stri
             </div>
           )}
           <Html html={g.graph} />
+          {can(ctx.role, "data:enter") && (
+            <details data-testid={`goal-data-${g.ordinal}`}>
+              <summary>Data ({g.dataPoints.length} points)</summary>
+              <RecordForm
+                url={`/api/goals/${g.id}/data`}
+                fields={[
+                  { name: "date", label: "Date", type: "date" },
+                  {
+                    name: "value",
+                    label:
+                      g.measure === "percent"
+                        ? "Percent correct"
+                        : g.measure === "frequency"
+                          ? "Count per session"
+                          : "Minutes",
+                    type: "number",
+                  },
+                  { name: "trials", label: "Trials", type: "number", optional: true },
+                ]}
+                submitLabel="Add data point"
+                testId={`data-form-${g.ordinal}`}
+              />
+              <table>
+                <tbody>
+                  {[...g.dataPoints]
+                    .reverse()
+                    .slice(0, 10)
+                    .map((p) => (
+                      <tr key={p.id}>
+                        <td>{toDay(p.date)}</td>
+                        <td>
+                          {Math.round(p.value * 10) / 10}
+                          {measureUnit(g.measure)}
+                          {p.trials ? ` (${p.trials} trials)` : ""}
+                        </td>
+                        <td>
+                          <ActionButton
+                            url={`/api/goals/${g.id}/data/${p.id}`}
+                            method="DELETE"
+                            secondary
+                            confirm="Delete this data point?"
+                          >
+                            Delete
+                          </ActionButton>
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </details>
+          )}
           <p className="muted">
             Data: {g.dataCollection || "not set"} · Mastery: {g.masteryAccuracyPct}% across{" "}
             {g.masteryConsecutiveSessions} sessions with {g.masteryInstructors} people

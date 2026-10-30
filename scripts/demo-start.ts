@@ -18,7 +18,7 @@ import { execSync, spawn } from "node:child_process";
 import { createHmac } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 import { checkPassword, hashPassword } from "../src/lib/auth/local";
-import { buildDataset } from "../seed/synthetic/dataset";
+import { buildDataset, SEED_VERSION } from "../seed/synthetic/dataset";
 
 function fail(msg: string): never {
   console.error(`[demo-start] ${msg}`);
@@ -114,6 +114,21 @@ async function setupRolesAndDatabase() {
   }
 }
 
+/** The seed date and version an org was loaded with, read through RLS as the app role. */
+async function seedInfo(orgId: string): Promise<{ asOf: string | null; version: number | null }> {
+  const pg = new PrismaClient({ datasourceUrl: appUrl });
+  try {
+    return await pg.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT set_config('app.current_org', ${orgId}, true)`;
+      const org = await tx.org.findUnique({ where: { id: orgId } });
+      const s = (org?.settings ?? {}) as { seededAsOf?: string; seedVersion?: number };
+      return { asOf: s.seededAsOf ?? null, version: s.seedVersion ?? null };
+    });
+  } finally {
+    await pg.$disconnect();
+  }
+}
+
 /** seededAsOf for an org, read through RLS as the app role (null if that org was never fully seeded). */
 async function seededAsOf(orgId: string): Promise<string | null> {
   const pg = new PrismaClient({ datasourceUrl: appUrl });
@@ -188,11 +203,15 @@ async function main() {
     env: { ...shared, DATABASE_URL: ownerUrl, DIRECT_DATABASE_URL: ownerUrl },
   });
 
-  if (process.env.RESEED === "true" || !(await seededAsOf(lastOrgId))) {
+  const seeded = await seedInfo(lastOrgId);
+  const outdated = !!seeded.asOf && seeded.version !== SEED_VERSION;
+  if (process.env.RESEED === "true" || !seeded.asOf || outdated) {
     say(
       process.env.RESEED === "true"
         ? "RESEED=true: reloading fictional clients (remove the variable afterwards)"
-        : "seeding fictional clients",
+        : outdated
+          ? `demo data is from seed version ${seeded.version ?? 1}; reloading fictional clients for version ${SEED_VERSION}`
+          : "seeding fictional clients",
     );
     execSync("pnpm exec tsx seed/synthetic/index.ts", {
       stdio: "inherit",
