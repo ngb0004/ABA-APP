@@ -9,3 +9,6 @@ next-env.d.ts
 *.tsbuildinfo
 /exports/
 .next-e2e/
+
+# Temporary agent worktrees
+.claude/worktrees/
