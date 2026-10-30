@@ -9,9 +9,9 @@ const url = process.env.DIRECT_DATABASE_URL;
 if (!url) throw new Error("DIRECT_DATABASE_URL is not set");
 const u = new URL(url);
 const db = u.pathname.replace(/^\//, "");
-if (!["localhost", "127.0.0.1"].includes(u.hostname) || !["aba", "aba_test", "aba_e2e"].includes(db)) {
+if (!["localhost", "127.0.0.1"].includes(u.hostname) || !/^(aba|aba_test(_[a-z0-9]+)?|aba_e2e)$/.test(db)) {
   throw new Error(
-    `Refusing to reset ${u.hostname}/${db}: only local aba / aba_test / aba_e2e databases may be reset`,
+    `Refusing to reset ${u.hostname}/${db}: only local aba / aba_test(_suffix) / aba_e2e databases may be reset`,
   );
 }
 
