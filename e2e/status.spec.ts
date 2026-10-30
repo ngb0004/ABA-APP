@@ -73,3 +73,20 @@ test("mark a client inactive from the ⋯ menu, find it on the Inactive tab, the
   await page.goto("/");
   await expect(alertsPanel(page).getByRole("link", { name: "Charlie Testchild" })).toBeVisible();
 });
+
+test("an inactive client's pages say what still saves and hide the controls that would be refused", async ({
+  page,
+}) => {
+  await login(page, "bcba@sample-practice.test");
+  await page.goto("/clients?status=inactive");
+  await page.getByRole("link", { name: "Golf Testchild" }).click();
+  await expect(page).toHaveURL(/\/clients\/[0-9a-f-]{36}$/);
+  const id = page.url().split("/clients/")[1]!.split(/[/?#]/)[0]!;
+  await expect(page.getByTestId("inactive-banner")).toContainText("stay editable for corrections");
+  await page.goto(`/clients/${id}/records`);
+  await expect(page.getByTestId("inactive-banner")).toBeVisible();
+  await expect(page.getByTestId("records-sessions")).toBeVisible();
+  await expect(page.getByTestId("add-session")).toHaveCount(0);
+  await page.goto(`/clients/${id}/assessments`);
+  await expect(page.getByTestId("add-assessment")).toHaveCount(0);
+});

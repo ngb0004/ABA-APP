@@ -158,8 +158,15 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
             <ul>
               {d.uploads.map((u, i) => (
                 <li key={i}>
-                  {u.label} <Status s={u.uploaded ? "ok" : "missing"} />
-                  {!u.uploaded && <span className="muted"> · record it under Attachments on Records</span>}
+                  {u.label}{" "}
+                  {d.inactive ? (
+                    !u.uploaded && <span className="muted">· not uploaded</span>
+                  ) : (
+                    <Status s={u.uploaded ? "ok" : "missing"} />
+                  )}
+                  {!u.uploaded && !d.inactive && (
+                    <span className="muted"> · record it under Attachments on Records</span>
+                  )}
                 </li>
               ))}
             </ul>
@@ -173,7 +180,7 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
             {d.availability.recommended == null
               ? "no recommended hours on the authorization"
               : `${d.availability.recommended} h/week recommended`}{" "}
-            {d.availability.fits === false && <span className="badge warn">does not fit</span>}
+            {d.availability.fits === false && !d.inactive && <span className="badge warn">does not fit</span>}
           </p>
         </div>
       </div>
@@ -185,6 +192,13 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
             {d.auth.payor.name} · {toDay(d.auth.startDate)} to {toDay(d.auth.endDate)} · {label(d.auth.kind)}
           </p>
           <h3>Utilization (delivered vs approved)</h3>
+          {d.inactive && (
+            <p className="muted" data-testid="inactive-history">
+              Shown as of the inactive date
+              {d.client.inactiveSince ? ` (${toDay(d.client.inactiveSince)})` : ""}. Delivery is no longer
+              flagged while the client is inactive.
+            </p>
+          )}
           <div className="table-wrap">
             <table>
               <thead>

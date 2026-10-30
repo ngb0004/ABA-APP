@@ -16,7 +16,8 @@ import { toDay } from "@/lib/dates";
 import { can, requirePermission } from "@/lib/permissions";
 import { listAssessments } from "@/lib/services/assessments";
 import { asOfToday, orNotFound, requirePageCtx, uuidParam } from "@/lib/server/page-session";
-import { ClientInactiveBanner } from "@/components/inactive-banner";
+import { InactiveBanner } from "@/components/inactive-banner";
+import { clientStatusSummary } from "@/lib/services/client-status";
 
 export const metadata: Metadata = { title: "Assessments" };
 
@@ -40,9 +41,14 @@ export default async function AssessmentsPage({ params }: { params: Promise<{ id
   const ctx = await requirePageCtx();
   requirePermission(ctx.role, "client:read");
   const catalog = assessmentCatalog();
-  const { client, groups, pendingImports } = await orNotFound(() => listAssessments(ctx, id, catalog));
-  const canWrite = can(ctx.role, "assessment:write");
-  const canConfirm = can(ctx.role, "assessment:confirm");
+  const [{ client, groups, pendingImports }, status] = await orNotFound(() =>
+    Promise.all([listAssessments(ctx, id, catalog), clientStatusSummary(ctx, id)]),
+  );
+  // An inactive client takes no new or changed assessments until it is reactivated.
+  const inactive = status.status === "inactive";
+  const mayWrite = can(ctx.role, "assessment:write");
+  const canWrite = !inactive && mayWrite;
+  const canConfirm = !inactive && can(ctx.role, "assessment:confirm");
   const base = `/api/clients/${id}/assessments`;
 
   return (
@@ -53,22 +59,28 @@ export default async function AssessmentsPage({ params }: { params: Promise<{ id
         </Link>
       </p>
       <h1>Assessments</h1>
-      <ClientInactiveBanner ctx={ctx} clientId={id} />
+      <InactiveBanner client={status} />
       <p className="page-sub">
         Every assessment for this client, newest first. Repeats of the same assessment are grouped so progress
         shows side by side. Only scores are stored, never report text.
       </p>
-      {canWrite && (
+      {/* A pending import can still be discarded while the client is inactive. */}
+      {mayWrite && (!inactive || pendingImports.length > 0) && (
         <div className="panel">
-          <AddAssessment
-            url={base}
-            importUrl={`${base}/imports`}
-            groups={addOptions(catalog, id, asOfToday())}
-            accept={IMPORT_ACCEPT}
-            demo={isDemo()}
-            samples={DEMO_SAMPLES.assessments.map((name) => ({ name, type: ASSESSMENT_SAMPLE_TYPES[name] }))}
-            testId="add-assessment"
-          />
+          {canWrite && (
+            <AddAssessment
+              url={base}
+              importUrl={`${base}/imports`}
+              groups={addOptions(catalog, id, asOfToday())}
+              accept={IMPORT_ACCEPT}
+              demo={isDemo()}
+              samples={DEMO_SAMPLES.assessments.map((name) => ({
+                name,
+                type: ASSESSMENT_SAMPLE_TYPES[name],
+              }))}
+              testId="add-assessment"
+            />
+          )}
           {pendingImports.length > 0 && (
             <p data-testid="pending-imports">
               Imports waiting for review:{" "}

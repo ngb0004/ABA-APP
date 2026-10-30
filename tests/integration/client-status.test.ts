@@ -1,5 +1,7 @@
 import { readFileSync } from "node:fs";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { MockProvider, setLlmProvider } from "@/lib/ai";
+import type { LlmRequest } from "@/lib/ai/provider";
 import { ZodError } from "zod";
 import { CLIENT_INACTIVE_MESSAGE } from "@/lib/client-status";
 import { withOrg } from "@/lib/db";
@@ -8,15 +10,17 @@ import { ForbiddenError } from "@/lib/log";
 import { createAssessment } from "@/lib/services/assessments";
 import { uploadAssessmentImport } from "@/lib/services/assessment-imports";
 import { caseload, clientDetail, listClients } from "@/lib/services/clients";
-import { clientStatusSummary, setClientStatus } from "@/lib/services/client-status";
+import { assertClientActive, clientStatusSummary, setClientStatus } from "@/lib/services/client-status";
+import { uploadLetter } from "@/lib/services/letters";
 import { goalsView } from "@/lib/services/goals";
 import { addGoalFromTemplate, listAudit } from "@/lib/services/misc";
-import { exportPacketPdf, setChecklistDone } from "@/lib/services/packets";
+import { exportPacketPdf, packetView, setChecklistDone } from "@/lib/services/packets";
 import {
   approveGoal,
   approveSection,
   createPlan,
   discontinueGoal,
+  draftSection,
   editSection,
   planView,
   updateGoal,
@@ -93,6 +97,8 @@ const auditRows = (action: string, entityId: string) =>
   );
 const blocked = { status: 409, message: CLIENT_INACTIVE_MESSAGE };
 
+afterEach(() => setLlmProvider(null));
+
 describe("marking a client inactive or active again", () => {
   it("validates the date, reason, and note", async () => {
     const { cid } = await clientEndingSoon("Statusvalid");
@@ -108,6 +114,11 @@ describe("marking a client inactive or active again", () => {
     for (const note of ["Member ID SYN-AET-000401 ended", "DOB 2022-03-02", "my client Jamie Doe moved"])
       await expect(inactivate(cid, { note })).rejects.toMatchObject({ status: 422 });
     expect((await clientStatusSummary(bcba, cid)).status).toBe("active");
+    // A client with no authorization or session is still bounded by the date of birth.
+    const bare = (await createClient(bcba, fictional("Statusbare"), AS_OF)).id;
+    await expect(inactivate(bare, { date: "1900-01-01" })).rejects.toMatchObject({ status: 422 });
+    await expect(inactivate(bare, { date: "2022-03-01" })).rejects.toMatchObject({ status: 422 });
+    await expect(inactivate(bare, { date: "2022-03-02" })).resolves.toEqual({ status: "inactive" });
     // One day of tolerance for time zones, like other record dates.
     await expect(inactivate(cid, { date: addDays(AS_OF, 1) })).resolves.toEqual({ status: "inactive" });
   });
@@ -153,6 +164,43 @@ describe("marking a client inactive or active again", () => {
     expect(re!.meta).toMatchObject({ previousReason: "family_withdrew", inactiveSince: addDays(AS_OF, -3) });
     const all = await withOrg(bcba, (tx) => tx.auditEvent.findMany({ where: { entityId: cid } }));
     expect(JSON.stringify(all.map((a) => a.meta))).not.toContain("closer to home");
+  });
+
+  it("concurrent status changes apply once, with one audit row", async () => {
+    const { cid } = await clientEndingSoon("Statusrace");
+    const tries = await Promise.allSettled([
+      inactivate(cid, { reason: "transferred" }),
+      inactivate(cid, { reason: "other", date: addDays(AS_OF, -1) }),
+    ]);
+    expect(tries.filter((t) => t.status === "fulfilled")).toHaveLength(1);
+    expect(tries.find((t) => t.status === "rejected")).toMatchObject({ reason: { status: 409 } });
+    expect(await auditRows("client:inactivate", cid)).toHaveLength(1);
+    const back = await Promise.allSettled([reactivate(cid), reactivate(cid)]);
+    expect(back.filter((t) => t.status === "fulfilled")).toHaveLength(1);
+    expect(await auditRows("client:reactivate", cid)).toHaveLength(1);
+  });
+
+  it("an inactivation waits for a guarded write already in flight, and later writes see it", async () => {
+    const { cid } = await clientEndingSoon("Statuslock");
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let guarded!: () => void;
+    const passedGuard = new Promise<void>((r) => (guarded = r));
+    const write = withOrg(bcba, async (tx) => {
+      await assertClientActive(tx, cid);
+      guarded();
+      await gate;
+    });
+    await passedGuard;
+    let finished = false;
+    const status = inactivate(cid).then(() => (finished = true));
+    await new Promise((r) => setTimeout(r, 300));
+    expect(finished).toBe(false);
+    release();
+    await write;
+    await status;
+    expect(finished).toBe(true);
+    await expect(withOrg(bcba, (tx) => assertClientActive(tx, cid))).rejects.toMatchObject(blocked);
   });
 
   it("the database rejects an unknown status or an inactive client without a date", async () => {
@@ -220,6 +268,45 @@ describe("inactive clients raise no alerts and have nothing due", () => {
   });
 });
 
+describe("an inactive client's figures are history, with nothing flagged or due", () => {
+  it("the client, requirements, and packet pages show no failing rules, delivery flags, or due dates", async () => {
+    const { cid } = await clientEndingSoon("Statushistory");
+    const plan = await createPlan(bcba, cid, "reauth");
+    const active = await clientDetail(bcba, cid, AS_OF);
+    // While active, the empty authorization is under-delivered and some payor rule fails.
+    expect(active.utilization.some((u) => u.flag === "under")).toBe(true);
+    expect(active.ruleResults.some((r) => r.rawStatus === "fail")).toBe(true);
+    const activeReq = await clientRequirements(bcba, cid, AS_OF);
+    const reqItems = (r: typeof activeReq) => r.insurances.flatMap((i) => i.groups.flatMap((g) => g.items));
+    expect(reqItems(activeReq).some((i) => i.status === "missing")).toBe(true);
+
+    await inactivate(cid, { date: addDays(AS_OF, -10) });
+    for (const asOf of [AS_OF, addDays(AS_OF, 90)]) {
+      const d = await clientDetail(bcba, cid, asOf);
+      expect(d.utilization.length).toBe(active.utilization.length);
+      expect(d.utilization.every((u) => u.flag === null && u.weeks.every((w) => w.flag === null))).toBe(true);
+      // Frozen at the inactive date: the expected amount stops growing.
+      const later = (await clientDetail(bcba, cid, addDays(asOf, 30))).utilization;
+      expect(later.map((u) => u.expectedToDate)).toEqual(d.utilization.map((u) => u.expectedToDate));
+      expect(d.ruleResults.every((r) => r.status !== "fail" && r.status !== "warn")).toBe(true);
+      expect(d.ruleResults.every((r) => r.rawStatus !== "fail" && r.rawStatus !== "warn")).toBe(true);
+      expect(d.ruleResults.some((r) => /inactive since/.test(r.message))).toBe(true);
+      expect(d.ruleResults.every((r) => !r.schedule)).toBe(true);
+
+      const req = await clientRequirements(bcba, cid, asOf);
+      expect(req.inactive).toBe(true);
+      const items = reqItems(req);
+      expect(items.every((i) => i.status !== "missing" && !i.schedule)).toBe(true);
+      expect(JSON.stringify(items.map((i) => i.message))).not.toMatch(/overdue|due by|next due/);
+
+      const pv = await packetView(bcba, plan.id, asOf);
+      expect(pv.inactive).toBe(true);
+      const rules = pv.checklist.filter((i) => i.source === "payor_rule" && i.key.startsWith("rule:"));
+      expect(rules.every((i) => i.status !== "missing" && !i.notes)).toBe(true);
+    }
+  });
+});
+
 describe("the clients list has an Active and an Inactive tab", () => {
   it("splits clients by status with matching counts", async () => {
     const { cid } = await clientEndingSoon("Statuslist");
@@ -241,6 +328,29 @@ describe("the clients list has an Active and an Inactive tab", () => {
 });
 
 describe("an inactive client takes no new records; everything stays readable", () => {
+  it("drops an AI draft that finishes after the client was marked inactive", async () => {
+    const { cid } = await clientEndingSoon("Statusdraft");
+    const plan = await createPlan(bcba, cid, "initial");
+    const view = await planView(bcba, plan.id, AS_OF);
+    const section = view.sections.find((s) => !s.bcbaOnly && s.state !== "approved")!;
+    // The model "writes" while a BCBA marks the client inactive.
+    class InactivatingProvider extends MockProvider {
+      override async complete(req: LlmRequest) {
+        await inactivate(cid);
+        return super.complete(req);
+      }
+    }
+    setLlmProvider(new InactivatingProvider());
+    await expect(draftSection(bcba, plan.id, section.key, AS_OF)).rejects.toMatchObject(blocked);
+    const after = (await planView(bcba, plan.id, AS_OF)).sections.find((s) => s.key === section.key)!;
+    expect(after.content).toBe(section.content);
+    expect(after.state).toBe(section.state);
+    const revisions = await withOrg(bcba, (tx) =>
+      tx.planSectionRevision.count({ where: { sectionId: section.id, kind: "ai_draft" } }),
+    );
+    expect(revisions).toBe(0);
+  });
+
   it("blocks new plans, sessions, goals, data, assessments, imports, draft edits, approval, and export", async () => {
     const { cid, authorizationId } = await clientEndingSoon("Statusblock");
     const goal = await addGoalFromTemplate(bcba, cid, templateId);
@@ -329,6 +439,12 @@ describe("an inactive client takes no new records; everything stays readable", (
     await rejects(setChecklistDone(bcba, plan.id, "anything", true));
     await rejects(exportPacketPdf(bcba, plan.id, AS_OF));
     await rejects(confirmImport(bcba, staged.importId, { stripPhi: true }));
+
+    // Uploads are refused before the file is read: a broken file still gets the inactive refusal.
+    const junk = Buffer.from("not a workbook or a letter");
+    await rejects(uploadVbmapp(bcba, cid, "broken.xlsm", junk));
+    await rejects(uploadLetter(bcba, cid, "scan.pdf", junk));
+    await rejects(uploadAssessmentImport(bcba, cid, { filename: "scan.pdf", data: junk, typeKey: "pddbi" }));
 
     // Nothing was deleted, and everything stays readable.
     await expect(planView(bcba, plan.id, AS_OF)).resolves.toBeTruthy();

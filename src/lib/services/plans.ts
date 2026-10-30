@@ -320,6 +320,8 @@ export async function draftSection(ctx: OrgCtx, planId: string, key: string, asO
   }
   const text = tidyDraft(result.text);
   return withOrg(ctx, async (tx) => {
+    // The client may have been marked inactive while the model was writing: drop the draft then too.
+    await assertPlanClientActive(tx, planId);
     // The BCBA may have approved or edited the section while the model was writing: never overwrite that.
     const current = await tx.planSection.findUniqueOrThrow({ where: { id: prep.sectionId } });
     assertOpen(current.state, "drafting again");

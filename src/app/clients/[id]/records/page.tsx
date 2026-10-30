@@ -26,7 +26,8 @@ import {
   clientRecords,
 } from "@/lib/services/records";
 import { asOfToday, orNotFound, requirePageCtx, uuidParam } from "@/lib/server/page-session";
-import { ClientInactiveBanner } from "@/components/inactive-banner";
+import { InactiveBanner } from "@/components/inactive-banner";
+import { clientStatusSummary } from "@/lib/services/client-status";
 
 export const metadata: Metadata = { title: "Records" };
 
@@ -35,11 +36,14 @@ const yesNo = (b: boolean) => (b ? "yes" : "no");
 export default async function RecordsPage({ params }: { params: Promise<{ id: string }> }) {
   const id = await uuidParam(params);
   const ctx = await requirePageCtx();
-  const { client: c, sessions, payors } = await orNotFound(() => clientRecords(ctx, id));
+  const [{ client: c, sessions, payors }, status] = await orNotFound(() =>
+    Promise.all([clientRecords(ctx, id), clientStatusSummary(ctx, id)]),
+  );
   const canClient = can(ctx.role, "client:write");
   const canIns = can(ctx.role, "insurance:manage");
   const canDocs = can(ctx.role, "document:manage");
-  const canData = can(ctx.role, "data:enter");
+  // Sessions wait while the client is inactive; insurance, authorizations, and documents stay editable.
+  const canData = status.status !== "inactive" && can(ctx.role, "data:enter");
   // On the demo the identity is generated: only the IEP flag and payor events can change.
   const demo = isDemo();
   const payorOptions = payors.map((p) => ({ value: p.id, label: p.name }));
@@ -169,7 +173,7 @@ export default async function RecordsPage({ params }: { params: Promise<{ id: st
         </Link>
       </p>
       <h1>Records</h1>
-      <ClientInactiveBanner ctx={ctx} clientId={id} />
+      <InactiveBanner client={status} />
       <p className="alert warn">
         v1.0 holds fictional clients only. Member and authorization numbers must start with SYN-, staff are
         entered as codes, and attachments are recorded by title and date (no files).

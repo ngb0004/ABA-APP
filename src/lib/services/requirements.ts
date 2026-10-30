@@ -19,6 +19,7 @@ import { effectivePlanState, evaluateRules, scopeFindings } from "../payors/eval
 import type { PlanType, Rule, ScopeFinding } from "../payors/types";
 import { requirePermission } from "../permissions";
 import { dayInZone } from "../time-format";
+import { historicalAsOf, historicalRuleResults } from "../inactive-view";
 import { orgSettings } from "./clients";
 import { applicableRules, buildEvalContext, loadRules } from "./payors";
 
@@ -90,11 +91,15 @@ export async function clientRequirements(ctx: OrgCtx, clientId: string, asOf: Da
     registerSensitiveName(client.firstName);
     registerSensitiveName(client.lastName);
 
+    // An inactive client's requirements are history: evaluated as of the inactive date, nothing due.
+    const inactive = client.status === "inactive";
+    const inactiveSince = client.inactiveSince ? toDay(client.inactiveSince) : null;
+    const evalAsOf = inactive ? historicalAsOf(asOf, client.inactiveSince) : asOf;
     // The evaluator context is built around the primary insurance and the latest authorization.
     const { ctx: base, authorizationId } = await buildEvalContext(
       tx,
       clientId,
-      asOf,
+      evalAsOf,
       client.plans[0]?.id ?? null,
     );
     const auth = authorizationId
@@ -136,7 +141,8 @@ export async function clientRequirements(ctx: OrgCtx, clientId: string, asOf: Da
             };
       const rules = await loadRules(tx, cp.payorId);
       const applicable = applicableRules(rules, planType);
-      const results = evaluateRules(applicable, evalCtx);
+      const evaluated = evaluateRules(applicable, evalCtx);
+      const results = inactive ? historicalRuleResults(evaluated, inactiveSince) : evaluated;
       const byGroup = new Map<string, Requirement[]>();
       for (const r of results) {
         const key = ruleCategory(r.rule.type);
@@ -211,6 +217,7 @@ export async function clientRequirements(ctx: OrgCtx, clientId: string, asOf: Da
 
     return {
       client: { id: client.id, firstName: client.firstName, lastName: client.lastName },
+      inactive,
       insurances,
       letters,
       unconfirmedLetters,

@@ -12,7 +12,8 @@ import { requirePermission } from "@/lib/permissions";
 import { renderMilestonesGridSvg } from "@/lib/vbmapp/grid-svg";
 import type { Flag } from "@/lib/vbmapp/parse";
 import { orNotFound, requirePageCtx, uuidParam } from "@/lib/server/page-session";
-import { ClientInactiveBanner } from "@/components/inactive-banner";
+import { InactiveBanner } from "@/components/inactive-banner";
+import { clientStatusSummary } from "@/lib/services/client-status";
 
 export const metadata: Metadata = { title: "VB-MAPP" };
 
@@ -20,6 +21,7 @@ export default async function VbmappPage({ params }: { params: Promise<{ id: str
   const id = await uuidParam(params);
   const ctx = await requirePageCtx();
   requirePermission(ctx.role, "client:read");
+  const status = await orNotFound(() => clientStatusSummary(ctx, id));
   const { client, admins, pending, timeZone } = await orNotFound(() =>
     withOrg(ctx, async (tx) => ({
       client: await tx.client.findUniqueOrThrow({ where: { id } }),
@@ -49,31 +51,36 @@ export default async function VbmappPage({ params }: { params: Promise<{ id: str
         </Link>
       </p>
       <h1>VB-MAPP Milestones</h1>
-      <ClientInactiveBanner ctx={ctx} clientId={id} />
-      {can(ctx.role, "vbmapp:import") && (
+      <InactiveBanner client={status} />
+      {/* A pending import can still be discarded while the client is inactive. */}
+      {can(ctx.role, "vbmapp:import") && (status.status !== "inactive" || pending.length > 0) && (
         <div className="panel">
-          <UploadForm
-            url={`/api/clients/${id}/vbmapp`}
-            accept=".xlsm,.xlsx"
-            label="Import a VB-MAPP scoring workbook (.xlsm / .xlsx). Read as data only; macros are never run."
-            redirectKey="importId"
-            redirectPrefix="/vbmapp/imports/"
-            testId="vbmapp-upload"
-          />
-          {isDemo() && (
-            <p className="muted">
-              Uploading your own files is turned off on the demo site. Only the fictional sample workbooks
-              below are accepted.
-            </p>
+          {status.status !== "inactive" && (
+            <>
+              <UploadForm
+                url={`/api/clients/${id}/vbmapp`}
+                accept=".xlsm,.xlsx"
+                label="Import a VB-MAPP scoring workbook (.xlsm / .xlsx). Read as data only; macros are never run."
+                redirectKey="importId"
+                redirectPrefix="/vbmapp/imports/"
+                testId="vbmapp-upload"
+              />
+              {isDemo() && (
+                <p className="muted">
+                  Uploading your own files is turned off on the demo site. Only the fictional sample workbooks
+                  below are accepted.
+                </p>
+              )}
+              <SamplePicker
+                label="Or load a fictional sample workbook"
+                urlPrefix={`/api/clients/${id}/vbmapp?sample=`}
+                samples={DEMO_SAMPLES.vbmapp}
+                redirectKey="importId"
+                redirectPrefix="/vbmapp/imports/"
+                testId="sample-workbooks"
+              />
+            </>
           )}
-          <SamplePicker
-            label="Or load a fictional sample workbook"
-            urlPrefix={`/api/clients/${id}/vbmapp?sample=`}
-            samples={DEMO_SAMPLES.vbmapp}
-            redirectKey="importId"
-            redirectPrefix="/vbmapp/imports/"
-            testId="sample-workbooks"
-          />
           {pending.length > 0 && (
             <p>
               Pending review:{" "}

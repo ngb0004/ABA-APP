@@ -17,6 +17,7 @@ import { redactRestricted } from "../sensitivity";
 import { supervisionByMonth } from "../supervision";
 import { DEFAULT_TIME_ZONE, isTimeZone } from "../time-format";
 import { computeUtilization, type UnitBasis } from "../utilization";
+import { historicalAsOf, historicalRuleResults, historicalUtilization } from "../inactive-view";
 import { evaluateClientRules, loadApplicableRules } from "./payors";
 
 export function orgSettings(settings: unknown): CalendarSettings & {
@@ -110,7 +111,11 @@ export async function clientDetail(ctx: OrgCtx, clientId: string, asOf: Day) {
       ctx.role,
     ) as IntakeAnswers;
 
-    const utilization = auth
+    // An inactive (discontinued) client's figures are history: evaluated as of the inactive date, with
+    // nothing flagged or due (the page says why instead).
+    const inactive = client.status === "inactive";
+    const evalAsOf = inactive ? historicalAsOf(asOf, client.inactiveSince) : asOf;
+    const liveUtilization = auth
       ? computeUtilization(
           {
             startDate: toDay(auth.startDate),
@@ -122,9 +127,10 @@ export async function clientDetail(ctx: OrgCtx, clientId: string, asOf: Day) {
             })),
           },
           sessions.map((s) => ({ cptCode: s.cptCode, date: toDay(s.date), units: s.units })),
-          asOf,
+          evalAsOf,
         )
       : [];
+    const utilization = inactive ? historicalUtilization(liveUtilization) : liveUtilization;
     const supervision = auth
       ? supervisionByMonth(
           sessions.map((s) => ({
@@ -135,13 +141,15 @@ export async function clientDetail(ctx: OrgCtx, clientId: string, asOf: Day) {
             providerId: s.providerId,
             providerRole: s.providerRole,
           })),
-          { start: toDay(auth.startDate), end: toDay(auth.endDate), asOf },
+          { start: toDay(auth.startDate), end: toDay(auth.endDate), asOf: evalAsOf },
         )
       : [];
-    const { results: ruleResults, scope: payorScope } = await evaluateClientRules(tx, clientId, asOf);
+    const evaluated = await evaluateClientRules(tx, clientId, evalAsOf);
+    const payorScope = evaluated.scope;
+    const ruleResults = inactive
+      ? historicalRuleResults(evaluated.results, client.inactiveSince ? toDay(client.inactiveSince) : null)
+      : evaluated.results;
 
-    // An inactive (discontinued) client raises no alerts and has nothing due: the page says why instead.
-    const inactive = client.status === "inactive";
     const alerts: ClientAlert[] = [];
     if (auth && !inactive) {
       const a = authEndAlert(toDay(auth.endDate), asOf, settings);

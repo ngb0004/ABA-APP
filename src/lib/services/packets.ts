@@ -20,6 +20,7 @@ import { isLegacyPlan, sectionDone } from "../plan/sections";
 import { assertExportable, NOT_APPLICABLE_ITEM } from "./plans";
 import { loadPlanBundle } from "../plan/context";
 import { assertPlanClientActive } from "./client-status";
+import { historicalAsOf, historicalRuleResults } from "../inactive-view";
 
 export type ChecklistItem = {
   key: string;
@@ -131,10 +132,24 @@ export async function packetView(ctx: OrgCtx, planId: string, asOf: Day) {
   requirePermission(ctx.role, "client:read");
   return withOrg(ctx, async (tx) => {
     const b = await loadPlanBundle(tx, planId);
-    const { results, scope } = await evaluateClientRules(tx, b.client.id, asOf, planId);
+    // An inactive client's checklist is history: evaluated as of the inactive date, nothing due.
+    const inactive = b.client.status === "inactive";
+    const evalAsOf = inactive ? historicalAsOf(asOf, b.client.inactiveSince) : asOf;
+    const evaluated = await evaluateClientRules(tx, b.client.id, evalAsOf, planId);
+    const results = inactive
+      ? historicalRuleResults(
+          evaluated.results,
+          b.client.inactiveSince ? toDay(b.client.inactiveSince) : null,
+        )
+      : evaluated.results;
     const done = ((b.plan.packet?.checklist as { done?: Record<string, boolean> } | null)?.done ??
       {}) as Record<string, boolean>;
-    return { bundle: b, checklist: buildChecklist(b, results, done, scope), packet: b.plan.packet };
+    return {
+      bundle: b,
+      inactive,
+      checklist: buildChecklist(b, results, done, evaluated.scope),
+      packet: b.plan.packet,
+    };
   });
 }
 

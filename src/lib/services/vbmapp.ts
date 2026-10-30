@@ -11,12 +11,14 @@ import { HttpError } from "../log";
 import { requirePermission } from "../permissions";
 import { carryForward, totalsFromScores, type GridScore } from "../vbmapp/carry-forward";
 import { parseVbmappWorkbook, type ParsedWorkbook } from "../vbmapp/parse";
-import { assertClientActive } from "./client-status";
+import { assertClientActive, precheckClientActive } from "./client-status";
 
 export async function uploadVbmapp(ctx: OrgCtx, clientId: string, filename: string, data: Buffer) {
   requirePermission(ctx.role, "vbmapp:import");
   if (!/\.(xlsm|xlsx)$/i.test(filename)) throw new HttpError(400, "Upload a .xlsm or .xlsx VB-MAPP workbook");
   assertDemoUploadAllowed(data);
+  // Refuse an inactive client before parsing the workbook, so a parse error never hides the refusal.
+  await precheckClientActive(ctx, clientId);
   let parsed: ParsedWorkbook;
   try {
     parsed = parseVbmappWorkbook(data);

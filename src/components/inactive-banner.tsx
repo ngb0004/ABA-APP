@@ -1,4 +1,4 @@
-import { inactiveReasonLabel } from "@/lib/client-status";
+import { INACTIVE_FROZEN, INACTIVE_STILL_EDITABLE, inactiveReasonLabel } from "@/lib/client-status";
 import { toDay } from "@/lib/dates";
 import type { OrgCtx } from "@/lib/db";
 import { clientStatusSummary } from "@/lib/services/client-status";
@@ -21,8 +21,8 @@ export function InactiveBanner({ client }: { client: StatusFields }) {
       </strong>
       {client.inactiveNote && <div>{client.inactiveNote}</div>}
       <div>
-        Alerts and due dates are off and nothing new can be added. Every record stays readable. A BCBA can
-        reactivate the client from the ⋯ menu on the client page.
+        Alerts and due dates are off. {INACTIVE_FROZEN} {INACTIVE_STILL_EDITABLE} Every record stays readable.
+        A BCBA can reactivate the client from the ⋯ menu on the client page.
       </div>
     </div>
   );

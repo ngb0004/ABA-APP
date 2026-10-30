@@ -56,6 +56,8 @@ async function earliestRecord(tx: Tx, clientId: string): Promise<Day | null> {
   return days.length ? days.sort()[0]! : null;
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function setClientStatus(ctx: OrgCtx, clientId: string, input: unknown, asOf: Day) {
   requirePermission(ctx.role, "client:status");
   const v = ClientStatusInput.parse(input);
@@ -67,22 +69,29 @@ export async function setClientStatus(ctx: OrgCtx, clientId: string, input: unkn
     if (v.note && /\{\{|\}\}/.test(v.note))
       throw new HttpError(422, "Write the note in your own words, without value references");
   }
+  if (!UUID.test(clientId)) throw new HttpError(404, "Not found");
   return withOrg(ctx, async (tx) => {
+    // Lock the row first: a second, concurrent status change waits here and then sees this one, and
+    // a write guarded by assertClientActive (FOR SHARE) either commits before this or sees the result.
+    await lockClient(tx, clientId, "update");
     const c = await tx.client.findUnique({
       where: { id: clientId },
-      select: { status: true, inactiveSince: true, inactiveReason: true, inactiveNote: true },
+      select: { status: true, inactiveSince: true, inactiveReason: true, inactiveNote: true, dob: true },
     });
     if (!c) throw new HttpError(404, "Not found");
     if (v.status === "inactive") {
       if (c.status === "inactive") throw new HttpError(409, "This client is already inactive");
+      if (v.date < toDay(c.dob))
+        throw new HttpError(422, "The inactive date cannot be before the client's date of birth");
       const first = await earliestRecord(tx, clientId);
       if (first && v.date < first)
         throw new HttpError(
           422,
           "The inactive date cannot be before the client's first authorization or session",
         );
-      await tx.client.update({
-        where: { id: clientId },
+      // Conditional as well as locked, so a status change never applies twice.
+      const changed = await tx.client.updateMany({
+        where: { id: clientId, status: "active" },
         data: {
           status: "inactive",
           inactiveSince: dayToDate(v.date),
@@ -90,6 +99,7 @@ export async function setClientStatus(ctx: OrgCtx, clientId: string, input: unkn
           inactiveNote: v.note,
         },
       });
+      if (changed.count === 0) throw new HttpError(409, "This client is already inactive");
       // The reason code and date only: the note is free text and stays out of the log.
       await audit(tx, {
         action: "client:inactivate",
@@ -100,10 +110,11 @@ export async function setClientStatus(ctx: OrgCtx, clientId: string, input: unkn
       return { status: "inactive" as const };
     }
     if (c.status !== "inactive") throw new HttpError(409, "This client is already active");
-    await tx.client.update({
-      where: { id: clientId },
+    const changed = await tx.client.updateMany({
+      where: { id: clientId, status: "inactive" },
       data: { status: "active", inactiveSince: null, inactiveReason: null, inactiveNote: null },
     });
+    if (changed.count === 0) throw new HttpError(409, "This client is already active");
     // What was cleared, so the history can be reconstructed (the note as a hash only).
     await audit(tx, {
       action: "client:reactivate",
@@ -121,11 +132,38 @@ export async function setClientStatus(ctx: OrgCtx, clientId: string, input: unkn
 
 // ---------------------------------------------------------------- write guards
 
+/**
+ * Reads the client's status with a row lock (RLS still applies: another practice's client reads as
+ * missing). FOR SHARE in write guards conflicts with the FOR UPDATE / UPDATE in setClientStatus, so an
+ * inactivation waits for in-flight guarded writes to commit, and a write that starts after it sees it.
+ * Concurrent guarded writes share the lock and do not block each other.
+ */
+async function lockClient(tx: Tx, clientId: string, mode: "share" | "update"): Promise<string | null> {
+  const rows =
+    mode === "update"
+      ? await tx.$queryRaw<
+          { status: string }[]
+        >`SELECT status FROM "client" WHERE id = ${clientId}::uuid FOR UPDATE`
+      : await tx.$queryRaw<
+          { status: string }[]
+        >`SELECT status FROM "client" WHERE id = ${clientId}::uuid FOR SHARE`;
+  return rows[0]?.status ?? null;
+}
+
 /** New records (and changes to drafts) wait until an inactive client is reactivated. */
 export async function assertClientActive(tx: Tx, clientId: string): Promise<void> {
-  const c = await tx.client.findUnique({ where: { id: clientId }, select: { status: true } });
-  if (!c) throw new HttpError(404, "Not found");
-  if (c.status === "inactive") throw new HttpError(409, CLIENT_INACTIVE_MESSAGE);
+  if (!UUID.test(clientId)) throw new HttpError(404, "Not found");
+  const status = await lockClient(tx, clientId, "share");
+  if (status === null) throw new HttpError(404, "Not found");
+  if (status === "inactive") throw new HttpError(409, CLIENT_INACTIVE_MESSAGE);
+}
+
+/**
+ * A quick check before slow work (file extraction, OCR, workbook parsing), so an upload to an inactive
+ * client is refused up front. The check inside the write transaction stays the authoritative one.
+ */
+export async function precheckClientActive(ctx: OrgCtx, clientId: string): Promise<void> {
+  await withOrg(ctx, (tx) => assertClientActive(tx, clientId));
 }
 
 export async function assertPlanClientActive(tx: Tx, planId: string): Promise<void> {

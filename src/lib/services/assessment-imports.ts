@@ -26,7 +26,7 @@ import { assertDemoUploadAllowed } from "../demo";
 import { HttpError } from "../log";
 import { requirePermission } from "../permissions";
 import { afterAssessmentConfirmed } from "./plans";
-import { assertClientActive } from "./client-status";
+import { assertClientActive, precheckClientActive } from "./client-status";
 
 const ChosenType = z.object({
   typeKey: z.string().trim().min(1, "Choose the assessment").max(48),
@@ -73,6 +73,8 @@ export async function uploadAssessmentImport(
   requirePermission(ctx.role, "assessment:write");
   const { type, module } = importableType(catalog, { typeKey: input.typeKey, module: input.module });
   assertDemoUploadAllowed(input.data);
+  // Refuse an inactive client before the slow read, not after it.
+  await precheckClientActive(ctx, clientId);
   // Read outside the transaction: OCR can take seconds. Nothing read is kept but the proposal.
   const { file, proposal } = await extractAssessmentFile({
     filename: input.filename,

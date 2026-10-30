@@ -19,6 +19,8 @@ export default async function PlanPage({ params }: { params: Promise<{ id: strin
   const b = v.bundle;
   const tokens = v.sourced.map((t) => ({ key: t.key, label: t.label, display: t.display }));
   const approved = v.sections.filter((s) => sectionDone(s.state)).length;
+  // An inactive client's plan is read-only (drafting, editing, approving, reopening) until reactivated.
+  const role = b.client.status === "inactive" ? null : ctx.role;
   return (
     <>
       <p>
@@ -66,7 +68,7 @@ export default async function PlanPage({ params }: { params: Promise<{ id: strin
         planId={id}
         clientId={b.client.id}
         options={v.assessmentOptions}
-        canEdit={can(ctx.role, "section:edit") && b.plan.status !== "finalized"}
+        canEdit={can(role, "section:edit") && b.plan.status !== "finalized"}
       />
       <div className="row" style={{ marginBottom: 12 }}>
         <Link className="btn" href={`/plans/${id}/packet`}>
@@ -75,7 +77,7 @@ export default async function PlanPage({ params }: { params: Promise<{ id: strin
             : "Initial request packet and export"}
         </Link>
         <Link className="btn dark" href={`/clients/${b.client.id}/goals`}>
-          Edit goals
+          {role ? "Edit goals" : "Goals"}
         </Link>
       </div>
       <p className="alert info">
@@ -100,9 +102,9 @@ export default async function PlanPage({ params }: { params: Promise<{ id: strin
             redraftReason: s.redraftReason,
           }}
           tokens={tokens}
-          canDraft={can(ctx.role, "section:draft")}
-          canEdit={can(ctx.role, "section:edit")}
-          canApprove={can(ctx.role, "section:approve")}
+          canDraft={can(role, "section:draft")}
+          canEdit={can(role, "section:edit")}
+          canApprove={can(role, "section:approve")}
         />
       ))}
       <div className="panel">

@@ -48,7 +48,10 @@ export default async function PacketPage({ params }: { params: Promise<{ id: str
     ]),
   );
   const unapproved = plan.sections.filter((s) => !sectionDone(s.state)).length;
-  const blocked = unapproved > 0 || plan.blockers.length > 0;
+  // An inactive client's packet is read-only: no letters, checklist changes, export, or hand-off.
+  const inactive = pv.inactive;
+  const role = inactive ? null : ctx.role;
+  const blocked = inactive || unapproved > 0 || plan.blockers.length > 0;
   return (
     <>
       <p>
@@ -75,7 +78,7 @@ export default async function PacketPage({ params }: { params: Promise<{ id: str
 
       <div className="panel">
         <h2 style={{ marginTop: 0 }}>Payor letters</h2>
-        {can(ctx.role, "letter:upload") && (
+        {can(role, "letter:upload") && (
           <UploadForm
             url={`/api/plans/${id}/letters`}
             accept=".pdf,.txt"
@@ -83,13 +86,13 @@ export default async function PacketPage({ params }: { params: Promise<{ id: str
             testId="letter-upload"
           />
         )}
-        {can(ctx.role, "letter:upload") && isDemo() && (
+        {can(role, "letter:upload") && isDemo() && (
           <p className="muted">
             Uploading your own files is turned off on the demo site. Only the fictional sample letters below
             are accepted.
           </p>
         )}
-        {can(ctx.role, "letter:upload") && (
+        {can(role, "letter:upload") && (
           <SamplePicker
             label={`Or load a fictional sample letter${initial ? " (reauthorization letters)" : ""}`}
             urlPrefix={`/api/plans/${id}/letters?sample=`}
@@ -143,7 +146,7 @@ export default async function PacketPage({ params }: { params: Promise<{ id: str
                     {ruleSources.get(i.key) && <div>{ruleSources.get(i.key)}</div>}
                   </td>
                   <td data-label="Done">
-                    {i.source !== "auto" && can(ctx.role, "packet:manage") && (
+                    {i.source !== "auto" && can(role, "packet:manage") && (
                       <ChecklistToggle planId={id} itemKey={i.key} done={!!i.done} />
                     )}
                   </td>
@@ -156,7 +159,11 @@ export default async function PacketPage({ params }: { params: Promise<{ id: str
 
       <div className="panel">
         <h2 style={{ marginTop: 0 }}>Export</h2>
-        {blocked ? (
+        {inactive ? (
+          <div className="alert danger" data-testid="export-blocked">
+            Export is blocked: the client is inactive. Reactivate the client first.
+          </div>
+        ) : blocked ? (
           <div className="alert danger" data-testid="export-blocked">
             Export is blocked: {unapproved} {unapproved === 1 ? "section" : "sections"} not approved;{" "}
             {plan.blockers.length} audit {plan.blockers.length === 1 ? "check" : "checks"} failing.
@@ -165,13 +172,13 @@ export default async function PacketPage({ params }: { params: Promise<{ id: str
           <div className="alert info">All sections approved and the pre-submission audit passes.</div>
         )}
         <div className="row">
-          {can(ctx.role, "export:pdf") && <ExportButton planId={id} disabled={blocked} />}
+          {can(role, "export:pdf") && <ExportButton planId={id} disabled={blocked} />}
           {pv.packet?.exportedAt && (
             <a className="btn" href={`/api/plans/${id}/export`}>
               Download last export
             </a>
           )}
-          {pv.packet?.status === "ready" && can(ctx.role, "packet:manage") && (
+          {pv.packet?.status === "ready" && can(role, "packet:manage") && (
             <ActionButton url={`/api/plans/${id}/packet/submit`} testId="mark-submitted">
               Mark submitted
             </ActionButton>

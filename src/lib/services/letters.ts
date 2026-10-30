@@ -13,7 +13,7 @@ import { pseudonymNames, pseudonymize } from "../intake/derive";
 import { assertDemoUploadAllowed } from "../demo";
 import { HttpError } from "../log";
 import { requirePermission } from "../permissions";
-import { assertClientActive } from "./client-status";
+import { assertClientActive, precheckClientActive } from "./client-status";
 
 export const LETTER_CLASSES = ["approval", "denial", "reduction", "request_for_info", "p2p_offer"] as const;
 const MAX_BYTES = 5 * 1024 * 1024;
@@ -98,6 +98,8 @@ Every quote must be copied character-for-character from the letter. Do not compu
 export async function uploadLetter(ctx: OrgCtx, clientId: string, filename: string, data: Buffer) {
   requirePermission(ctx.role, "letter:upload");
   assertDemoUploadAllowed(data);
+  // Refuse an inactive client before the slow read, not after it.
+  await precheckClientActive(ctx, clientId);
   const text = await extractLetterText(filename, data);
   return withOrg(ctx, async (tx) => {
     await assertClientActive(tx, clientId);

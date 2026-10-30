@@ -2,7 +2,13 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { INACTIVE_NOTE_MAX, INACTIVE_REASONS, INACTIVE_REASON_LABELS } from "@/lib/client-status";
+import {
+  INACTIVE_FROZEN,
+  INACTIVE_NOTE_MAX,
+  INACTIVE_REASONS,
+  INACTIVE_REASON_LABELS,
+  INACTIVE_STILL_EDITABLE,
+} from "@/lib/client-status";
 import { send } from "./actions";
 import { RowMenu } from "./row-menu";
 
@@ -64,8 +70,8 @@ function InactiveForm({ clientId, today, onDone }: { clientId: string; today: st
       }}
     >
       <p className="muted" style={{ marginTop: 0 }}>
-        Alerts and due dates stop for this client, and nothing new can be added until it is reactivated. Every
-        record is kept and stays readable; nothing is deleted.
+        Alerts and due dates stop for this client. {INACTIVE_FROZEN} {INACTIVE_STILL_EDITABLE} Every record is
+        kept and stays readable; nothing is deleted.
       </p>
       <label htmlFor="inactive-date">Inactive since</label>
       <input

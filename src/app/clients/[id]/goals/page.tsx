@@ -9,7 +9,8 @@ import { measureUnit } from "@/lib/plan/context";
 import { can } from "@/lib/permissions";
 import { goalsView } from "@/lib/services/goals";
 import { asOfToday, orNotFound, requirePageCtx, uuidParam } from "@/lib/server/page-session";
-import { ClientInactiveBanner } from "@/components/inactive-banner";
+import { InactiveBanner } from "@/components/inactive-banner";
+import { clientStatusSummary } from "@/lib/services/client-status";
 
 export const metadata: Metadata = { title: "Goals" };
 
@@ -17,7 +18,11 @@ export default async function GoalsPage({ params }: { params: Promise<{ id: stri
   const id = await uuidParam(params);
   const ctx = await requirePageCtx();
   const asOf = asOfToday();
-  const v = await orNotFound(() => goalsView(ctx, id, asOf));
+  const [v, status] = await orNotFound(() =>
+    Promise.all([goalsView(ctx, id, asOf), clientStatusSummary(ctx, id)]),
+  );
+  // An inactive client's goals and data are read-only until it is reactivated.
+  const role = status.status === "inactive" ? null : ctx.role;
   return (
     <>
       <p>
@@ -26,7 +31,7 @@ export default async function GoalsPage({ params }: { params: Promise<{ id: stri
         </Link>
       </p>
       <h1>Goals</h1>
-      <ClientInactiveBanner ctx={ctx} clientId={id} />
+      <InactiveBanner client={status} />
       <div className="grid2">
         <div className="panel">
           <h2 style={{ marginTop: 0 }}>Required goal categories</h2>
@@ -64,7 +69,7 @@ export default async function GoalsPage({ params }: { params: Promise<{ id: stri
                       {s.template ? ` · suggests ${s.template.domainName} tier ${s.template.tier}` : ""}
                     </div>
                   </div>
-                  {s.template && can(ctx.role, "goal:write") && (
+                  {s.template && can(role, "goal:write") && (
                     <ActionButton
                       url={`/api/clients/${id}/goals`}
                       body={{ templateId: s.template.id }}
@@ -100,7 +105,7 @@ export default async function GoalsPage({ params }: { params: Promise<{ id: stri
                         : " · no template yet"}
                     </div>
                   </div>
-                  {s.template && can(ctx.role, "goal:write") && (
+                  {s.template && can(role, "goal:write") && (
                     <ActionButton
                       url={`/api/clients/${id}/goals`}
                       body={{ templateId: s.template.id }}
@@ -136,10 +141,10 @@ export default async function GoalsPage({ params }: { params: Promise<{ id: stri
                 </>
               )}
             </h2>
-            {can(ctx.role, "goal:write") && (
+            {can(role, "goal:write") && (
               <GoalMenu
                 asOf={asOf}
-                canRemove={can(ctx.role, "goal:approve")}
+                canRemove={can(role, "goal:approve")}
                 removeBlocker={g.removeBlocker}
                 goal={{
                   id: g.id,
@@ -170,7 +175,7 @@ export default async function GoalsPage({ params }: { params: Promise<{ id: stri
             </div>
           )}
           <Html html={g.graph} />
-          {can(ctx.role, "data:enter") && (
+          {can(role, "data:enter") && (
             <details data-testid={`goal-data-${g.ordinal}`}>
               <summary>Data ({g.dataPoints.length} points)</summary>
               <RecordForm
@@ -231,7 +236,7 @@ export default async function GoalsPage({ params }: { params: Promise<{ id: stri
               ? `${Math.round(g.baselineValue * 10) / 10}${measureUnit(g.measure)}, recorded ${toDay(g.baselineDate!)} and locked`
               : "not locked (the mean of the first three data points is used until it is locked)"}
           </p>
-          {!g.baselineLockedAt && can(ctx.role, "goal:approve") && g.dataPoints.length >= 3 && (
+          {!g.baselineLockedAt && can(role, "goal:approve") && g.dataPoints.length >= 3 && (
             <ActionButton url={`/api/goals/${g.id}/baseline`} testId={`lock-baseline-${g.ordinal}`} secondary>
               Lock baseline from the first three data points
             </ActionButton>
@@ -239,7 +244,7 @@ export default async function GoalsPage({ params }: { params: Promise<{ id: stri
           <GoalRecordEditor
             // Discontinue and Resume change the status from the menu: start over from the server's record.
             key={`${g.id}-${g.progressStatus}`}
-            canWrite={can(ctx.role, "goal:write")}
+            canWrite={can(role, "goal:write")}
             goal={{
               id: g.id,
               ordinal: g.ordinal,
@@ -251,10 +256,8 @@ export default async function GoalsPage({ params }: { params: Promise<{ id: stri
             }}
           />
           {g.flat && <div className="alert warn">No improvement over the last 8 weeks.</div>}
-          {g.flat && can(ctx.role, "goal:write") && (
-            <FlatExplanation goalId={g.id} initial={g.flatExplanation} />
-          )}
-          {can(ctx.role, "goal:approve") && g.status !== "approved" && (
+          {g.flat && can(role, "goal:write") && <FlatExplanation goalId={g.id} initial={g.flatExplanation} />}
+          {can(role, "goal:approve") && g.status !== "approved" && (
             <div className="row" style={{ marginTop: 8 }}>
               <ActionButton url={`/api/goals/${g.id}/approve`} testId={`approve-goal-${g.ordinal}`}>
                 Approve goal
@@ -264,7 +267,7 @@ export default async function GoalsPage({ params }: { params: Promise<{ id: stri
         </div>
       ))}
 
-      {can(ctx.role, "goal:write") && (
+      {can(role, "goal:write") && (
         <div className="panel">
           <h2 style={{ marginTop: 0 }}>Goal library</h2>
           <details>
