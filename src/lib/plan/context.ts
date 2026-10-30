@@ -419,6 +419,15 @@ export function buildSourcedContext(b: ClientData, asOf: Day): SourcedContext {
       const [lvl, dom] = [dk.slice(1, 2), dk.slice(3)];
       byLevel.set(lvl, [...(byLevel.get(lvl) ?? []), [dom, v]]);
     }
+    for (const lvl of ["1", "2", "3"])
+      if (!ctx.get(`vbmapp.level${lvl}.name`))
+        add({
+          key: `vbmapp.level${lvl}.name`,
+          label: `Name of VB-MAPP Level ${lvl}; write this token whenever you name the level`,
+          value: `Level ${lvl}`,
+          display: `Level ${lvl}`,
+          source: src(`totals.levels.${lvl}`),
+        });
     const facts = vbmappFacts(totals.levels, byLevel);
     for (const [lvl, v] of Object.entries(totals.levels)) {
       if (!v) continue;
@@ -563,7 +572,8 @@ export function buildSourcedContext(b: ClientData, asOf: Day): SourcedContext {
       b.goals.filter((g) => g.progressStatus === st).length,
     ]),
   ];
-  for (const [k, label, v] of counts)
+  // Zero counts (other than the total) invite sentences like "0 goals are on hold": leave them out.
+  for (const [k, label, v] of counts.filter(([k, , v]) => k === "total" || v > 0))
     add({
       key: `goals.count.${k}`,
       label: `${label}${UNIT_NOTE}`,
@@ -599,7 +609,7 @@ export function buildSourcedContext(b: ClientData, asOf: Day): SourcedContext {
     if (a?.value && b.intake) {
       add({
         key: `intake.${id}.count`,
-        label: `Parent-reported ${id.replace("_frequency", "").replace("_", " ")} episodes per ${a.value.per}, renders as "N episodes"; write "per ${a.value.per}" after it`,
+        label: `Parent-reported ${id.replace("_frequency", "").replace("_", " ")} episodes per ${a.value.per}, reported at intake (not current data), renders as "N episodes"; write "per ${a.value.per}" after it`,
         value: a.value.count,
         display: withUnit(a.value.count, "episode"),
         source: {
@@ -612,7 +622,7 @@ export function buildSourcedContext(b: ClientData, asOf: Day): SourcedContext {
       });
       add({
         key: `intake.${id}.minutes`,
-        label: `Parent-reported typical ${id.replace("_frequency", "").replace("_", " ")} duration in minutes${UNIT_NOTE}`,
+        label: `Parent-reported typical ${id.replace("_frequency", "").replace("_", " ")} duration in minutes, reported at intake (not current data)${UNIT_NOTE}`,
         value: a.value.durationMinutes,
         display: withUnit(a.value.durationMinutes, "minute"),
         source: {
@@ -646,9 +656,12 @@ export function availabilityFacts(answers: IntakeAnswers): string[] {
  * lower levels exist and few of its milestones are met) is only emerging, so its domains are never ranked as
  * strengths or weaknesses.
  */
+/** The sourced token that names a VB-MAPP level ("Level 2"); the model writes this instead of the number. */
+export const levelToken = (lvl: string | number) => `{{vbmapp.level${lvl}.name}}`;
+
 export function vbmappFacts(levels: Record<string, number>, byLevel: Map<string, [string, number][]>) {
-  // Facts reach the model, whose output may not contain digits: name levels in words.
-  const word = (l: string) => ({ "1": "One", "2": "Two", "3": "Three" })[l] ?? l;
+  // Facts reach the model, whose output may contain neither digits nor number words: levels are tokens.
+  const word = (l: string) => levelToken(l);
   const level = new Map<string, string[]>();
   const domain = new Map<string, string[]>();
   const reached = Object.keys(levels)
@@ -662,10 +675,10 @@ export function vbmappFacts(levels: Record<string, number>, byLevel: Map<string,
     if (!(levels[lvl] ?? 0)) continue;
     const mastered = doms.length > 0 && doms.every(([, v]) => v >= MILESTONES_PER_DOMAIN);
     const lf: string[] = [];
-    if (mastered) lf.push(`every Level ${word(lvl)} milestone is met: Level ${word(lvl)} is mastered`);
+    if (mastered) lf.push(`every ${word(lvl)} milestone is met: ${word(lvl)} is mastered`);
     if (lvl === emerging)
       lf.push(
-        `highest level reached: the client is only beginning Level ${word(lvl)}, so low scores here mark where new learning starts, not weaknesses`,
+        `highest level reached: the client is only beginning ${word(lvl)}, so low scores here mark where new learning starts, not weaknesses`,
       );
     level.set(lvl, lf);
     const values = doms.map(([, v]) => v);
@@ -673,14 +686,14 @@ export function vbmappFacts(levels: Record<string, number>, byLevel: Map<string,
     const high = Math.max(...values);
     for (const [dom, v] of doms) {
       const f: string[] = [];
-      if (v >= MILESTONES_PER_DOMAIN) f.push(`every ${dom} milestone at Level ${word(lvl)} is met`);
+      if (v >= MILESTONES_PER_DOMAIN) f.push(`every ${dom} milestone at ${word(lvl)} is met`);
       if (lvl === emerging)
-        f.push(`Level ${word(lvl)} is only emerging: do not rank this domain as a strength or a weakness`);
+        f.push(`${word(lvl)} is only emerging: do not rank this domain as a strength or a weakness`);
       else if (low === high) {
-        if (!mastered) f.push(`same score as every other Level ${word(lvl)} domain`);
+        if (!mastered) f.push(`same score as every other ${word(lvl)} domain`);
       } else {
-        if (v === low) f.push(`lowest domain in Level ${word(lvl)}`);
-        if (v === high) f.push(`highest domain in Level ${word(lvl)}`);
+        if (v === low) f.push(`lowest domain in ${word(lvl)}`);
+        if (v === high) f.push(`highest domain in ${word(lvl)}`);
       }
       domain.set(`${lvl}:${dom}`, f);
     }

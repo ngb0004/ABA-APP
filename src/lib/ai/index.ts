@@ -7,7 +7,7 @@
  * → audit event for every attempt (prompt hash, model, section, user).
  */
 import { audit, sha256 } from "../audit";
-import { currentCtx, withOrg, type Tx } from "../db";
+import { currentCtx, withOrg, type OrgCtx, type Tx } from "../db";
 import { env } from "../env";
 import { SourcedContext, validateAiText, type FirewallError } from "../firewall";
 import { INTAKE_FIELDS } from "../intake/schema";
@@ -78,17 +78,23 @@ const FIREWALL_RULES = `Numbers policy (strict): never write any digit or spelle
  * AI-call audit rows are committed in their own transaction, so a call is
  * recorded even when the surrounding work (e.g., a firewall rejection) rolls back.
  */
-async function auditAiCall(tx: Tx, e: Parameters<typeof audit>[1]) {
-  const ctx = currentCtx();
+async function auditAiCall(tx: Tx | null, orgCtx: OrgCtx | undefined, e: Parameters<typeof audit>[1]) {
+  const ctx = currentCtx() ?? orgCtx;
   if (ctx) await withOrg(ctx, (t) => audit(t, e));
-  else await audit(tx, e);
+  else if (tx) await audit(tx, e);
+  else throw new Error("AI calls must be audited inside an org context");
 }
 
 export type DraftResult = { text: string; model: string; attempts: number; promptHash: string };
 
+/**
+ * Pass `tx` when already inside a transaction, or null plus `ctx` to call the model
+ * outside one (a slow model call must not hold a database transaction open).
+ */
 export async function draftWithFirewall(
-  tx: Tx,
+  tx: Tx | null,
   input: {
+    ctx?: OrgCtx;
     system: string;
     payload: Record<string, unknown>;
     sourced: SourcedContext;
@@ -111,7 +117,7 @@ export async function draftWithFirewall(
       model = res.model;
       const v = validateAiText(res.text, input.sourced);
       if (v.ok) {
-        await auditAiCall(tx, {
+        await auditAiCall(tx, input.ctx, {
           action: "ai:call",
           entityType: input.audit.entityType,
           entityId: input.audit.entityId,
@@ -131,7 +137,7 @@ export async function draftWithFirewall(
       lastErrors = v.errors;
     } catch (e) {
       outcome = "provider_error";
-      await auditAiCall(tx, {
+      await auditAiCall(tx, input.ctx, {
         action: "ai:call",
         entityType: input.audit.entityType,
         entityId: input.audit.entityId,
@@ -147,7 +153,7 @@ export async function draftWithFirewall(
       });
       throw e;
     }
-    await auditAiCall(tx, {
+    await auditAiCall(tx, input.ctx, {
       action: "ai:call",
       entityType: input.audit.entityType,
       entityId: input.audit.entityId,
@@ -202,7 +208,7 @@ export async function completeJson(
     if (outcome === "ok") outcome = "provider_error";
     throw e;
   } finally {
-    await auditAiCall(tx, {
+    await auditAiCall(tx, undefined, {
       action: "ai:call",
       entityType: input.audit.entityType,
       entityId: input.audit.entityId,

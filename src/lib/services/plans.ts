@@ -220,52 +220,76 @@ export async function planView(ctx: OrgCtx, planId: string, asOf: Day) {
 
 // ---------------------------------------------------------------- AI drafting
 
+/** Sections being drafted right now (one app process): a retried request must not start a second draft. */
+const draftsInFlight = new Set<string>();
+export const DRAFT_IN_PROGRESS = "A draft for this section is already being written. It will appear shortly.";
+
 export async function draftSection(ctx: OrgCtx, planId: string, key: string, asOf: Day) {
   requirePermission(ctx.role, "section:draft");
   const def = SECTION_BY_KEY.get(key);
   if (!def) throw new HttpError(404, "Unknown section");
   if (def.bcbaOnly) throw new HttpError(400, "This section is written by the BCBA");
-  return withOrg(ctx, async (tx) => {
+  // Read everything in a short transaction; the model call (which can take most of a minute) runs
+  // outside any transaction, and the result is written in a second one.
+  const prep = await withOrg(ctx, async (tx) => {
     const b = await loadPlanBundle(tx, planId);
-    const section = b.plan.sections.find((s) => s.key === key)!;
+    const section = b.plan.sections.find((s) => s.key === key);
     if (!section) throw new HttpError(404, "Unknown section");
     assertOpen(section.state, "drafting again");
     const sourced = buildSourcedContext(b, asOf);
     const names = pseudonymNames(b.client);
-    const payload = buildDraftPayload({ def, bundle: b, sourced, names });
-    const result = await draftWithFirewall(tx, {
-      system: DRAFT_SYSTEM_PROMPT,
-      payload,
+    return {
+      sectionId: section.id,
+      content: section.content,
       sourced,
+      payload: buildDraftPayload({ def, bundle: b, sourced, names }),
       identifiers: {
         names: [...names.client, ...names.others],
         dob: toDay(b.client.dob),
         memberIds: b.client.payors.map((p) => p.memberId),
       },
-      audit: { entityType: "PlanSection", entityId: section.id, section: def.key, task: "draft_section" },
+    };
+  });
+  if (draftsInFlight.has(prep.sectionId)) throw new HttpError(409, DRAFT_IN_PROGRESS);
+  draftsInFlight.add(prep.sectionId);
+  let result;
+  try {
+    result = await draftWithFirewall(null, {
+      ctx,
+      system: DRAFT_SYSTEM_PROMPT,
+      payload: prep.payload,
+      sourced: prep.sourced,
+      identifiers: prep.identifiers,
+      audit: { entityType: "PlanSection", entityId: prep.sectionId, section: def.key, task: "draft_section" },
     });
-    const text = tidyDraft(result.text);
+  } finally {
+    draftsInFlight.delete(prep.sectionId);
+  }
+  const text = tidyDraft(result.text);
+  return withOrg(ctx, async (tx) => {
+    // The BCBA may have approved or edited the section while the model was writing: never overwrite that.
+    const current = await tx.planSection.findUniqueOrThrow({ where: { id: prep.sectionId } });
+    assertOpen(current.state, "drafting again");
+    if (current.content !== prep.content)
+      throw new HttpError(
+        409,
+        "The section changed while the AI was writing, so the new draft was not saved. Your text is kept.",
+      );
     await tx.planSection.update({
-      where: { id: section.id },
-      data: {
-        aiDraft: text,
-        content: text,
-        state: "draft",
-        approvedAt: null,
-        approvedById: null,
-      },
+      where: { id: prep.sectionId },
+      data: { aiDraft: text, content: text, state: "draft", approvedAt: null, approvedById: null },
     });
     await tx.planSectionRevision.create({
       data: {
         orgId: ctx.orgId,
-        sectionId: section.id,
+        sectionId: prep.sectionId,
         kind: "ai_draft",
         content: text,
         userId: ctx.userId,
       },
     });
     // The rendered draft lets the page show it before its refresh lands.
-    return { text, html: renderTokens(text, sourced, "html"), attempts: result.attempts };
+    return { text, html: renderTokens(text, prep.sourced, "html"), attempts: result.attempts };
   });
 }
 
