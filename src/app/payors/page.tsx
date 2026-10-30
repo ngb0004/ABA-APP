@@ -17,7 +17,7 @@ import { loadRules } from "@/lib/services/payors";
 import { listOpenReports } from "@/lib/services/rule-reports";
 import { REPORT_REASON_LABELS } from "@/lib/payors/report-reasons";
 import { orgSettings } from "@/lib/services/clients";
-import { formatDateTime } from "@/lib/time-format";
+import { dayInZone, formatDateTime } from "@/lib/time-format";
 import { requirePageCtx } from "@/lib/server/page-session";
 
 export const metadata: Metadata = { title: "Payor rules" };
@@ -61,7 +61,10 @@ export default async function PayorsPage({
   const demo = isDemo();
   // The version the payor shows, else when we got the copy; null when there is no copy at all.
   const currentLabel = (s: { versionLabel: string | null; fetchedAt: Date; origin: string } | undefined) =>
-    s ? (s.versionLabel ?? `${s.origin === "upload" ? "uploaded" : "fetched"} ${toDay(s.fetchedAt)}`) : null;
+    s
+      ? (s.versionLabel ??
+        `${s.origin === "upload" ? "uploaded" : "fetched"} ${dayInZone(s.fetchedAt, timeZone)}`)
+      : null;
   const official = docs
     .filter((d) => !d.secondary)
     .map((d) => ({ id: d.id, name: d.name, current: currentLabel(d.snapshots[0]) }));
@@ -121,7 +124,7 @@ export default async function PayorsPage({
                   {reports.map((r) => (
                     <tr key={r.id} data-report={r.id}>
                       <td className="muted" data-label="Reported">
-                        {toDay(r.createdAt)}
+                        {dayInZone(r.createdAt, timeZone)}
                         {r.practice && <div>{r.practice}</div>}
                       </td>
                       <td data-label="Rule">
@@ -245,7 +248,7 @@ export default async function PayorsPage({
                             <div className="muted" data-testid={`upload-note-${d.key}`}>
                               No public copy to watch.{" "}
                               {s?.origin === "upload"
-                                ? `Official copy on file from ${toDay(s.fetchedAt)}.${curator && !demo ? " Upload the new edition when the payor publishes one." : ""}`
+                                ? `Official copy on file from ${dayInZone(s.fetchedAt, timeZone)}.${curator && !demo ? " Upload the new edition when the payor publishes one." : ""}`
                                 : curator && !demo
                                   ? "Upload the official copy to verify rules against it."
                                   : "Yoma's reviewers check this document by hand."}

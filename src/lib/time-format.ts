@@ -70,3 +70,19 @@ export function formatDateTime(
   // Some ICU builds put a narrow no-break space before AM/PM; show a plain space.
   return f.format(date).replace(/[  ]/g, " ");
 }
+
+const dayFormatters = new Map<string, Intl.DateTimeFormat>();
+
+/** The calendar day ("YYYY-MM-DD") a stored instant falls on in the practice's zone (Eastern if unknown). */
+export function dayInZone(date: Date, timeZone: string | null | undefined): string {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) throw new RangeError("Invalid date");
+  const tz = timeZone && isTimeZone(timeZone) ? timeZone : DEFAULT_TIME_ZONE;
+  let f = dayFormatters.get(tz);
+  if (!f) {
+    // en-CA formats a date as YYYY-MM-DD.
+    f = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" });
+    dayFormatters.set(tz, f);
+  }
+  const parts = Object.fromEntries(f.formatToParts(date).map((p) => [p.type, p.value]));
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}

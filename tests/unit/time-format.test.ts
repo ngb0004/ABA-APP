@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_TIME_ZONE,
   PRACTICE_TIME_ZONES,
+  dayInZone,
   formatClock,
   formatDateTime,
   isTimeZone,
@@ -70,5 +71,20 @@ describe("time zones", () => {
     for (const z of PRACTICE_TIME_ZONES) expect(isTimeZone(z.value)).toBe(true);
     expect(isTimeZone("Not/AZone")).toBe(false);
     expect(isTimeZone("")).toBe(false);
+  });
+});
+
+describe("dayInZone", () => {
+  it("gives the calendar day of an instant in the practice's zone", () => {
+    // 8:30 PM Eastern on Oct 30 is 00:30 UTC Oct 31.
+    const evening = new Date("2026-10-31T00:30:00Z");
+    expect(dayInZone(evening, "America/New_York")).toBe("2026-10-30");
+    expect(dayInZone(evening, "Pacific/Honolulu")).toBe("2026-10-30");
+    expect(dayInZone(new Date("2026-10-31T05:30:00Z"), "America/New_York")).toBe("2026-10-31");
+  });
+  it("falls back to Eastern for an unknown zone, and rejects invalid dates", () => {
+    expect(dayInZone(new Date("2026-01-01T03:00:00Z"), "Not/AZone")).toBe("2025-12-31");
+    expect(dayInZone(new Date("2026-01-01T03:00:00Z"), null)).toBe("2025-12-31");
+    expect(() => dayInZone(new Date("nope"), DEFAULT_TIME_ZONE)).toThrow();
   });
 });

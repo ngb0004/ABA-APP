@@ -336,7 +336,13 @@ test("a BCBA removes a goal added by mistake and discontinues a goal with data, 
   await form.getByTestId("data-form-1-submit").click();
   await expect(box).toContainText("2026-10-20");
   await page.getByRole("button", { name: "Actions for Goal 1" }).click();
-  await expect(page.getByRole("menuitem", { name: "Remove" })).toHaveCount(0);
+  await expect(page.getByRole("menuitem", { name: "Remove", exact: true })).toHaveCount(0);
+  // "Remove…" says why it can't be removed instead of deleting.
+  await page.getByRole("menuitem", { name: "Remove…" }).click();
+  const why = page.getByRole("dialog", { name: "Goal 1 can't be removed" });
+  await expect(why).toContainText("This goal has data, so it can't be removed. Discontinue it instead.");
+  await why.getByRole("button", { name: "OK" }).click();
+  await page.getByRole("button", { name: "Actions for Goal 1" }).click();
   await page.getByRole("menuitem", { name: "Discontinue…" }).click();
   const dialog = page.getByRole("dialog", { name: "Discontinue Goal 1" });
   await dialog.getByLabel(/^Reason/).fill("Family asked to focus on other goals.");
@@ -355,7 +361,7 @@ test("a BCBA removes a goal added by mistake and discontinues a goal with data, 
     void d.accept();
   });
   await page.getByRole("button", { name: "Actions for Goal 2" }).click();
-  await page.getByRole("menuitem", { name: "Remove" }).click();
+  await page.getByRole("menuitem", { name: "Remove", exact: true }).click();
   await expect(page.getByTestId("goal-menu-2")).toHaveCount(0);
 
   // Resume puts goal 1 back in progress.

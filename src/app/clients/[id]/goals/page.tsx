@@ -15,7 +15,8 @@ export const metadata: Metadata = { title: "Goals" };
 export default async function GoalsPage({ params }: { params: Promise<{ id: string }> }) {
   const id = await uuidParam(params);
   const ctx = await requirePageCtx();
-  const v = await orNotFound(() => goalsView(ctx, id, asOfToday()));
+  const asOf = asOfToday();
+  const v = await orNotFound(() => goalsView(ctx, id, asOf));
   return (
     <>
       <p>
@@ -98,7 +99,9 @@ export default async function GoalsPage({ params }: { params: Promise<{ id: stri
             </h2>
             {can(ctx.role, "goal:write") && (
               <GoalMenu
-                canRemove={can(ctx.role, "goal:approve") && g.removeBlocker === null}
+                asOf={asOf}
+                canRemove={can(ctx.role, "goal:approve")}
+                removeBlocker={g.removeBlocker}
                 goal={{
                   id: g.id,
                   ordinal: g.ordinal,
@@ -195,6 +198,8 @@ export default async function GoalsPage({ params }: { params: Promise<{ id: stri
             </ActionButton>
           )}
           <GoalRecordEditor
+            // Discontinue and Resume change the status from the menu: start over from the server's record.
+            key={`${g.id}-${g.progressStatus}`}
             canWrite={can(ctx.role, "goal:write")}
             goal={{
               id: g.id,

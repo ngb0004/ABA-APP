@@ -87,19 +87,16 @@ export function GoalEditor({ goal, onDone }: { goal: EditableGoal; onDone: () =>
   );
 }
 
-/** Today in the browser's calendar, as YYYY-MM-DD. */
-function localToday() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-
 const DISCONTINUE_REASON_MAX = 500;
 
-/** Discontinue a goal with history: the reason and date go on the record; its data and graph stay. */
-function DiscontinueForm({ goalId, onDone }: { goalId: string; onDone: () => void }) {
+/**
+ * Discontinue a goal with history: the reason and date go on the record; its data and graph stay.
+ * "Today" is the server's (asOf), the same day the server checks the date against.
+ */
+function DiscontinueForm({ goalId, asOf, onDone }: { goalId: string; asOf: string; onDone: () => void }) {
   const router = useRouter();
   const [reason, setReason] = useState("");
-  const [date, setDate] = useState(localToday());
+  const [date, setDate] = useState(asOf);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   return (
@@ -139,7 +136,7 @@ function DiscontinueForm({ goalId, onDone }: { goalId: string; onDone: () => voi
         id={`discontinue-date-${goalId}`}
         type="date"
         required
-        max={localToday()}
+        max={asOf}
         value={date}
         onChange={(e) => setDate(e.target.value)}
       />
@@ -197,16 +194,37 @@ function ResumeConfirm({ goalId, onDone }: { goalId: string; onDone: () => void 
   );
 }
 
+/** Why a goal cannot be removed, with the way forward the server gave. */
+function RemoveBlocked({ reason, onDone }: { reason: string; onDone: () => void }) {
+  return (
+    <div>
+      <p style={{ marginTop: 0 }}>{reason}</p>
+      <div className="row">
+        <button className="secondary" onClick={onDone}>
+          OK
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /**
- * The one "⋯" menu on a goal card: Edit goal, Discontinue… or Resume, and Remove (offered only
- * when the server's rule allows it: a goal added by mistake, with no data and never approved).
+ * The one "⋯" menu on a goal card: Edit goal, Discontinue… or Resume, and Remove. Remove deletes
+ * only when the server's rule allows it (a goal added by mistake, with no data and never approved);
+ * otherwise "Remove…" explains why not.
  */
 export function GoalMenu({
   goal,
+  asOf,
   canRemove,
+  removeBlocker,
 }: {
   goal: EditableGoal & { ordinal: number; progressStatus: string };
+  /** The server's today (YYYY-MM-DD). */
+  asOf: string;
+  /** The user may remove goals. */
   canRemove: boolean;
+  removeBlocker: string | null;
 }) {
   const name = `Goal ${goal.ordinal}`;
   const { ordinal, progressStatus, ...editable } = goal;
@@ -231,11 +249,20 @@ export function GoalMenu({
           : {
               label: "Discontinue…",
               title: `Discontinue ${name}`,
-              content: (close) => <DiscontinueForm goalId={goal.id} onDone={close} />,
+              content: (close) => <DiscontinueForm goalId={goal.id} asOf={asOf} onDone={close} />,
             },
+        ...(canRemove && removeBlocker
+          ? [
+              {
+                label: "Remove…",
+                title: `${name} can't be removed`,
+                content: (close: () => void) => <RemoveBlocked reason={removeBlocker} onDone={close} />,
+              },
+            ]
+          : []),
       ]}
       remove={
-        canRemove
+        canRemove && !removeBlocker
           ? {
               url: `/api/goals/${goal.id}`,
               label: "Remove",

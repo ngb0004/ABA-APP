@@ -9,7 +9,7 @@ import { withOrg, type OrgCtx, type Tx } from "../db";
 import { toDay, type Day } from "../dates";
 import { renderTokens, validateBcbaText } from "../firewall";
 import { unresolvedPlaceholders } from "../goals/checks";
-import { goalTokenOrdinals, renumberGoalTokens } from "../goals/renumber";
+import { REMOVED_GOAL_PLACEHOLDER, goalTokenOrdinals, renumberGoalTokens } from "../goals/renumber";
 import { pseudonymNames } from "../intake/derive";
 import { INTAKE_FIELDS, isNa, type IntakeAnswers } from "../intake/schema";
 import { HttpError } from "../log";
@@ -222,6 +222,14 @@ export async function planView(ctx: OrgCtx, planId: string, asOf: Day) {
 
 // ---------------------------------------------------------------- AI drafting
 
+/** The client's goals and their numbers, to tell whether they changed between two reads. */
+function goalNumbering(goals: { id: string; ordinal: number }[]): string {
+  return goals
+    .map((g) => `${g.ordinal}:${g.id}`)
+    .sort()
+    .join(",");
+}
+
 /** Sections being drafted right now (one app process): a retried request must not start a second draft. */
 const draftsInFlight = new Set<string>();
 export const DRAFT_IN_PROGRESS = "A draft for this section is already being written. It will appear shortly.";
@@ -243,6 +251,8 @@ export async function draftSection(ctx: OrgCtx, planId: string, key: string, asO
     return {
       sectionId: section.id,
       content: section.content,
+      clientId: b.client.id,
+      goalNumbering: goalNumbering(b.goals),
       sourced,
       payload: buildDraftPayload({ def, bundle: b, sourced, names }),
       identifiers: {
@@ -276,6 +286,17 @@ export async function draftSection(ctx: OrgCtx, planId: string, key: string, asO
       throw new HttpError(
         409,
         "The section changed while the AI was writing, so the new draft was not saved. Your text is kept.",
+      );
+    // The draft refers to goals by number: if goals were removed or renumbered meanwhile, its
+    // {{goal.N.*}} references would point at different goals.
+    const goalsNow = await tx.goal.findMany({
+      where: { clientId: prep.clientId },
+      select: { id: true, ordinal: true },
+    });
+    if (goalNumbering(goalsNow) !== prep.goalNumbering)
+      throw new HttpError(
+        409,
+        "The client's goals changed while the AI was writing, so the new draft was not saved. Draft it again.",
       );
     await tx.planSection.update({
       where: { id: prep.sectionId },
@@ -364,6 +385,9 @@ export async function setSectionItem(
   note?: string,
 ) {
   requirePermission(ctx.role, "section:edit");
+  // Keys starting with "_" are the app's own marks (not applicable, needs redraft): they change
+  // only through their own actions, never through the checklist.
+  if (itemKey.startsWith("_")) throw new HttpError(422, "That item cannot be changed here");
   return withOrg(ctx, async (tx) => {
     const section = await tx.planSection.findUniqueOrThrow({ where: { planId_key: { planId, key } } });
     assertOpen(section.state, "changing items");
@@ -572,6 +596,8 @@ export async function updateGoal(
       const pm = projected === undefined ? g.projectedMasteryDate : projected;
       if (i && pm && pm < i)
         throw new HttpError(422, "Projected mastery cannot be before the date introduced");
+      if (intro && g.discontinuedOn && intro > g.discontinuedOn)
+        throw new HttpError(422, "The date introduced cannot be after the date discontinued");
     }
     await tx.goal.update({
       where: { id: goalId },
@@ -676,11 +702,13 @@ export function goalRemovalBlocker(goal: RemovableGoal, rc: GoalRemovalContext):
     if (p.status === "finalized" && (!p.finalizedAt || p.finalizedAt >= since))
       return `This goal is in a finalized plan, so it can't be removed. ${DISCONTINUE_INSTEAD}`;
     const pk = p.packet;
+    // Only a packet exported or submitted after the goal existed can have included it. A submitted
+    // packet with no recorded time is treated as including it (the safe reading).
     if (
       pk &&
-      (pk.status === "submitted" ||
-        (pk.exportedAt && pk.exportedAt >= since) ||
-        (pk.submittedAt && pk.submittedAt >= since))
+      ((pk.exportedAt && pk.exportedAt >= since) ||
+        (pk.submittedAt && pk.submittedAt >= since) ||
+        (pk.status === "submitted" && !pk.exportedAt && !pk.submittedAt))
     )
       return `This goal was in an exported packet, so it can't be removed. ${DISCONTINUE_INSTEAD}`;
     for (const s of p.sections) {
@@ -717,11 +745,16 @@ export async function removeGoal(ctx: OrgCtx, goalId: string) {
     if (blocker) throw new HttpError(409, blocker);
     const removed = goal.ordinal;
 
-    // Open sections written while the goal existed, or that refer to it or a later goal by number.
+    // Sections not yet approved (open, or set aside as not applicable and restorable by reopening)
+    // that were written while the goal existed, or that refer to it or a later goal by number.
     const toRedraft = rc.plans
       .filter((p) => p.status !== "finalized")
       .flatMap((p) => p.sections)
-      .filter((s) => (s.state === "draft" || s.state === "edited") && (s.content.trim() || s.aiDraft))
+      .filter(
+        (s) =>
+          (s.state === "draft" || s.state === "edited" || s.state === "not_applicable") &&
+          (s.content.trim() || s.aiDraft),
+      )
       .filter((s) => {
         const text = `${s.content}\n${s.aiDraft ?? ""}`;
         return (
@@ -742,26 +775,41 @@ export async function removeGoal(ctx: OrgCtx, goalId: string) {
 
     const later = rc.goals.filter((g) => g.ordinal > removed);
     const re = (t: string) => renumberGoalTokens(t, removed);
-    for (const g of later)
+    // Every remaining goal's text is renumbered, earlier goals included: any goal may refer to a
+    // later one ({{goal.4.baseline_pct}}), and that reference must keep pointing at the same goal.
+    for (const g of rc.goals.filter((x) => x.id !== goalId)) {
+      const text = {
+        objective: re(g.objective),
+        rationale: re(g.rationale),
+        sd: re(g.sd),
+        targetBehavior: re(g.targetBehavior),
+        generalization: re(g.generalization),
+        barriers: re(g.barriers),
+        flatExplanation: g.flatExplanation === null ? null : re(g.flatExplanation),
+      };
+      const textChanged = (Object.keys(text) as (keyof typeof text)[]).some((k) => text[k] !== g[k]);
+      const moves = g.ordinal > removed;
+      if (!moves && !textChanged) continue;
+      // A goal whose text referred to the removed goal now holds a placeholder: it goes back for approval.
+      const lostReference =
+        textChanged && Object.values(text).some((t) => t?.includes(REMOVED_GOAL_PLACEHOLDER));
       await tx.goal.update({
         where: { id: g.id },
         data: {
-          ordinal: g.ordinal - 1,
-          objective: re(g.objective),
-          rationale: re(g.rationale),
-          sd: re(g.sd),
-          targetBehavior: re(g.targetBehavior),
-          generalization: re(g.generalization),
-          barriers: re(g.barriers),
-          flatExplanation: g.flatExplanation === null ? null : re(g.flatExplanation),
+          ...(moves ? { ordinal: g.ordinal - 1 } : {}),
+          ...(textChanged ? text : {}),
+          ...(lostReference ? { status: "draft", approvedAt: null, approvedById: null } : {}),
         },
       });
+    }
 
     for (const s of toRedraft) {
       const content = re(s.content);
       const aiDraft = s.aiDraft === null ? null : re(s.aiDraft);
-      await tx.planSection.update({
-        where: { id: s.id },
+      // Guarded on the state and text read above: a section approved or edited in another tab
+      // since then is never overwritten (approved text changes only through a reopen).
+      const updated = await tx.planSection.updateMany({
+        where: { id: s.id, state: s.state, content: s.content },
         data: {
           content,
           aiDraft,
@@ -771,6 +819,11 @@ export async function removeGoal(ctx: OrgCtx, goalId: string) {
           } as Prisma.InputJsonValue,
         },
       });
+      if (updated.count !== 1)
+        throw new HttpError(
+          409,
+          "A plan section changed while the goal was being removed. Nothing was changed; try again.",
+        );
       if (content !== s.content)
         await tx.planSectionRevision.create({
           data: {
@@ -841,7 +894,8 @@ export async function discontinueGoal(
       action: "goal:discontinue",
       entityType: "Goal",
       entityId: goalId,
-      meta: { from: g.progressStatus, reasonHash: sha256(reason) },
+      // The date is a plain value; the reason is free text, so only its hash is kept.
+      meta: { from: g.progressStatus, discontinuedOn: input.date, reasonHash: sha256(reason) },
     });
   });
 }
@@ -850,15 +904,22 @@ export async function discontinueGoal(
 export async function resumeGoal(ctx: OrgCtx, goalId: string) {
   requirePermission(ctx.role, "goal:write");
   return withOrg(ctx, async (tx) => {
+    const g = await tx.goal.findUniqueOrThrow({ where: { id: goalId } });
     const r = await tx.goal.updateMany({
       where: { id: goalId, progressStatus: "discontinued" },
       data: { progressStatus: "in_progress", discontinuedOn: null, discontinuedReason: null },
     });
-    if (r.count === 0) {
-      await tx.goal.findUniqueOrThrow({ where: { id: goalId } });
-      throw new HttpError(409, "This goal is not discontinued");
-    }
-    await audit(tx, { action: "goal:resume", entityType: "Goal", entityId: goalId });
+    if (r.count === 0) throw new HttpError(409, "This goal is not discontinued");
+    // What was cleared, so the history can be reconstructed (the reason as a hash only).
+    await audit(tx, {
+      action: "goal:resume",
+      entityType: "Goal",
+      entityId: goalId,
+      meta: {
+        discontinuedOn: g.discontinuedOn ? toDay(g.discontinuedOn) : null,
+        reasonHash: g.discontinuedReason ? sha256(g.discontinuedReason) : null,
+      },
+    });
   });
 }
 

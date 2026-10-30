@@ -1,4 +1,6 @@
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { MockProvider, setLlmProvider } from "@/lib/ai";
+import type { LlmRequest, LlmResponse } from "@/lib/ai/provider";
 import { withOrg } from "@/lib/db";
 import { ForbiddenError } from "@/lib/log";
 import { buildSourcedContext, loadPlanBundle } from "@/lib/plan/context";
@@ -15,9 +17,12 @@ import {
   approveSection,
   createPlan,
   discontinueGoal,
+  draftSection,
   editSection,
   removeGoal,
+  reopenSection,
   resumeGoal,
+  setSectionItem,
   updateGoal,
 } from "@/lib/services/plans";
 import { addDataPoint, createClient } from "@/lib/services/records";
@@ -52,6 +57,11 @@ const goalsOf = (cid: string) =>
 
 const auditRows = (action: string, entityId: string) =>
   withOrg(bcba, (tx) => tx.auditEvent.findMany({ where: { action, entityId } }));
+
+afterEach(() => setLlmProvider(null));
+
+const sectionOf = (planId: string, key: string) =>
+  withOrg(bcba, (tx) => tx.planSection.findUniqueOrThrow({ where: { planId_key: { planId, key } } }));
 
 beforeAll(async () => {
   templates = await withOrg(bcba, (tx) =>
@@ -258,6 +268,130 @@ describe("removing a goal added by mistake", () => {
     await expect(removeGoal(bcba, g1.id)).rejects.toMatchObject({ status: 409, message: /later goal/ });
   });
 
+  it("is not blocked by a packet submitted before the goal existed (the usual reauth)", async () => {
+    const { cid } = await newClientWithGoals("Removereauth", ["communication"]);
+    const initial = await createPlan(bcba, cid, "initial");
+    const march = new Date(Date.now() - 200 * 86_400_000);
+    await withOrg(bcba, (tx) =>
+      tx.packet.create({
+        data: {
+          orgId: bcba.orgId,
+          planId: initial.id,
+          status: "submitted",
+          exportedAt: march,
+          submittedAt: march,
+        },
+      }),
+    );
+    const mistake = await addGoalFromTemplate(bcba, cid, tpl("other"));
+    const view = await goalsView(bcba, cid, AS_OF);
+    expect(view.goals.find((g) => g.id === mistake.id)!.removeBlocker).toBeNull();
+    await removeGoal(bcba, mistake.id);
+    expect((await goalsOf(cid)).length).toBe(1);
+
+    // A submitted packet with no recorded time still blocks (it may have included the goal).
+    const { cid: cid2, goals } = await newClientWithGoals("Removesubmitted", ["communication"]);
+    const plan2 = await createPlan(bcba, cid2, "initial");
+    await withOrg(bcba, (tx) =>
+      tx.packet.create({ data: { orgId: bcba.orgId, planId: plan2.id, status: "submitted" } }),
+    );
+    await expect(removeGoal(bcba, goals[0]!.id)).rejects.toMatchObject({ status: 409, message: /exported/ });
+  });
+
+  it("renumbers references in earlier goals too, and sends a goal that cited the removed one back for approval", async () => {
+    const { cid, goals } = await newClientWithGoals("Removeearlier", [
+      "communication",
+      "communication",
+      "other",
+      "other",
+    ]);
+    const [g1, g2, g3, g4] = goals as [
+      (typeof goals)[0],
+      (typeof goals)[0],
+      (typeof goals)[0],
+      (typeof goals)[0],
+    ];
+    await withOrg(bcba, async (tx) => {
+      await tx.goal.update({
+        where: { id: g1.id },
+        data: { barriers: "Compare {{goal.4.mastery_pct}}.", status: "approved", approvedAt: new Date() },
+      });
+      await tx.goal.update({
+        where: { id: g2.id },
+        data: { rationale: "Builds on {{goal.3.mastery_pct}}.", status: "approved", approvedAt: new Date() },
+      });
+    });
+    await removeGoal(bcba, g3.id);
+    const left = await goalsOf(cid);
+    expect(left.map((g) => [g.id, g.ordinal])).toEqual([
+      [g1.id, 1],
+      [g2.id, 2],
+      [g4.id, 3],
+    ]);
+    const n1 = left[0]!;
+    const n2 = left[1]!;
+    // Still the same goal record (old goal 4, now goal 3); the goal stays approved.
+    expect(n1.barriers).toBe("Compare {{goal.3.mastery_pct}}.");
+    expect(n1.status).toBe("approved");
+    // It referred to the removed goal: a placeholder, and back to draft.
+    expect(n2.rationale).toBe(`Builds on ${REMOVED_GOAL_PLACEHOLDER}.`);
+    expect(n2.status).toBe("draft");
+  });
+
+  it("renumbers and flags not-applicable sections, so a reopened one cannot be approved as is", async () => {
+    const { cid, goals } = await newClientWithGoals("Removena", ["communication", "communication", "other"]);
+    const plan = await createPlan(bcba, cid, "initial");
+    await withOrg(bcba, (tx) =>
+      tx.planSection.updateMany({
+        where: { planId: plan.id, key: "crisis_plan" },
+        data: { state: "not_applicable", content: "See {{goal.3.mastery_pct}}." },
+      }),
+    );
+    await removeGoal(bcba, goals[1]!.id);
+    const s = await sectionOf(plan.id, "crisis_plan");
+    expect(s.state).toBe("not_applicable");
+    expect(s.content).toBe("See {{goal.2.mastery_pct}}.");
+    expect((s.items as Record<string, unknown>)[NEEDS_REDRAFT_ITEM]).toBeDefined();
+    await reopenSection(bcba, plan.id, "crisis_plan");
+    await expect(approveSection(bcba, plan.id, "crisis_plan", AS_OF)).rejects.toMatchObject({
+      status: 422,
+      message: /goal was removed/,
+    });
+  });
+
+  it("does not save an AI draft written while a goal was removed", async () => {
+    const { cid, goals } = await newClientWithGoals("Removeinflight", ["communication", "other"]);
+    const plan = await createPlan(bcba, cid, "initial");
+    const before = await sectionOf(plan.id, "goal_summary");
+    expect(before.content.trim()).toBe("");
+    class RemovesMidway extends MockProvider {
+      override async complete(req: LlmRequest): Promise<LlmResponse> {
+        await removeGoal(bcba, goals[0]!.id);
+        return super.complete(req);
+      }
+    }
+    setLlmProvider(new RemovesMidway());
+    await expect(draftSection(bcba, plan.id, "goal_summary", AS_OF)).rejects.toMatchObject({
+      status: 409,
+      message: /goals changed/,
+    });
+    expect((await sectionOf(plan.id, "goal_summary")).content).toBe(before.content);
+    expect((await goalsOf(cid)).length).toBe(1);
+  });
+
+  it("keeps the redraft mark out of reach of the section checklist", async () => {
+    const { cid, goals } = await newClientWithGoals("Removeitems", ["communication", "other"]);
+    const plan = await createPlan(bcba, cid, "initial");
+    await editSection(bcba, plan.id, "skill_acquisition_goals", "Goal two {{goal.2.mastery_pct}}.", AS_OF);
+    await removeGoal(bcba, goals[0]!.id);
+    for (const itemKey of [NEEDS_REDRAFT_ITEM, "_not_applicable"])
+      await expect(
+        setSectionItem(bcba, plan.id, "skill_acquisition_goals", itemKey, null),
+      ).rejects.toMatchObject({ status: 422 });
+    const s = await sectionOf(plan.id, "skill_acquisition_goals");
+    expect((s.items as Record<string, unknown>)[NEEDS_REDRAFT_ITEM]).toBeDefined();
+  });
+
   it("is BCBA only, and another practice cannot see the goal", async () => {
     const { cid, goals } = await newClientWithGoals("Removeperm", ["communication"]);
     for (const role of ["RBT", "PARENT", "AUTH_COORDINATOR"] as const)
@@ -282,6 +416,7 @@ describe("discontinuing and resuming a goal", () => {
     expect(await auditRows("goal:discontinue", g.id)).toHaveLength(1);
     const [row] = await auditRows("goal:discontinue", g.id);
     expect(JSON.stringify(row!.meta)).not.toMatch(/Family priorities/);
+    expect(row!.meta).toMatchObject({ discontinuedOn: "2026-10-15" });
     await expect(
       discontinueGoal(bcba, g.id, { reason: "Again", date: "2026-10-16" }, AS_OF),
     ).rejects.toMatchObject({ status: 409 });
@@ -291,7 +426,10 @@ describe("discontinuing and resuming a goal", () => {
     expect(rec.progressStatus).toBe("in_progress");
     expect(rec.discontinuedOn).toBeNull();
     expect(rec.discontinuedReason).toBeNull();
-    expect(await auditRows("goal:resume", g.id)).toHaveLength(1);
+    const resumed = await auditRows("goal:resume", g.id);
+    expect(resumed).toHaveLength(1);
+    expect(resumed[0]!.meta).toMatchObject({ discontinuedOn: "2026-10-15", reasonHash: expect.any(String) });
+    expect(JSON.stringify(resumed[0]!.meta)).not.toMatch(/Family priorities/);
     await expect(resumeGoal(bcba, g.id)).rejects.toMatchObject({ status: 409 });
   });
 
@@ -318,6 +456,17 @@ describe("discontinuing and resuming a goal", () => {
     await expect(updateGoal(bcba, id, { progressStatus: "discontinued" })).rejects.toMatchObject({
       status: 422,
     });
+  });
+
+  it("refuses a date introduced after the date discontinued", async () => {
+    const { goals } = await newClientWithGoals("Discontinueintro", ["communication"]);
+    const id = goals[0]!.id;
+    await discontinueGoal(bcba, id, { reason: "Not needed now.", date: "2026-10-21" }, AS_OF);
+    await expect(updateGoal(bcba, id, { introducedAt: "2026-10-25" })).rejects.toMatchObject({
+      status: 422,
+      message: /introduced cannot be after the date discontinued/,
+    });
+    await updateGoal(bcba, id, { introducedAt: "2026-10-21" });
   });
 
   it("is BCBA only and isolated by practice", async () => {

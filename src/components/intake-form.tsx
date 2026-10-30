@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { BLOCKS, DAYS, type IntakeAnswers, type IntakeField } from "@/lib/intake/schema";
 import { send } from "./actions";
+import { formatClock } from "@/lib/time-format";
 
 type Answer = Record<string, unknown>;
 
@@ -295,7 +296,7 @@ function FieldInput({
                 <th />
                 {BLOCKS.map(([a, b]) => (
                   <th key={a}>
-                    {a}:00–{b}:00
+                    {formatClock(a * 60)}–{formatClock(b * 60)}
                   </th>
                 ))}
               </tr>

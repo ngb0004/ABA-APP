@@ -12,6 +12,8 @@ import { buildSourcedContext, type PlanBundle } from "../plan/context";
 import { goalGraphSvg } from "../plan/graphs";
 import type { RuleResult, ScopeFinding } from "../payors/types";
 import { renderMilestonesGridSvg } from "../vbmapp/grid-svg";
+import { dayInZone } from "../time-format";
+import { orgSettings } from "./clients";
 import { evaluateClientRules } from "./payors";
 import { GOAL_STATUS_LABEL, measureUnit, type GoalStatus } from "../plan/context";
 import { isLegacyPlan, sectionDone } from "../plan/sections";
@@ -178,6 +180,8 @@ const esc = (s: string) =>
 export function packetHtml(b: PlanBundle, results: RuleResult[], asOf: Day): string {
   const sourced = buildSourcedContext(b, asOf);
   const c = b.client;
+  // Approval is a stored instant: show the day it was in the practice's zone, not in UTC.
+  const timeZone = orgSettings(b.org.settings).timeZone;
   const forms = results.filter(
     (r) => r.rule.type === "required_document" && /form|cover|request/i.test(String(r.rule.params.doc)),
   );
@@ -195,7 +199,7 @@ export function packetHtml(b: PlanBundle, results: RuleResult[], asOf: Day): str
             .map((p) => `<p>${p.replace(/\n/g, "<br>")}</p>`)
             .join(
               "",
-            )}<p class="meta">Approved by BCBA ${s.approvedAt ? toDay(s.approvedAt) : ""}</p></section>`,
+            )}<p class="meta">Approved by BCBA ${s.approvedAt ? dayInZone(s.approvedAt, timeZone) : ""}</p></section>`,
     )
     .join("");
   // Plans written with the eleven-section structure export exactly as before.
