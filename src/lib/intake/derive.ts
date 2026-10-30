@@ -5,15 +5,32 @@
  */
 import { BLOCKS, DAYS, FIELD_BY_ID, INTAKE_FIELDS, isNa, valueOf, type IntakeAnswers } from "./schema";
 
-export type SafetyFlag = { fieldId: string; label: string; detail?: string };
+export type SafetyFlag = {
+  fieldId: string;
+  label: string;
+  detail?: string;
+  /** Rated intensity (mild, moderate, severe) for behavior flags such as aggression. */
+  intensity?: string;
+};
 
 export function safetyFlags(answers: IntakeAnswers): SafetyFlag[] {
   const out: SafetyFlag[] = [];
   for (const field of INTAKE_FIELDS) {
     const a = answers[field.id];
-    if (!a || isNa(a)) continue;
-    if (field.safetyFlag && valueOf<boolean>(a) === true)
-      out.push({ fieldId: field.id, label: field.safetyFlag, detail: (a as { comment?: string }).comment });
+    if (!a || isNa(a) || !field.safetyFlag || field.sensitivity === "restricted") continue;
+    const comment = (a as { comment?: string }).comment;
+    if (field.type === "intensity") {
+      // Aggression and self-injury at any rated intensity are a risk to staff and family.
+      const intensity = valueOf<string>(a);
+      if (intensity && field.options?.includes(intensity))
+        out.push({
+          fieldId: field.id,
+          label: field.safetyFlag,
+          intensity,
+          detail: comment ? `${intensity}; ${comment}` : intensity,
+        });
+    } else if (valueOf<boolean>(a) === true)
+      out.push({ fieldId: field.id, label: field.safetyFlag, detail: comment });
   }
   const transport = valueOf<string[]>(answers.transportation_risks);
   if (transport?.length)

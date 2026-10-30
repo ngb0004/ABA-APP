@@ -9,13 +9,14 @@ import { withOrg, type OrgCtx, type Tx } from "../db";
 import { toDay, type Day } from "../dates";
 import { renderTokens, validateBcbaText } from "../firewall";
 import { unresolvedPlaceholders } from "../goals/checks";
-import { intakeForAi, pseudonymNames, safetyFlags } from "../intake/derive";
+import { pseudonymNames } from "../intake/derive";
 import { INTAKE_FIELDS, isNa, type IntakeAnswers } from "../intake/schema";
 import { HttpError } from "../log";
 import { requirePermission } from "../permissions";
 import { buildSourcedContext, loadPlanBundle, type GoalStatus, type PlanBundle } from "../plan/context";
 import { baseline, BASELINE_POINTS } from "../plan/progress";
 import { lineDiff } from "../plan/diff";
+import { buildDraftPayload, DRAFT_SYSTEM_PROMPT, tidyDraft } from "../plan/drafting";
 import { goalGraphSvg } from "../plan/graphs";
 import { exportBlockers, runPresubmissionAudit } from "../plan/presubmission";
 import {
@@ -219,9 +220,6 @@ export async function planView(ctx: OrgCtx, planId: string, asOf: Day) {
 
 // ---------------------------------------------------------------- AI drafting
 
-const SYSTEM_PROMPT = `You draft one section of an ABA treatment plan. A Board Certified Behavior Analyst reviews, edits, and approves every section; your draft is a starting point.
-Write two or three short paragraphs of plain clinical prose. No headings, lists, or markdown. Be specific to the information provided and do not invent facts, assessments, or history.`;
-
 export async function draftSection(ctx: OrgCtx, planId: string, key: string, asOf: Day) {
   requirePermission(ctx.role, "section:draft");
   const def = SECTION_BY_KEY.get(key);
@@ -234,47 +232,9 @@ export async function draftSection(ctx: OrgCtx, planId: string, key: string, asO
     assertOpen(section.state, "drafting again");
     const sourced = buildSourcedContext(b, asOf);
     const names = pseudonymNames(b.client);
-    const answers = (b.intake?.answers ?? {}) as IntakeAnswers;
-    const sectionAnswers = Object.fromEntries(
-      Object.entries(answers).filter(([id]) => {
-        const f = INTAKE_FIELDS.find((x) => x.id === id);
-        return !!f && sectionTakesField(def, f);
-      }),
-    );
-    const payload: Record<string, unknown> = {
-      task: "draft_section",
-      sectionKey: def.key,
-      sectionTitle: def.title,
-      planType: b.plan.type,
-      guidance: def.guidance,
-      availableValues: sourced.forModel(["client.name", "caregiver.primary", ...def.valuePrefixes]),
-      intake: intakeForAi(sectionAnswers as IntakeAnswers, names),
-    };
-    const goalsFor = def.context?.goals;
-    if (goalsFor)
-      payload.goals = b.goals
-        .filter((g) => goalsFor === true || goalsFor.includes(g.category))
-        .map((g) => ({
-          goalNumber: `goal.${g.ordinal}`,
-          domain: g.domain,
-          category: g.category,
-          measure: g.measure,
-          objective: g.objective,
-          status: g.progressStatus,
-          trend:
-            sourced.get(`goal.${g.ordinal}.current_${g.measure === "percent" ? "pct" : "rate"}`)?.facts ?? [],
-        }));
-    if (def.context?.safetyFlags) payload.staffSafetyFlags = safetyFlags(answers).map((f) => f.label);
-    if (def.context?.isolatedScores) {
-      const flags = b.administrations.flatMap((a) =>
-        (a.flags as { code: string; level?: number; domain?: string }[])
-          .filter((f) => f.code === "isolated_score")
-          .map((f) => `Level ${f.level} ${f.domain}`),
-      );
-      payload.isolatedScoreFlags = [...new Set(flags)];
-    }
+    const payload = buildDraftPayload({ def, bundle: b, sourced, names });
     const result = await draftWithFirewall(tx, {
-      system: SYSTEM_PROMPT,
+      system: DRAFT_SYSTEM_PROMPT,
       payload,
       sourced,
       identifiers: {
@@ -284,11 +244,12 @@ export async function draftSection(ctx: OrgCtx, planId: string, key: string, asO
       },
       audit: { entityType: "PlanSection", entityId: section.id, section: def.key, task: "draft_section" },
     });
+    const text = tidyDraft(result.text);
     await tx.planSection.update({
       where: { id: section.id },
       data: {
-        aiDraft: result.text,
-        content: result.text,
+        aiDraft: text,
+        content: text,
         state: "draft",
         approvedAt: null,
         approvedById: null,
@@ -299,11 +260,12 @@ export async function draftSection(ctx: OrgCtx, planId: string, key: string, asO
         orgId: ctx.orgId,
         sectionId: section.id,
         kind: "ai_draft",
-        content: result.text,
+        content: text,
         userId: ctx.userId,
       },
     });
-    return { text: result.text, attempts: result.attempts };
+    // The rendered draft lets the page show it before its refresh lands.
+    return { text, html: renderTokens(text, sourced, "html"), attempts: result.attempts };
   });
 }
 

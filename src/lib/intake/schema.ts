@@ -42,7 +42,7 @@ export type IntakeField = {
   options?: readonly string[];
   /** Only asked when the client is at least this age (years). */
   minAge?: number;
-  /** Yes/no fields: answering yes raises this staff safety flag. */
+  /** Raises this staff safety flag: yes/no fields on "yes", intensity fields on any rated intensity. */
   safetyFlag?: string;
 };
 
@@ -174,8 +174,9 @@ export const INTAKE_FIELDS: IntakeField[] = [
     type: "intensity",
     group: "Behavior",
     sensitivity: "normal",
-    feeds_sections: ["behavior_intervention_plan", "behavior_reduction_goals"],
+    feeds_sections: ["behavior_intervention_plan", "behavior_reduction_goals", "crisis_plan"],
     options: INTENSITY,
+    safetyFlag: "Aggression toward others",
   }),
   f({
     id: "aggression_frequency",
@@ -183,7 +184,7 @@ export const INTAKE_FIELDS: IntakeField[] = [
     type: "frequency_duration",
     group: "Behavior",
     sensitivity: "normal",
-    feeds_sections: ["behavior_intervention_plan", "behavior_reduction_goals"],
+    feeds_sections: ["behavior_intervention_plan", "behavior_reduction_goals", "crisis_plan"],
   }),
   f({
     id: "self_injury",
@@ -193,6 +194,7 @@ export const INTAKE_FIELDS: IntakeField[] = [
     sensitivity: "normal",
     feeds_sections: ["behavior_intervention_plan", "behavior_reduction_goals", "crisis_plan"],
     options: INTENSITY,
+    safetyFlag: "Self-injury",
   }),
   f({
     id: "tantrums",
