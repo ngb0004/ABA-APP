@@ -33,7 +33,12 @@ export async function loadPlanBundle(tx: Tx, planId: string) {
 export async function loadClientData(tx: Tx, clientId: string, authorizationId?: string | null) {
   const client = await tx.client.findUniqueOrThrow({
     where: { id: clientId },
-    include: { diagnoses: true, payors: { include: { payor: true } }, attachments: true, intakes: true },
+    include: {
+      diagnoses: { orderBy: [{ isPrimary: "desc" }, { icd10Code: "asc" }] },
+      payors: { include: { payor: true } },
+      attachments: true,
+      intakes: true,
+    },
   });
   const org = await tx.org.findUniqueOrThrow({ where: { id: client.orgId } });
   const auth = authorizationId

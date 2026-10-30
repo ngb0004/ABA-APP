@@ -3,6 +3,7 @@ import { ActionButton } from "@/components/actions";
 import { clientFields } from "@/components/client-fields";
 import { FormToggle, RecordForm, type FieldSpec } from "@/components/record-form";
 import { toDay } from "@/lib/dates";
+import { isDemo } from "@/lib/demo";
 import { can } from "@/lib/permissions";
 import {
   ATTACHMENT_KINDS,
@@ -25,6 +26,8 @@ export default async function RecordsPage({ params }: { params: Promise<{ id: st
   const canIns = can(ctx.role, "insurance:manage");
   const canDocs = can(ctx.role, "document:manage");
   const canData = can(ctx.role, "data:enter");
+  // On the demo the identity is generated: only the IEP flag and payor events can change.
+  const demo = isDemo();
   const payorOptions = payors.map((p) => ({ value: p.id, label: p.name }));
   const base = `/api/clients/${id}`;
   const addr = c.serviceAddress as { line1?: string; city?: string; state?: string; zip?: string };
@@ -114,20 +117,26 @@ export default async function RecordsPage({ params }: { params: Promise<{ id: st
             <RecordForm
               url={base}
               method="PATCH"
-              fields={clientFields}
+              fields={
+                demo ? clientFields.filter((f) => f.name === "hasIep" || f.name === "events") : clientFields
+              }
               submitLabel="Save details"
               testId="client-form"
-              initial={{
-                firstName: c.firstName,
-                lastName: c.lastName,
-                preferredName: c.preferredName ?? "",
-                dob: toDay(c.dob),
-                sex: c.sex ?? "",
-                serviceAddress: { line1: "", city: "", state: "", zip: "", ...addr },
-                hasIep: c.hasIep,
-                events: c.events,
-                guardians: c.guardians,
-              }}
+              initial={
+                demo
+                  ? { hasIep: c.hasIep, events: c.events }
+                  : {
+                      firstName: c.firstName,
+                      lastName: c.lastName,
+                      preferredName: c.preferredName ?? "",
+                      dob: toDay(c.dob),
+                      sex: c.sex ?? "",
+                      serviceAddress: { line1: "", city: "", state: "", zip: "", ...addr },
+                      hasIep: c.hasIep,
+                      events: c.events,
+                      guardians: c.guardians,
+                    }
+              }
             />
           </FormToggle>
         )}

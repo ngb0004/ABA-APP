@@ -217,9 +217,9 @@ async function main() {
       stdio: "inherit",
       env: { ...shared, DATABASE_URL: appUrl, DIRECT_DATABASE_URL: ownerUrl, DEMO_PASSWORD: demoPassword },
     });
-  } else {
-    await syncDemoCredentials();
   }
+  // Every boot, including right after a reload: demo password, no public repo authenticator secrets, RESET_MFA.
+  await syncDemoCredentials();
   // Payor rules are data: bring every org's library in line with seed/payors.yaml (evidence is kept).
   execSync("REQUIRE_ORGS=1 pnpm exec tsx scripts/payor-sync.ts", {
     stdio: "inherit",

@@ -185,6 +185,18 @@ export async function getSessionByToken(
   const s = await db().authSession.findUnique({ where: { tokenHash: hashToken(token) } });
   if (!s || s.expiresAt < new Date()) return null;
   if (!s.mfaVerified && !opts.allowUnverified) return null;
+  if (s.orgId) {
+    // The membership is the authority, not the copy on the session: a removed or re-roled
+    // person loses access (or gets the new role) on their next request.
+    const m = await withUser(s.userId, (tx) =>
+      tx.membership.findFirst({ where: { userId: s.userId, orgId: s.orgId! }, select: { role: true } }),
+    );
+    if (!m) {
+      await db().authSession.deleteMany({ where: { id: s.id } });
+      return null;
+    }
+    return { id: s.id, userId: s.userId, orgId: s.orgId, role: m.role, mfaVerified: s.mfaVerified };
+  }
   return { id: s.id, userId: s.userId, orgId: s.orgId, role: s.role, mfaVerified: s.mfaVerified };
 }
 

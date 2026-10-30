@@ -12,10 +12,11 @@ import type { Prisma, Role } from "@prisma/client";
 import { z } from "zod";
 import { audit } from "../audit";
 import { hashPassword } from "../auth/local";
-import { withOrg, type OrgCtx, type Tx } from "../db";
+import { withOrg, withUser, type OrgCtx, type Tx } from "../db";
 import { dayToDate, toDay } from "../dates";
 import { HttpError, registerSensitiveName } from "../log";
 import { RECORDED_EVENTS } from "../payors/evaluate";
+import { isDemo } from "../demo";
 import { requirePermission } from "../permissions";
 
 // ---------------------------------------------------------------- shared schemas
@@ -104,14 +105,60 @@ const ClientFields = z.object({
       .trim()
       .regex(/^\d{5}$/, "Five-digit ZIP"),
   }),
-  guardians: z.array(Guardian).max(6).default([]),
-  hasIep: z.boolean().default(false),
-  events: z.array(z.enum(RECORDED_EVENTS as [string, ...string[]])).default([]),
+  // No defaults here: in the partial update schema a default would overwrite fields not sent.
+  guardians: z.array(Guardian).max(6),
+  hasIep: z.boolean(),
+  events: z.array(z.enum(RECORDED_EVENTS as [string, ...string[]])),
 });
 export const NewClientSchema = ClientFields.extend({
+  guardians: ClientFields.shape.guardians.default([]),
+  hasIep: ClientFields.shape.hasIep.default(false),
+  events: ClientFields.shape.events.default([]),
   fictional: z.literal(true, { message: "Confirm the client is fictional (v1.0 holds synthetic data only)" }),
 });
 export const ClientUpdateSchema = ClientFields.partial();
+/** Fields a demo visitor may set: the identity is generated, never typed (the demo is not HIPAA hosting). */
+const DemoClientSchema = z.object({
+  ageYears: z.number().int().min(1).max(21),
+  hasIep: z.boolean().default(false),
+  events: ClientFields.shape.events.default([]),
+});
+const DemoUpdateSchema = ClientFields.pick({ hasIep: true, events: true }).partial();
+const IDENTITY_FIELDS = [
+  "firstName",
+  "lastName",
+  "preferredName",
+  "dob",
+  "sex",
+  "serviceAddress",
+  "guardians",
+];
+
+const FICTIONAL_FIRST = [
+  "Delta",
+  "Echo",
+  "Foxtrot",
+  "Golf",
+  "Hotel",
+  "India",
+  "Juliet",
+  "Kilo",
+  "Lima",
+  "Mike",
+  "November",
+  "Oscar",
+  "Papa",
+  "Quebec",
+  "Romeo",
+  "Sierra",
+  "Tango",
+  "Uniform",
+  "Victor",
+  "Whiskey",
+  "Xray",
+  "Yankee",
+  "Zulu",
+];
 
 export const ClientPayorSchema = z.object({
   payorId: z.string().uuid(),
@@ -146,7 +193,7 @@ export const AuthorizationSchema = z
       .array(
         z.object({
           cptCode: z.enum(CPT_CODES),
-          approvedUnits: z.number().int().min(0).max(10_000),
+          approvedUnits: z.number().int().min(1).max(10_000),
           unitBasis: z.enum(["week", "month", "auth"]),
         }),
       )
@@ -246,8 +293,43 @@ const note = (
 
 // ---------------------------------------------------------------- clients
 
-export async function createClient(ctx: OrgCtx, input: unknown) {
+/** Demo site: a generated fictional identity, so no real person's details can be typed in. */
+async function createDemoClient(ctx: OrgCtx, input: unknown, asOf: string) {
+  const v = DemoClientSchema.parse(input);
+  return withOrg(ctx, async (tx) => {
+    const n = await tx.client.count();
+    const first = FICTIONAL_FIRST[n % FICTIONAL_FIRST.length]!;
+    const round = Math.floor(n / FICTIONAL_FIRST.length);
+    const year = Number(asOf.slice(0, 4)) - v.ageYears;
+    const c = await tx.client.create({
+      data: {
+        orgId: ctx.orgId,
+        isSynthetic: true,
+        firstName: first,
+        lastName: round ? `Testchild${round + 1}` : "Testchild",
+        dob: dayToDate(`${year}${asOf.slice(4, 8)}01`),
+        serviceAddress: { line1: `${n + 1} Fiction Way`, city: "Example City", state: "GA", zip: "30000" },
+        guardians: [
+          {
+            name: `Pat Test${first.toLowerCase()}`,
+            relationship: "parent",
+            legalCustody: true,
+            canSign: true,
+          },
+        ],
+        hasIep: v.hasIep,
+        events: v.events,
+      },
+      select: { id: true },
+    });
+    await note(tx, "client:create", "Client", c.id, { synthetic: true, generated: true });
+    return c;
+  });
+}
+
+export async function createClient(ctx: OrgCtx, input: unknown, asOf: string = toDay(new Date())) {
   requirePermission(ctx.role, "client:write");
+  if (isDemo()) return createDemoClient(ctx, input, asOf);
   const v = NewClientSchema.parse(input);
   registerSensitiveName(v.firstName);
   registerSensitiveName(v.lastName);
@@ -275,19 +357,22 @@ export async function createClient(ctx: OrgCtx, input: unknown) {
 
 export async function updateClient(ctx: OrgCtx, clientId: string, input: unknown) {
   requirePermission(ctx.role, "client:write");
-  const v = ClientUpdateSchema.parse(input);
+  if (isDemo() && IDENTITY_FIELDS.some((k) => k in ((input ?? {}) as object)))
+    throw new HttpError(
+      403,
+      "The demo site generates fictional names, dates, and addresses; they cannot be edited here.",
+    );
+  const v: z.infer<typeof ClientUpdateSchema> = isDemo()
+    ? DemoUpdateSchema.parse(input)
+    : ClientUpdateSchema.parse(input);
   registerSensitiveName(v.firstName);
   registerSensitiveName(v.lastName);
   return withOrg(ctx, async (tx) => {
     await clientOf(tx, clientId);
+    const { dob, ...rest } = v;
     await tx.client.update({
       where: { id: clientId },
-      data: {
-        ...v,
-        dob: v.dob ? dayToDate(v.dob) : undefined,
-        serviceAddress: v.serviceAddress,
-        guardians: v.guardians,
-      },
+      data: { ...rest, ...(dob ? { dob: dayToDate(dob) } : {}) },
     });
     await note(tx, "client:update", "Client", clientId, { fields: Object.keys(v) });
   });
@@ -303,9 +388,12 @@ export async function saveClientPayor(ctx: OrgCtx, clientId: string, id: string 
     await assertOrgPayor(tx, v.payorId);
     const existing = await tx.clientPayor.findMany({ where: { clientId } });
     if (id && !existing.some((p) => p.id === id)) throw new HttpError(404, "Not found");
-    // One primary at a time.
-    if (v.priority === "primary" && existing.some((p) => p.priority === "primary" && p.id !== id))
+    // Exactly one primary whenever the client has insurance: every plan and rule check uses it.
+    const others = existing.filter((p) => p.id !== id);
+    if (v.priority === "primary" && others.some((p) => p.priority === "primary"))
       throw new HttpError(409, "This client already has a primary payor. Make it secondary first.");
+    if (v.priority === "secondary" && !others.some((p) => p.priority === "primary"))
+      throw new HttpError(422, "Add (or keep) a primary payor before a secondary one.");
     const row = id
       ? await tx.clientPayor.update({ where: { id }, data: v, select: { id: true } })
       : await tx.clientPayor.create({ data: { orgId: ctx.orgId, clientId, ...v }, select: { id: true } });
@@ -319,6 +407,8 @@ export async function deleteClientPayor(ctx: OrgCtx, clientId: string, id: strin
   return withOrg(ctx, async (tx) => {
     const row = await tx.clientPayor.findFirst({ where: { id, clientId } });
     if (!row) throw new HttpError(404, "Not found");
+    if (row.priority === "primary" && (await tx.clientPayor.count({ where: { clientId, id: { not: id } } })))
+      throw new HttpError(409, "Make another payor primary before removing the primary payor.");
     await tx.clientPayor.delete({ where: { id } });
     await note(tx, "insurance:delete", "ClientPayor", id);
   });
@@ -341,6 +431,11 @@ export async function saveDiagnosis(ctx: OrgCtx, clientId: string, id: string | 
       if (stranded)
         throw new HttpError(409, `${stranded} goal(s) are linked through a deficit area you removed`);
     }
+    const all = await tx.diagnosis.findMany({ where: { clientId }, select: { id: true, isPrimary: true } });
+    // Exactly one primary diagnosis: the first one is primary, and the primary moves, never disappears.
+    if (!all.some((d) => d.id !== id)) v.isPrimary = true;
+    else if (!v.isPrimary && all.find((d) => d.id === id)?.isPrimary)
+      throw new HttpError(409, "Mark another diagnosis primary first");
     if (v.isPrimary)
       await tx.diagnosis.updateMany({
         where: { clientId, ...(id ? { id: { not: id } } : {}) },
@@ -361,7 +456,12 @@ export async function deleteDiagnosis(ctx: OrgCtx, clientId: string, id: string)
     if (!(await tx.diagnosis.findFirst({ where: { id, clientId } }))) throw new HttpError(404, "Not found");
     if (await tx.goal.count({ where: { diagnosisId: id } }))
       throw new HttpError(409, "Goals are linked to this diagnosis. Relink or remove them first.");
+    const row = await tx.diagnosis.findUniqueOrThrow({ where: { id } });
     await tx.diagnosis.delete({ where: { id } });
+    if (row.isPrimary) {
+      const next = await tx.diagnosis.findFirst({ where: { clientId }, orderBy: { icd10Code: "asc" } });
+      if (next) await tx.diagnosis.update({ where: { id: next.id }, data: { isPrimary: true } });
+    }
     await note(tx, "diagnosis:delete", "Diagnosis", id);
   });
 }
@@ -395,6 +495,12 @@ export async function saveAuthorization(ctx: OrgCtx, clientId: string, id: strin
         })
       )
         throw new HttpError(409, "Sessions on record fall outside the new dates");
+      if (
+        await tx.serviceSession.count({
+          where: { authorizationId: id, cptCode: { notIn: v.units.map((u) => u.cptCode) } },
+        })
+      )
+        throw new HttpError(409, "Sessions on record use a CPT code this change removes");
       await tx.authorization.update({ where: { id }, data });
       // Units are replaced as a set.
       await tx.authorizationUnit.deleteMany({ where: { authorizationId: id } });
@@ -463,8 +569,13 @@ export async function addSession(ctx: OrgCtx, clientId: string, input: unknown) 
   requirePermission(ctx.role, "data:enter");
   const v = SessionSchema.parse(input);
   return withOrg(ctx, async (tx) => {
-    const auth = await tx.authorization.findFirst({ where: { id: v.authorizationId, clientId } });
+    const auth = await tx.authorization.findFirst({
+      where: { id: v.authorizationId, clientId },
+      include: { units: true },
+    });
     if (!auth) throw new HttpError(422, "Choose one of this client's authorizations");
+    if (!auth.units.some((u) => u.cptCode === v.cptCode))
+      throw new HttpError(422, `This authorization does not approve ${v.cptCode}`);
     const date = dayToDate(v.date);
     if (date < auth.startDate || date > auth.endDate)
       throw new HttpError(422, "The session date is outside the authorization");
@@ -495,6 +606,12 @@ export async function addDataPoint(ctx: OrgCtx, goalId: string, input: unknown) 
     if (!g) throw new HttpError(404, "Not found");
     if (g.measure === "percent" && v.value > 100)
       throw new HttpError(422, "A percent goal's value is 0 to 100");
+    // Once locked, the baseline's points are the only ones on or before its date.
+    if (g.baselineLockedAt && g.baselineDate && dayToDate(v.date) <= g.baselineDate)
+      throw new HttpError(
+        422,
+        `The baseline is locked; new data must be dated after ${toDay(g.baselineDate)}`,
+      );
     const row = await tx.goalDataPoint.create({
       data: { orgId: ctx.orgId, goalId, date: dayToDate(v.date), value: v.value, trials: v.trials ?? null },
       select: { id: true },
@@ -511,7 +628,7 @@ export async function deleteDataPoint(ctx: OrgCtx, goalId: string, id: string) {
     if (!p) throw new HttpError(404, "Not found");
     // A locked baseline came from the first three points; those stay.
     const g = await tx.goal.findUniqueOrThrow({ where: { id: goalId } });
-    if (g.baselineDate && p.date <= g.baselineDate)
+    if (g.baselineLockedAt && g.baselineDate && p.date <= g.baselineDate)
       throw new HttpError(409, "This data point is part of the locked baseline");
     await tx.goalDataPoint.delete({ where: { id } });
     await note(tx, "goal_data:delete", "GoalDataPoint", id, { goalId });
@@ -524,7 +641,12 @@ export async function practiceSettings(ctx: OrgCtx) {
   requirePermission(ctx.role, "org:manage");
   return withOrg(ctx, async (tx) => {
     const org = await tx.org.findUniqueOrThrow({ where: { id: ctx.orgId } });
-    const members = await tx.membership.findMany({ include: { user: true }, orderBy: { role: "asc" } });
+    // RLS also shows the caller's own memberships elsewhere (for sign-in): scope to this practice.
+    const members = await tx.membership.findMany({
+      where: { orgId: ctx.orgId },
+      include: { user: true },
+      orderBy: { role: "asc" },
+    });
     return {
       org,
       members: members.map((m) => ({
@@ -556,8 +678,8 @@ export async function updateSettings(ctx: OrgCtx, input: unknown) {
 
 // ---------------------------------------------------------------- team members
 
-async function assertKeepsABcba(tx: Tx, membershipId: string) {
-  const bcbas = await tx.membership.findMany({ where: { role: "BCBA" }, select: { id: true } });
+async function assertKeepsABcba(tx: Tx, orgId: string, membershipId: string) {
+  const bcbas = await tx.membership.findMany({ where: { orgId, role: "BCBA" }, select: { id: true } });
   if (bcbas.length === 1 && bcbas[0]!.id === membershipId)
     throw new HttpError(409, "The practice needs at least one BCBA");
 }
@@ -567,11 +689,33 @@ export async function addMember(ctx: OrgCtx, input: unknown) {
   const v = NewMemberSchema.parse(input);
   return withOrg(ctx, async (tx) => {
     // Accounts belong to one practice in v1.0; never attach someone else's account here.
-    if (await tx.user.findUnique({ where: { email: v.email }, select: { id: true } }))
-      throw new HttpError(409, "An account with that email already exists");
-    const user = await tx.user.create({
-      data: { email: v.email, name: v.name, passwordHash: hashPassword(v.password), mfaEnabled: false },
-    });
+    const existing = await tx.user.findUnique({ where: { email: v.email }, select: { id: true } });
+    let user: { id: string };
+    if (existing) {
+      // An account that belongs to no practice any more (removed earlier) can be re-added, with a fresh
+      // password and authenticator. Its memberships are visible only as that user.
+      const memberships = await withUser(existing.id, (u) =>
+        u.membership.count({ where: { userId: existing.id } }),
+      );
+      if (memberships) throw new HttpError(409, "An account with that email already exists");
+      user = await tx.user.update({
+        where: { id: existing.id },
+        data: {
+          name: v.name,
+          passwordHash: hashPassword(v.password),
+          totpSecret: null,
+          mfaEnabled: false,
+          failedMfaCount: 0,
+          mfaLockedUntil: null,
+        },
+        select: { id: true },
+      });
+      await tx.authSession.deleteMany({ where: { userId: existing.id } });
+    } else
+      user = await tx.user.create({
+        data: { email: v.email, name: v.name, passwordHash: hashPassword(v.password), mfaEnabled: false },
+        select: { id: true },
+      });
     const m = await tx.membership.create({
       data: { orgId: ctx.orgId, userId: user.id, role: v.role },
       select: { id: true },
@@ -585,9 +729,9 @@ export async function changeMemberRole(ctx: OrgCtx, membershipId: string, role: 
   requirePermission(ctx.role, "org:manage");
   const r = z.enum(MEMBER_ROLES).parse(role);
   return withOrg(ctx, async (tx) => {
-    const m = await tx.membership.findUnique({ where: { id: membershipId } });
+    const m = await tx.membership.findFirst({ where: { id: membershipId, orgId: ctx.orgId } });
     if (!m) throw new HttpError(404, "Not found");
-    if (m.role === "BCBA" && r !== "BCBA") await assertKeepsABcba(tx, m.id);
+    if (m.role === "BCBA" && r !== "BCBA") await assertKeepsABcba(tx, ctx.orgId, m.id);
     await tx.membership.update({ where: { id: m.id }, data: { role: r } });
     // The person's open sessions carry the old role: sign them out.
     await tx.authSession.deleteMany({ where: { userId: m.userId, orgId: ctx.orgId } });
@@ -598,10 +742,10 @@ export async function changeMemberRole(ctx: OrgCtx, membershipId: string, role: 
 export async function removeMember(ctx: OrgCtx, membershipId: string) {
   requirePermission(ctx.role, "org:manage");
   return withOrg(ctx, async (tx) => {
-    const m = await tx.membership.findUnique({ where: { id: membershipId } });
+    const m = await tx.membership.findFirst({ where: { id: membershipId, orgId: ctx.orgId } });
     if (!m) throw new HttpError(404, "Not found");
     if (m.userId === ctx.userId) throw new HttpError(409, "You cannot remove yourself");
-    await assertKeepsABcba(tx, m.id);
+    await assertKeepsABcba(tx, ctx.orgId, m.id);
     await tx.membership.delete({ where: { id: m.id } });
     await tx.authSession.deleteMany({ where: { userId: m.userId, orgId: ctx.orgId } });
     await note(tx, "member:remove", "Membership", m.id, { role: m.role });

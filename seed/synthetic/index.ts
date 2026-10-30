@@ -36,7 +36,6 @@ const ORG_TABLES = [
   "diagnosis",
   "client",
   "goal_template",
-  "membership",
 ];
 
 /** seededAsOf marks the dataset date; it commits with the org's data, so it also marks a completed seed. */
@@ -66,6 +65,8 @@ export async function seedOrg(org: SynOrg, asOf: Day) {
     });
     await prisma.authSession.deleteMany({ where: { userId: u.id } });
   }
+  // Everyone signed in to this practice signs in again after a reload (including people added in Settings).
+  await prisma.authSession.deleteMany({ where: { orgId: org.id } });
   await prisma.$disconnect();
 
   await withOrg(ctx, async (tx) => {
@@ -83,6 +84,8 @@ export async function seedOrg(org: SynOrg, asOf: Day) {
         settings: { ...org.settings, seededAsOf: asOf, seedVersion: SEED_VERSION } as Prisma.InputJsonValue,
       },
     });
+    // Dataset users get their dataset roles back; team members someone added in Settings stay.
+    await tx.membership.deleteMany({ where: { orgId: org.id, userId: { in: org.users.map((u) => u.id) } } });
     await tx.membership.createMany({
       data: org.users.map((u) => ({
         id: sid(`membership:${org.id}:${u.id}`),

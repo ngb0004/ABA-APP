@@ -60,7 +60,7 @@ export async function clientDetail(ctx: OrgCtx, clientId: string, asOf: Day) {
     const client = await tx.client.findUniqueOrThrow({
       where: { id: clientId },
       include: {
-        diagnoses: true,
+        diagnoses: { orderBy: [{ isPrimary: "desc" }, { icd10Code: "asc" }] },
         payors: { include: { payor: true } },
         attachments: true,
         authorizations: { include: { units: true, payor: true }, orderBy: { endDate: "desc" } },
@@ -232,5 +232,8 @@ export async function caseload(ctx: OrgCtx, asOf: Day, days = 60) {
 }
 
 export async function getClientForTx(tx: Tx, id: string) {
-  return tx.client.findUniqueOrThrow({ where: { id }, include: { payors: true, diagnoses: true } });
+  return tx.client.findUniqueOrThrow({
+    where: { id },
+    include: { payors: true, diagnoses: { orderBy: [{ isPrimary: "desc" }, { icd10Code: "asc" }] } },
+  });
 }

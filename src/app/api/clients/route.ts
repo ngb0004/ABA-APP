@@ -1,6 +1,7 @@
 import { api, readJson } from "@/lib/server/api";
+import { asOfToday } from "@/lib/server/as-of";
 import { createClient } from "@/lib/services/records";
 
 const Any = { parse: (x: unknown) => x };
 
-export const POST = api(async (req, ctx) => createClient(ctx, await readJson(req, Any)));
+export const POST = api(async (req, ctx) => createClient(ctx, await readJson(req, Any), asOfToday()));

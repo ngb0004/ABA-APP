@@ -263,3 +263,90 @@ describe("practice settings and team", () => {
     void org;
   });
 });
+
+describe("review fixes", () => {
+  it("a partial client update leaves guardians, IEP, and events alone", async () => {
+    const before = await withOrg(bcba, (tx) => tx.client.findUniqueOrThrow({ where: { id: cid } }));
+    await updateClient(bcba, cid, { preferredName: "Robs" });
+    const after = await withOrg(bcba, (tx) => tx.client.findUniqueOrThrow({ where: { id: cid } }));
+    expect(after.guardians).toEqual(before.guardians);
+    expect(after.hasIep).toBe(before.hasIep);
+  });
+
+  it("on the demo site the client's identity is generated and cannot be typed", async () => {
+    process.env.DEMO_MODE = "true";
+    try {
+      const { id } = await createClient(bcba, { ...newClient, ageYears: 6 }, "2026-10-29");
+      const c = await withOrg(bcba, (tx) => tx.client.findUniqueOrThrow({ where: { id } }));
+      expect(c.firstName).not.toBe("Robin");
+      expect(c.lastName).toMatch(/^Testchild/);
+      expect(c.dob.toISOString().slice(0, 4)).toBe("2020");
+      await expect(updateClient(bcba, id, { firstName: "Real" })).rejects.toMatchObject({ status: 403 });
+      await updateClient(bcba, id, { hasIep: true });
+    } finally {
+      delete process.env.DEMO_MODE;
+    }
+  });
+
+  it("removed members can be re-added, and lose access at once", async () => {
+    const add = () =>
+      addMember(bcba, {
+        email: "again@sample-practice.test",
+        name: "Again",
+        role: "RBT",
+        password: "another-long-pass",
+      });
+    const m = await add();
+    await removeMember(bcba, m.id);
+    const again = await add();
+    expect(again.id).not.toBe(m.id);
+    await removeMember(bcba, again.id);
+  });
+
+  it("sessions need an approved code; locked-baseline dates are protected", async () => {
+    const auth = await withOrg(bcba, (tx) =>
+      tx.authorization.findFirstOrThrow({ where: { clientId: cid }, include: { units: true } }),
+    );
+    await expect(
+      addSession(bcba, cid, {
+        authorizationId: auth.id,
+        cptCode: "97158",
+        date: "2026-09-03",
+        startMinute: 540,
+        units: 4,
+        providerRole: "BCBA",
+        providerId: "BCBA-1",
+      }),
+    ).rejects.toThrow(/does not approve/);
+    const goal = await withOrg(bcba, (tx) =>
+      tx.goal.findFirstOrThrow({ where: { clientId: clientId("client1"), baselineLockedAt: { not: null } } }),
+    );
+    await expect(
+      addDataPoint(ctxAs("RBT"), goal.id, { date: goal.baselineDate!.toISOString().slice(0, 10), value: 10 }),
+    ).rejects.toThrow(/locked/);
+  });
+
+  it("insurance always has a primary; diagnoses always have exactly one primary", async () => {
+    const c2 = (await createClient(bcba, { ...newClient, firstName: "Sam" })).id;
+    await expect(
+      saveClientPayor(bcba, c2, null, {
+        payorId: cignaId,
+        priority: "secondary",
+        memberId: "SYN-CIG-123123",
+      }),
+    ).rejects.toMatchObject({ status: 422 });
+    const dx = {
+      dsm5Code: "299.00",
+      dsm5Label: "Autism spectrum disorder",
+      icd10Code: "F84.0",
+      isPrimary: false,
+      deficitAreas: ["communication"],
+    };
+    const a = await saveDiagnosis(bcba, c2, null, dx); // first one becomes primary anyway
+    const b = await saveDiagnosis(bcba, c2, null, { ...dx, icd10Code: "F80.2" });
+    await expect(saveDiagnosis(bcba, c2, a.id, dx)).rejects.toMatchObject({ status: 409 });
+    await deleteDiagnosis(bcba, c2, a.id);
+    const rows = await withOrg(bcba, (tx) => tx.diagnosis.findMany({ where: { clientId: c2 } }));
+    expect(rows).toEqual([expect.objectContaining({ id: b.id, isPrimary: true })]);
+  });
+});

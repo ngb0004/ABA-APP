@@ -61,7 +61,7 @@ export async function addGoalFromTemplate(ctx: OrgCtx, clientId: string, templat
     const client = await tx.client.findUniqueOrThrow({
       where: { id: clientId },
       include: {
-        diagnoses: true,
+        diagnoses: { orderBy: [{ isPrimary: "desc" }, { icd10Code: "asc" }] },
         plans: { where: { status: "draft" }, orderBy: { createdAt: "desc" }, take: 1 },
       },
     });
