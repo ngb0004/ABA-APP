@@ -36,6 +36,8 @@ export const AUDITED_MODELS = new Set([
   "VbmappImport",
   "VbmappAdministration",
   "MilestoneScore",
+  "Assessment",
+  "AssessmentScore",
   "Goal",
   "GoalDataPoint",
   "GoalPhaseChange",

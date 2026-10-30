@@ -19,6 +19,7 @@ import { createHmac } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 import { checkPassword, hashPassword } from "../src/lib/auth/local";
 import { buildDataset, SEED_VERSION } from "../seed/synthetic/dataset";
+import { loadAssessmentCatalog } from "../src/lib/assessments/catalog";
 
 function fail(msg: string): never {
   console.error(`[demo-start] ${msg}`);
@@ -233,6 +234,8 @@ async function main() {
     NEXT_TELEMETRY_DISABLED: "1",
   };
 
+  // The assessment catalog is data (seed/assessments.yaml): a bad edit stops the boot, not a page.
+  say(`assessment catalog: ${loadAssessmentCatalog().types.length} types`);
   say("connecting to the database");
   await waitForDatabase();
   say("setting up database roles");

@@ -22,7 +22,17 @@ export function RowMenu(props: {
    * custom content (given a function that closes the dialog).
    */
   actions?: ({ label: string } & (
-    { form: FormProps; content?: never } | { content: (close: () => void) => ReactNode; form?: never }
+    | { form: FormProps; content?: never; request?: never; href?: never }
+    | { content: (close: () => void) => ReactNode; form?: never; request?: never; href?: never }
+    /** A one-click request (e.g. "Confirm"), with an optional confirmation question. */
+    | {
+        request: { url: string; method?: "POST" | "DELETE"; confirm?: string };
+        form?: never;
+        content?: never;
+        href?: never;
+      }
+    /** A link to another page. */
+    | { href: string; form?: never; content?: never; request?: never }
   ))[];
   remove?: { url: string; label?: string; confirm: string };
   testId?: string;
@@ -61,6 +71,23 @@ export function RowMenu(props: {
   const form = dialog === "edit" ? props.edit : action?.form;
   const close = () => setDialog(null);
   const title = action ? `${action.label}: ${props.name}` : `Edit ${props.name}`;
+
+  async function request(r: { url: string; method?: "POST" | "DELETE"; confirm?: string }) {
+    setOpen(false);
+    if (r.confirm && !window.confirm(r.confirm)) return;
+    setBusy(true);
+    setError(null);
+    const res = await send(r.url, r.method ?? "POST", {});
+    setBusy(false);
+    if (!res.ok)
+      return setError(
+        [
+          String(res.data.error ?? "Request failed"),
+          ...((res.data.issues as string[] | undefined) ?? []),
+        ].join("\n"),
+      );
+    router.refresh();
+  }
 
   async function remove() {
     setOpen(false);
@@ -106,7 +133,9 @@ export function RowMenu(props: {
               type="button"
               role="menuitem"
               onClick={() => {
+                if (a.request) return void request(a.request);
                 setOpen(false);
+                if (a.href) return router.push(a.href);
                 setDialog(i);
               }}
             >
@@ -134,7 +163,7 @@ export function RowMenu(props: {
         </div>
       )}
       {error && (
-        <div className="error" role="alert">
+        <div className="error" role="alert" style={{ whiteSpace: "pre-line" }}>
           {error}
         </div>
       )}

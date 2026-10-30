@@ -15,6 +15,10 @@ export const ACTIONS = [
   "intake:write",
   "vbmapp:import",
   "vbmapp:confirm",
+  /** Enter or edit a draft assessment of any type (same roles as importing a VB-MAPP). */
+  "assessment:write",
+  /** Confirm an assessment's scores (same roles as confirming a VB-MAPP import). */
+  "assessment:confirm",
   "goal:write",
   "goal:approve",
   "plan:create",

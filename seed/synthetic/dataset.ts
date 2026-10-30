@@ -69,6 +69,18 @@ export type SynAdmin = {
   testerInitials: string;
   scores: SynScore[];
 };
+/** An assessment other than VB-MAPP (catalog: seed/assessments.yaml). All scores fictional. */
+export type SynAssessment = {
+  id: string;
+  typeKey: string;
+  module?: string;
+  form?: string;
+  respondent?: string;
+  administeredOn: Day;
+  administeredBy: string;
+  status: "draft" | "confirmed";
+  scores: { scaleKey: string; value: number; possible?: number }[];
+};
 export type SynGoal = {
   id: string;
   ordinal: number;
@@ -149,6 +161,7 @@ export type SynClient = {
   sessions: SynSession[];
   intake: IntakeAnswers;
   administrations: SynAdmin[];
+  assessments: SynAssessment[];
   goals: SynGoal[];
 };
 export type SynOrg = {
@@ -317,6 +330,14 @@ function intakeBase(over: Partial<IntakeAnswers>): IntakeAnswers {
   return { ...base, ...over } as IntakeAnswers;
 }
 
+// ---------------------------------------------------------------- assessments
+
+const sc = (pairs: Record<string, number>) =>
+  Object.entries(pairs).map(([scaleKey, value]) => ({ scaleKey, value }));
+/** Skill areas as [score, possible]. Possible points are fictional, entered as a BCBA would. */
+const areas = (pairs: Record<string, [number, number]>) =>
+  Object.entries(pairs).map(([scaleKey, [value, possible]]) => ({ scaleKey, value, possible }));
+
 // ---------------------------------------------------------------- dataset
 
 export const DEMO_PASSWORD = "synthetic-demo-only";
@@ -326,8 +347,9 @@ export const DEMO_PASSWORD = "synthetic-demo-only";
  * demo should pick up: the demo reloads its fictional clients once on the next boot.
  * 2: 23-section plans and goal records (dates, status, locked baselines).
  * 3: insurance plan types and plan states (and, in the same release, benefits checks).
+ * 4: assessments other than VB-MAPP (Vineland-3, SRS-2, PDDBI, PSI-4, ABLLS-R, AFLS).
  */
-export const SEED_VERSION = 3;
+export const SEED_VERSION = 4;
 
 export function buildDataset(asOf: Day): SynDataset {
   const orgId = sid("org:sample-practice");
@@ -526,6 +548,33 @@ export function buildDataset(asOf: Day): SynDataset {
           },
           1,
         ),
+      },
+    ],
+    assessments: [
+      {
+        // Same week as the VB-MAPP: a fuller skills picture for the initial plan.
+        id: sid("c1:as:ablls"),
+        typeKey: "ablls_r",
+        administeredOn: addDays(asOf, -22),
+        administeredBy: "AS",
+        status: "confirmed",
+        scores: areas({
+          cooperation: [10, 38],
+          visual_performance: [12, 54],
+          receptive_language: [9, 102],
+          imitation: [6, 34],
+          vocal_imitation: [4, 26],
+          requests: [8, 54],
+          labeling: [5, 92],
+          intraverbals: [0, 108],
+          play_leisure: [4, 26],
+          social_interaction: [3, 68],
+          dressing: [2, 26],
+          eating: [12, 30],
+          toileting: [0, 18],
+          gross_motor: [14, 44],
+          fine_motor: [10, 34],
+        }),
       },
     ],
     goals: [],
@@ -901,6 +950,29 @@ export function buildDataset(asOf: Day): SynDataset {
         scores: c2admin2,
       },
     ],
+    assessments: [
+      {
+        // Still a draft: the BCBA is reviewing it before confirming.
+        id: sid("c2:as:afls"),
+        typeKey: "afls",
+        module: "basic_living",
+        administeredOn: addDays(asOf, -18),
+        administeredBy: "AS",
+        status: "draft",
+        scores: areas({
+          self_management: [14, 32],
+          basic_communication: [30, 58],
+          dressing: [22, 48],
+          eating: [36, 60],
+          grooming: [12, 40],
+          bathing: [6, 26],
+          toileting: [18, 36],
+          health: [4, 22],
+          safety: [6, 32],
+          nighttime_routines: [8, 16],
+        }),
+      },
+    ],
     goals: [],
   };
   const flatShape = (w: number) => (w < 16 ? 20 + (25 * w) / 15 : 45);
@@ -1268,6 +1340,100 @@ export function buildDataset(asOf: Day): SynDataset {
         ),
       },
     ],
+    assessments: [
+      // TRICARE outcome measures. Vineland-3 and SRS-2 are due yearly; PDDBI and PSI every six
+      // months: the PDDBI parent form is past six months and the PSI-4 is due within weeks.
+      {
+        id: sid("c3:as:vineland:1"),
+        typeKey: "vineland_3",
+        form: "comprehensive_interview",
+        respondent: "parent_caregiver",
+        administeredOn: addDays(asOf, -565),
+        administeredBy: "AS",
+        status: "confirmed",
+        scores: sc({
+          abc: 66,
+          communication: 64,
+          daily_living: 70,
+          socialization: 62,
+          abc_pct: 1,
+          communication_pct: 1,
+          daily_living_pct: 2,
+          socialization_pct: 1,
+        }),
+      },
+      {
+        id: sid("c3:as:vineland:2"),
+        typeKey: "vineland_3",
+        form: "comprehensive_interview",
+        respondent: "parent_caregiver",
+        administeredOn: addDays(asOf, -200),
+        administeredBy: "AS",
+        status: "confirmed",
+        scores: sc({
+          abc: 71,
+          communication: 69,
+          daily_living: 76,
+          socialization: 66,
+          abc_pct: 3,
+          communication_pct: 2,
+          daily_living_pct: 5,
+          socialization_pct: 1,
+          receptive: 9,
+          expressive: 8,
+          written: 10,
+          personal: 11,
+          domestic: 10,
+          community: 9,
+          interpersonal: 8,
+          play_leisure: 7,
+          coping: 9,
+        }),
+      },
+      {
+        id: sid("c3:as:srs2"),
+        typeKey: "srs_2",
+        form: "school_age",
+        respondent: "parent_caregiver",
+        administeredOn: addDays(asOf, -200),
+        administeredBy: "AS",
+        status: "confirmed",
+        scores: sc({
+          total_t: 74,
+          sci: 73,
+          rrb: 77,
+          social_awareness: 70,
+          social_cognition: 72,
+          social_communication: 73,
+          social_motivation: 67,
+        }),
+      },
+      {
+        id: sid("c3:as:pddbi"),
+        typeKey: "pddbi",
+        form: "parent",
+        respondent: "parent_caregiver",
+        administeredOn: addDays(asOf, -200),
+        administeredBy: "AS",
+        status: "confirmed",
+        scores: sc({ autism_composite: 63, social_approach: 38, expressive_language: 41, ritualisms: 66 }),
+      },
+      {
+        id: sid("c3:as:psi4"),
+        typeKey: "psi_4",
+        form: "full_length",
+        respondent: "parent_caregiver",
+        administeredOn: addDays(asOf, -165),
+        administeredBy: "AS",
+        status: "confirmed",
+        scores: sc({
+          total_stress_pct: 85,
+          total_stress_raw: 262,
+          child_domain_pct: 90,
+          parent_domain_pct: 72,
+        }),
+      },
+    ],
     goals: [],
   };
   c3.goals = [
@@ -1448,6 +1614,7 @@ export function buildDataset(asOf: Day): SynDataset {
     },
     sessions: [],
     administrations: [],
+    assessments: [],
     goals: [],
   };
 

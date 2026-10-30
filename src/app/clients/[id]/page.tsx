@@ -29,8 +29,8 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
         <Link className="btn secondary" href={`/clients/${id}/intake`}>
           Intake
         </Link>
-        <Link className="btn secondary" href={`/clients/${id}/vbmapp`}>
-          VB-MAPP
+        <Link className="btn secondary" href={`/clients/${id}/assessments`} data-testid="assessments-link">
+          Assessments
         </Link>
         <Link className="btn secondary" href={`/clients/${id}/goals`}>
           Goals

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { withOrg } from "@/lib/db";
-import { toDay } from "@/lib/dates";
+import { addDays, addMonths, toDay } from "@/lib/dates";
 import { seedAll } from "../../seed/synthetic/index";
 import { dataset } from "../helpers/synthetic-eval";
 
@@ -16,6 +16,8 @@ const TABLES = [
   "intake",
   "vbmapp_administration",
   "milestone_score",
+  "assessment",
+  "assessment_score",
   "payor",
   "payor_rule",
   "goal_template",
@@ -46,6 +48,9 @@ describe("synthetic seed", () => {
     expect(before[0]!.client).toBe(3);
     expect(before[0]!.goal_template).toBe(54);
     expect(before[0]!.vbmapp_administration).toBe(4); // Client 2 has two
+    // Client 1: ABLLS-R; Client 2: AFLS; Client 3: Vineland-3 twice, SRS-2, PDDBI, PSI-4.
+    expect(before[0]!.assessment).toBe(7);
+    expect(before[1]!.assessment).toBe(0);
   });
 
   it("marks every client synthetic with SYN- member IDs and fictional names", async () => {
@@ -105,5 +110,31 @@ describe("synthetic seed", () => {
         expect((Date.parse(last) - Date.parse(first)) / 86400000).toBeGreaterThan(24 * 7);
       }
     expect(c3!.sessions.filter((s) => s.cptCode === "97156")).toHaveLength(3);
+  });
+
+  it("stores the synthetic assessments confirmed by the BCBA, with Client 3's TRICARE measures staggered", async () => {
+    const ctx = { orgId: dataset.orgs[0]!.id, userId: null, role: null };
+    const c3 = dataset.orgs[0]!.clients.find((c) => c.key === "client3")!;
+    const rows = await withOrg(ctx, (tx) =>
+      tx.assessment.findMany({ where: { clientId: c3.id }, include: { scores: true } }),
+    );
+    expect(rows).toHaveLength(5);
+    for (const r of rows) {
+      expect(r.status).toBe("confirmed");
+      expect(r.reviewerId).toBeTruthy();
+      expect(r.scores.length).toBeGreaterThan(0);
+    }
+    const on = (k: string) =>
+      toDay(
+        rows.filter((r) => r.typeKey === k).sort((a, b) => +b.administeredOn - +a.administeredOn)[0]!
+          .administeredOn,
+      );
+    // Six-month measures: the PDDBI is past due, the PSI-4 falls due within the next month.
+    expect(addMonths(on("pddbi"), 6) < dataset.asOf).toBe(true);
+    const psiDue = addMonths(on("psi_4"), 6);
+    expect(psiDue > dataset.asOf && psiDue <= addDays(dataset.asOf, 30)).toBe(true);
+    // Yearly measures are current.
+    expect(addMonths(on("vineland_3"), 12) > dataset.asOf).toBe(true);
+    expect(addMonths(on("srs_2"), 12) > dataset.asOf).toBe(true);
   });
 });

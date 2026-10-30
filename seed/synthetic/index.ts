@@ -11,6 +11,8 @@ import { baseline, BASELINE_POINTS } from "../../src/lib/plan/progress";
 import { loadGoalBank } from "../../src/lib/goals/bank";
 import { masteryDefaults, tokenizeMastery } from "../../src/lib/goals/tokenize";
 import { syncPayorLibrary } from "../../src/lib/payors/library";
+import { assessmentCatalog } from "../../src/lib/assessments/catalog";
+import { validateAssessment } from "../../src/lib/assessments/validate";
 import { buildDataset, SEED_VERSION, sid, type SynOrg } from "./dataset";
 
 const d = (day: Day) => new Date(`${day}T00:00:00Z`);
@@ -28,6 +30,8 @@ const ORG_TABLES = [
   "milestone_score",
   "vbmapp_administration",
   "vbmapp_import",
+  "assessment_score",
+  "assessment",
   "intake",
   "service_session",
   "authorization_unit",
@@ -122,7 +126,7 @@ export async function seedOrg(fullOrg: SynOrg, asOf: Day) {
     // Payors, documents and rules are synced (not recreated), so evidence and snapshots survive a reseed.
     const { payorIds } = await syncPayorLibrary(tx, org.id);
     await seedGoalTemplates(tx, org.id);
-    for (const c of org.clients) await seedClient(tx, org.id, c, payorIds);
+    for (const c of org.clients) await seedClient(tx, org.id, c, payorIds, asOf);
   });
 }
 
@@ -150,6 +154,7 @@ async function seedClient(
   orgId: string,
   c: SynOrg["clients"][number],
   payorIds: Record<string, string>,
+  asOf: Day,
 ) {
   await tx.client.create({
     data: {
@@ -257,6 +262,45 @@ async function seedClient(
         id: sid(`${adm.id}:s:${i}`),
         orgId,
         administrationId: adm.id,
+        ...s,
+      })),
+    });
+  }
+  // Assessments go through the same catalog validation as the entry form.
+  for (const a of c.assessments) {
+    let v: ReturnType<typeof validateAssessment>;
+    try {
+      v = validateAssessment(assessmentCatalog(), { ...a, notes: null }, asOf);
+    } catch (e) {
+      // Synthetic data only, so the problems are safe to print.
+      const issues = (e as { issues?: string[] }).issues ?? [];
+      throw new Error(
+        `Synthetic assessment ${a.id} is invalid: ${issues.join("; ") || (e as Error).message}`,
+      );
+    }
+    await tx.assessment.create({
+      data: {
+        id: a.id,
+        orgId,
+        clientId: c.id,
+        typeKey: v.typeKey,
+        module: v.module,
+        form: v.form,
+        respondent: v.respondent,
+        customName: v.customName,
+        administeredOn: d(v.administeredOn),
+        administeredBy: v.administeredBy,
+        source: "manual",
+        status: a.status,
+        ...(a.status === "confirmed" ? { reviewerId: sid("user:bcba"), reviewedAt: new Date() } : {}),
+        createdById: sid("user:bcba"),
+      },
+    });
+    await tx.assessmentScore.createMany({
+      data: v.scores.map((s) => ({
+        id: sid(`${a.id}:score:${s.scaleKey}`),
+        orgId,
+        assessmentId: a.id,
         ...s,
       })),
     });

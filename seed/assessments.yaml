@@ -1,0 +1,279 @@
+# Assessment catalog: the assessment types a BCBA can record for a client.
+#
+# Data, not code (validated by src/lib/assessments/catalog.ts at startup).
+# CLAUDE.md rule 9: this file holds assessment NAMES and domain / skill-area / subscale NAMES
+# only. Never add item wording, protocol text, or scoring instructions from a publisher.
+# Ranges (min/max) are listed only where they are well established; otherwise the kind's
+# sanity bounds apply (see SCALE_KINDS in catalog.ts).
+#
+# Fields per type:
+#   key, name, group (skills | standardized | other)
+#   entry: manual (entry form) | vbmapp_import (the existing VB-MAPP workbook import)
+#   forms / respondents: choices shown on the entry form (stored as keys)
+#   modules: AFLS-style modules, each with its own skill areas
+#   scales: key, name, kind, optional min/max, optional parent (a subdomain of another scale)
+#   summary: scale keys shown in the list and used in plan text
+#   summary_total: show the sum of the score-of-possible areas as the summary
+#   custom_scales: the BCBA may add areas or scales that are not listed here
+#   group_by_form: repeats are compared per form (e.g., parent vs teacher)
+# Open questions about these lists: docs/QUESTIONS_FOR_BCBA.md (Assessments).
+
+version: 1
+
+assessments:
+  - key: vbmapp
+    name: VB-MAPP
+    group: skills
+    entry: vbmapp_import
+    scales:
+      - { key: total, name: Milestones total, kind: raw, min: 0, max: 170 }
+      - { key: level_1, name: Level 1, kind: raw, min: 0, max: 45, parent: total }
+      - { key: level_2, name: Level 2, kind: raw, min: 0, max: 60, parent: total }
+      - { key: level_3, name: Level 3, kind: raw, min: 0, max: 65, parent: total }
+    summary: [total]
+
+  - key: ablls_r
+    name: ABLLS-R
+    group: skills
+    # Scored per skill area as a score of the possible points. The BCBA enters "possible" for
+    # each area; item counts are not hard-coded here.
+    scales:
+      - { key: cooperation, name: Cooperation and Reinforcer Effectiveness, kind: score_of_possible }
+      - { key: visual_performance, name: Visual Performance, kind: score_of_possible }
+      - { key: receptive_language, name: Receptive Language, kind: score_of_possible }
+      - { key: imitation, name: Imitation, kind: score_of_possible }
+      - { key: vocal_imitation, name: Vocal Imitation, kind: score_of_possible }
+      - { key: requests, name: Requests, kind: score_of_possible }
+      - { key: labeling, name: Labeling, kind: score_of_possible }
+      - { key: intraverbals, name: Intraverbals, kind: score_of_possible }
+      - { key: spontaneous_vocalizations, name: Spontaneous Vocalizations, kind: score_of_possible }
+      - { key: syntax_grammar, name: Syntax and Grammar, kind: score_of_possible }
+      - { key: play_leisure, name: Play and Leisure, kind: score_of_possible }
+      - { key: social_interaction, name: Social Interaction, kind: score_of_possible }
+      - { key: group_instruction, name: Group Instruction, kind: score_of_possible }
+      - { key: classroom_routines, name: Classroom Routines, kind: score_of_possible }
+      - { key: generalized_responding, name: Generalized Responding, kind: score_of_possible }
+      - { key: reading, name: Reading, kind: score_of_possible }
+      - { key: math, name: Math, kind: score_of_possible }
+      - { key: writing, name: Writing, kind: score_of_possible }
+      - { key: spelling, name: Spelling, kind: score_of_possible }
+      - { key: dressing, name: Dressing, kind: score_of_possible }
+      - { key: eating, name: Eating, kind: score_of_possible }
+      - { key: grooming, name: Grooming, kind: score_of_possible }
+      - { key: toileting, name: Toileting, kind: score_of_possible }
+      - { key: gross_motor, name: Gross Motor, kind: score_of_possible }
+      - { key: fine_motor, name: Fine Motor, kind: score_of_possible }
+    summary_total: true
+
+  - key: afls
+    name: AFLS
+    group: skills
+    custom_scales: true
+    summary_total: true
+    # Only the Basic Living Skills areas are listed; the other modules start empty and the BCBA
+    # adds the areas scored (question in QUESTIONS_FOR_BCBA.md).
+    modules:
+      - key: basic_living
+        name: Basic Living Skills
+        scales:
+          - { key: self_management, name: Self-Management, kind: score_of_possible }
+          - { key: basic_communication, name: Basic Communication, kind: score_of_possible }
+          - { key: dressing, name: Dressing, kind: score_of_possible }
+          - { key: eating, name: Eating, kind: score_of_possible }
+          - { key: grooming, name: Grooming, kind: score_of_possible }
+          - { key: bathing, name: Bathing, kind: score_of_possible }
+          - { key: toileting, name: Toileting, kind: score_of_possible }
+          - { key: health, name: Health, kind: score_of_possible }
+          - { key: safety, name: Safety, kind: score_of_possible }
+          - { key: nighttime_routines, name: Nighttime Routines, kind: score_of_possible }
+      - { key: home, name: Home Skills, scales: [] }
+      - { key: community, name: Community Participation Skills, scales: [] }
+      - { key: school, name: School Skills, scales: [] }
+      - { key: vocational, name: Vocational Skills, scales: [] }
+      - { key: independent_living, name: Independent Living Skills, scales: [] }
+
+  - key: vineland_3
+    name: Vineland-3
+    group: standardized
+    forms:
+      - { key: comprehensive_interview, name: Comprehensive Interview Form }
+      - { key: domain_interview, name: Domain-Level Interview Form }
+      - { key: parent_caregiver, name: Parent/Caregiver Form }
+      - { key: teacher, name: Teacher Form }
+    respondents: &respondents
+      - { key: parent_caregiver, name: Parent or caregiver }
+      - { key: teacher, name: Teacher }
+      - { key: self, name: Self }
+      - { key: clinician, name: Clinician }
+      - { key: other, name: Other }
+    scales:
+      - { key: abc, name: Adaptive Behavior Composite, kind: standard, min: 20, max: 140 }
+      - { key: communication, name: Communication, kind: standard, min: 20, max: 140 }
+      - { key: daily_living, name: Daily Living Skills, kind: standard, min: 20, max: 140 }
+      - { key: socialization, name: Socialization, kind: standard, min: 20, max: 140 }
+      - { key: motor, name: Motor Skills, kind: standard, min: 20, max: 140 }
+      - { key: abc_pct, name: Adaptive Behavior Composite percentile, kind: percentile, parent: abc }
+      - { key: communication_pct, name: Communication percentile, kind: percentile, parent: communication }
+      - {
+          key: daily_living_pct,
+          name: Daily Living Skills percentile,
+          kind: percentile,
+          parent: daily_living,
+        }
+      - { key: socialization_pct, name: Socialization percentile, kind: percentile, parent: socialization }
+      - { key: motor_pct, name: Motor Skills percentile, kind: percentile, parent: motor }
+      - { key: receptive, name: Receptive (v-scale), kind: standard, min: 1, max: 24, parent: communication }
+      - {
+          key: expressive,
+          name: Expressive (v-scale),
+          kind: standard,
+          min: 1,
+          max: 24,
+          parent: communication,
+        }
+      - { key: written, name: Written (v-scale), kind: standard, min: 1, max: 24, parent: communication }
+      - { key: personal, name: Personal (v-scale), kind: standard, min: 1, max: 24, parent: daily_living }
+      - { key: domestic, name: Domestic (v-scale), kind: standard, min: 1, max: 24, parent: daily_living }
+      - { key: community, name: Community (v-scale), kind: standard, min: 1, max: 24, parent: daily_living }
+      - {
+          key: interpersonal,
+          name: Interpersonal Relationships (v-scale),
+          kind: standard,
+          min: 1,
+          max: 24,
+          parent: socialization,
+        }
+      - {
+          key: play_leisure,
+          name: Play and Leisure (v-scale),
+          kind: standard,
+          min: 1,
+          max: 24,
+          parent: socialization,
+        }
+      - { key: coping, name: Coping Skills (v-scale), kind: standard, min: 1, max: 24, parent: socialization }
+      - { key: fine_motor, name: Fine Motor (v-scale), kind: standard, min: 1, max: 24, parent: motor }
+      - { key: gross_motor, name: Gross Motor (v-scale), kind: standard, min: 1, max: 24, parent: motor }
+      - {
+          key: maladaptive_index,
+          name: Maladaptive Behavior Index (v-scale),
+          kind: standard,
+          min: 1,
+          max: 24,
+        }
+      - {
+          key: internalizing,
+          name: Internalizing (v-scale),
+          kind: standard,
+          min: 1,
+          max: 24,
+          parent: maladaptive_index,
+        }
+      - {
+          key: externalizing,
+          name: Externalizing (v-scale),
+          kind: standard,
+          min: 1,
+          max: 24,
+          parent: maladaptive_index,
+        }
+    summary: [abc, communication, daily_living, socialization]
+
+  - key: srs_2
+    name: SRS-2
+    group: standardized
+    forms:
+      - { key: preschool, name: Preschool Form }
+      - { key: school_age, name: School-Age Form }
+      - { key: adult, name: Adult Form }
+    respondents: *respondents
+    scales:
+      - { key: total_t, name: Total, kind: t_score }
+      - { key: total_raw, name: Total raw score, kind: raw, parent: total_t }
+      - { key: sci, name: Social Communication and Interaction, kind: t_score, parent: total_t }
+      - { key: rrb, name: Restricted Interests and Repetitive Behavior, kind: t_score, parent: total_t }
+      - { key: social_awareness, name: Social Awareness, kind: t_score, parent: total_t }
+      - { key: social_cognition, name: Social Cognition, kind: t_score, parent: total_t }
+      - { key: social_communication, name: Social Communication, kind: t_score, parent: total_t }
+      - { key: social_motivation, name: Social Motivation, kind: t_score, parent: total_t }
+    summary: [total_t]
+
+  - key: pddbi
+    name: PDDBI
+    group: standardized
+    custom_scales: true
+    group_by_form: true
+    forms:
+      - { key: parent, name: Parent Form }
+      - { key: teacher, name: Teacher Form }
+    respondents: *respondents
+    # Kept minimal on purpose; the BCBA adds any other domain T-scores reported.
+    scales:
+      - { key: autism_composite, name: Autism Composite, kind: t_score }
+      - { key: sensory_perceptual, name: Sensory/Perceptual Approach Behaviors, kind: t_score }
+      - { key: ritualisms, name: Ritualisms/Resistance to Change, kind: t_score }
+      - { key: social_pragmatic, name: Social Pragmatic Problems, kind: t_score }
+      - { key: semantic_pragmatic, name: Semantic/Pragmatic Problems, kind: t_score }
+      - { key: arousal_regulation, name: Arousal Regulation Problems, kind: t_score }
+      - { key: specific_fears, name: Specific Fears, kind: t_score }
+      - { key: aggressiveness, name: Aggressiveness, kind: t_score }
+      - { key: social_approach, name: Social Approach Behaviors, kind: t_score }
+      - { key: expressive_language, name: Expressive Language, kind: t_score }
+      - { key: learning_memory_receptive, name: "Learning, Memory, and Receptive Language", kind: t_score }
+    summary: [autism_composite]
+
+  - key: psi_4
+    name: PSI-4
+    group: standardized
+    custom_scales: true
+    forms:
+      - { key: full_length, name: Full-Length Form }
+      - { key: short_form, name: Short Form }
+    respondents: *respondents
+    scales:
+      - { key: total_stress_pct, name: Total Stress percentile, kind: percentile }
+      - { key: total_stress_raw, name: Total Stress raw score, kind: raw, parent: total_stress_pct }
+      - { key: child_domain_pct, name: Child Domain percentile, kind: percentile }
+      - { key: parent_domain_pct, name: Parent Domain percentile, kind: percentile }
+    summary: [total_stress_pct]
+
+  - key: sipa
+    name: SIPA
+    group: standardized
+    custom_scales: true
+    respondents: *respondents
+    scales:
+      - { key: total_stress_pct, name: Total Stress percentile, kind: percentile }
+      - { key: total_stress_raw, name: Total Stress raw score, kind: raw, parent: total_stress_pct }
+      - { key: adolescent_domain_pct, name: Adolescent Domain percentile, kind: percentile }
+      - { key: parent_domain_pct, name: Parent Domain percentile, kind: percentile }
+    summary: [total_stress_pct]
+
+  - key: peak
+    name: PEAK
+    group: skills
+    custom_scales: true
+    summary_total: true
+    scales:
+      - { key: direct_training, name: Direct Training, kind: score_of_possible }
+      - { key: generalization, name: Generalization, kind: score_of_possible }
+      - { key: equivalence, name: Equivalence, kind: score_of_possible }
+      - { key: transformation, name: Transformation, kind: score_of_possible }
+
+  - key: efl
+    name: Essential for Living
+    group: skills
+    custom_scales: true
+    summary_total: true
+    scales:
+      - { key: communication, name: Communication, kind: score_of_possible }
+      - { key: daily_living, name: Daily Living, kind: score_of_possible }
+      - { key: tolerating, name: Tolerating, kind: score_of_possible }
+      - { key: functional_academic, name: Functional Academic, kind: score_of_possible }
+
+  - key: other
+    name: Other assessment
+    group: other
+    # The BCBA names the assessment and adds each score.
+    custom_scales: true
+    scales: []

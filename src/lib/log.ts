@@ -47,6 +47,8 @@ export class HttpError extends Error {
   constructor(
     public status: number,
     message: string,
+    /** Plain sentences, one per problem, shown under the message (never PHI). */
+    public issues?: string[],
   ) {
     super(message);
   }

@@ -38,8 +38,8 @@ export default async function VbmappPage({ params }: { params: Promise<{ id: str
   return (
     <>
       <p>
-        <Link href={`/clients/${id}`}>
-          ← {client.firstName} {client.lastName}
+        <Link href={`/clients/${id}/assessments`}>
+          ← Assessments ({client.firstName} {client.lastName})
         </Link>
       </p>
       <h1>VB-MAPP Milestones</h1>

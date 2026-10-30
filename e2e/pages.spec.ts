@@ -11,6 +11,7 @@ test("unknown ids show the normal 404 page with the menu, and the tab still name
     `/clients/${UNKNOWN}`,
     `/clients/${UNKNOWN}/intake`,
     `/clients/${UNKNOWN}/vbmapp`,
+    `/clients/${UNKNOWN}/assessments`,
     `/clients/${UNKNOWN}/goals`,
     `/clients/${UNKNOWN}/records`,
     `/plans/${UNKNOWN}`,

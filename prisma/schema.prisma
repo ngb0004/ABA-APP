@@ -140,6 +140,7 @@ model Client {
   letters         PayorLetter[]
   attachments     Attachment[]
   benefitsChecks  BenefitsCheck[]
+  assessments     Assessment[]
 
   @@map("client")
 }
@@ -373,6 +374,69 @@ model MilestoneScore {
   administration VbmappAdministration @relation(fields: [administrationId], references: [id])
 
   @@map("milestone_score")
+}
+
+// ---------------------------------------------------------------- assessments
+
+/// One administration of an assessment from the catalog (seed/assessments.yaml), any type.
+/// VB-MAPP keeps its own tables (VbmappAdministration) and joins this list through an adapter.
+/// Rule 9: scores and names only; no item wording or report text.
+model Assessment {
+  id             String    @id @default(uuid()) @db.Uuid
+  orgId          String    @map("org_id") @db.Uuid
+  clientId       String    @db.Uuid
+  /// Catalog key, e.g. "vineland_3" or "other".
+  typeKey        String
+  /// AFLS-style module key from the catalog.
+  module         String?
+  /// Form key from the catalog (e.g. "parent" for the PDDBI parent form).
+  form           String?
+  /// Who answered: parent_caregiver | teacher | self | clinician | other.
+  respondent     String?
+  /// The BCBA's name for an "other" assessment (never a person's name).
+  customName     String?
+  administeredOn DateTime  @db.Date
+  /// Initials or staff code of whoever administered it (no names).
+  administeredBy String
+  /// manual | import | vbmapp_import
+  source         String    @default("manual")
+  /// The import it came from (stage 2: report imports).
+  importId       String?   @db.Uuid
+  /// draft | confirmed. Confirmed by a BCBA (reviewer and time recorded); confirmed rows are locked.
+  status         String    @default("draft")
+  reviewerId     String?   @db.Uuid
+  reviewedAt     DateTime?
+  notes          String?
+  createdById    String?   @db.Uuid
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  client Client            @relation(fields: [clientId], references: [id])
+  scores AssessmentScore[]
+
+  @@index([clientId, administeredOn])
+  @@map("assessment")
+}
+
+model AssessmentScore {
+  id           String  @id @default(uuid()) @db.Uuid
+  orgId        String  @map("org_id") @db.Uuid
+  assessmentId String  @db.Uuid
+  /// Catalog scale key, or "custom_<slug>" for a scale the BCBA added.
+  scaleKey     String
+  /// Name and kind of an added (custom) scale; catalog scales take both from the catalog.
+  scaleName    String?
+  scaleKind    String?
+  value        Float
+  /// For score-of-possible scales.
+  possible     Float?
+  /// Where an imported score was read: {file, location, matchedLabel}. Never free text from a report.
+  provenance   Json?
+
+  assessment Assessment @relation(fields: [assessmentId], references: [id])
+
+  @@unique([assessmentId, scaleKey])
+  @@map("assessment_score")
 }
 
 // ---------------------------------------------------------------- payors
