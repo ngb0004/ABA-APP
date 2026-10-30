@@ -3,6 +3,8 @@
  * document may show, each with a label (sent to the model) and a source pointer
  * (shown on hover/click). Values are computed by code from stored records only.
  */
+import { assessmentCatalog } from "../assessments/catalog";
+import { assessmentValues } from "../assessments/plan";
 import type { Tx } from "../db";
 import { addDays, diffDays, toDay, type Day } from "../dates";
 import { SourcedContext, type SourcedValue } from "../firewall";
@@ -69,6 +71,16 @@ export async function loadClientData(tx: Tx, clientId: string, authorizationId?:
     where: { clientId: client.id },
     orderBy: { createdAt: "desc" },
   });
+  // Every assessment of the client; a plan uses the confirmed ones it selects (never notes or files).
+  const assessments = await tx.assessment.findMany({
+    where: { clientId: client.id },
+    include: { scores: true },
+    orderBy: [{ administeredOn: "asc" }, { createdAt: "asc" }],
+  });
+  // Score imports still waiting for review: not usable until confirmed (pre-submission audit only).
+  const pendingImports = await tx.assessmentImport.count({
+    where: { clientId: client.id, status: "pending" },
+  });
   // For the pre-submission audit only (never sent to the AI): when coverage was last confirmed.
   const benefitsChecks = await tx.benefitsCheck.findMany({
     where: { clientId: client.id },
@@ -80,6 +92,8 @@ export async function loadClientData(tx: Tx, clientId: string, authorizationId?:
     auth,
     sessions,
     administrations,
+    assessments,
+    pendingImports,
     goals,
     letters,
     benefitsChecks,
@@ -469,6 +483,11 @@ export function buildSourcedContext(b: ClientData, asOf: Day): SourcedContext {
       }
     }
   }
+
+  // Other assessments: only the confirmed ones the plan selected (VB-MAPP keys above are unchanged).
+  const selected = (b as Partial<PlanBundle>).plan?.assessmentIds;
+  if (selected?.length)
+    for (const v of assessmentValues(assessmentCatalog(), c.id, b.assessments, selected)) add(v);
 
   for (const g of b.goals) {
     const n = g.ordinal;

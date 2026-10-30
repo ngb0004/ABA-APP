@@ -3,6 +3,8 @@
  * blocks export. Payor rules come from the evaluator: unverified rules can only
  * warn, so they never block.
  */
+import { assessmentCatalog } from "../assessments/catalog";
+import { assessmentItem } from "../assessments/view";
 import { diffDays, toDay, type Day } from "../dates";
 import { validateBcbaText, type SourcedContext } from "../firewall";
 import {
@@ -230,6 +232,10 @@ export function runPresubmissionAudit(
     });
   }
 
+  // ---- Assessments used in this plan. Warnings only, as for VB-MAPP: an unverified
+  // administration is simply left out of the plan, so an unconfirmed assessment is too.
+  for (const c of assessmentChecks(b)) push(c);
+
   // ---- Sections and numbers
   const unapproved = b.plan.sections.filter((s) => !sectionDone(s.state));
   push({
@@ -451,6 +457,9 @@ export function runPresubmissionAudit(
   for (const a of b.administrations)
     if (a.testDate && toDay(a.testDate) > asOf)
       dateIssues.push(`VB-MAPP administration ${a.adminNumber} dated in the future`);
+  for (const a of b.assessments)
+    if (b.plan.assessmentIds.includes(a.id) && toDay(a.administeredOn) > asOf)
+      dateIssues.push(`${assessmentName(a)} dated in the future`);
   const latest = b.administrations.at(-1);
   if (
     latest?.testDate &&
@@ -476,6 +485,66 @@ export function runPresubmissionAudit(
   });
 
   return checks;
+}
+
+const assessmentName = (a: PlanBundle["assessments"][number]) => {
+  const i = assessmentItem(assessmentCatalog(), "", a);
+  return [i.typeName, i.moduleName, i.formName].filter(Boolean).join(" · ");
+};
+
+/**
+ * The plan's assessment selection: none used, selected ones still in draft, score imports
+ * waiting for review, and sections flagged for a redraft after the selection changed.
+ */
+export function assessmentChecks(b: PlanBundle): AuditCheck[] {
+  const out: AuditCheck[] = [];
+  const selected = b.assessments.filter((a) => b.plan.assessmentIds.includes(a.id));
+  const confirmed = selected.filter((a) => a.status === "confirmed");
+  const drafts = selected.filter((a) => a.status !== "confirmed");
+  const action = "Choose them under “Assessments used in this plan” at the top of the plan";
+  if (!confirmed.length && !b.administrations.length)
+    out.push({
+      id: "assessments.none",
+      category: "Assessments",
+      status: "warn",
+      message: "This plan uses no assessments",
+      action,
+    });
+  else
+    out.push({
+      id: "assessments.none",
+      category: "Assessments",
+      status: "pass",
+      message: `This plan uses ${confirmed.length + b.administrations.length} assessment(s)`,
+    });
+  if (drafts.length)
+    out.push({
+      id: "assessments.drafts",
+      category: "Assessments",
+      status: "warn",
+      message: `${drafts.length} selected assessment(s) still in draft: their scores are left out until a BCBA confirms them`,
+      details: drafts.map((a) => `${assessmentName(a)}, ${toDay(a.administeredOn)}`),
+      action: "Review and confirm them on the client's Assessments page",
+    });
+  if (b.pendingImports)
+    out.push({
+      id: "assessments.imports",
+      category: "Assessments",
+      status: "warn",
+      message: `${b.pendingImports} score import(s) not yet reviewed: they are not in the plan until confirmed`,
+      action: "Review the imports on the client's Assessments page",
+    });
+  const redraft = b.plan.sections.filter((s) => s.redraftReason && s.state !== "not_applicable");
+  if (redraft.length)
+    out.push({
+      id: "assessments.redraft",
+      category: "Assessments",
+      status: "warn",
+      message: `${redraft.length} section(s) need a redraft: the plan's assessments changed after they were written`,
+      details: redraft.map((s) => s.title),
+      action: "Redraft or edit each one, then approve it",
+    });
+  return out;
 }
 
 export function exportBlockers(checks: AuditCheck[]) {

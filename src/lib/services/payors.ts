@@ -1,3 +1,5 @@
+import { assessmentCatalog } from "../assessments/catalog";
+import { assessmentItem } from "../assessments/view";
 import type { Tx } from "../db";
 import { ageYears, toDay, type Day } from "../dates";
 import type { EvalContext } from "../payors/context";
@@ -243,6 +245,32 @@ export async function buildEvalContext(
     : client.authorizations[0];
   const sessions = auth ? await tx.serviceSession.findMany({ where: { authorizationId: auth.id } }) : [];
   const diagnoses = await tx.diagnosis.findMany({ where: { clientId } });
+  // Confirmed assessments and verified VB-MAPP administrations, for outcome-measure schedules.
+  const catalog = assessmentCatalog();
+  const assessments = [
+    ...(await tx.assessment.findMany({ where: { clientId, status: "confirmed" } })).map((a) => {
+      const i = assessmentItem(catalog, clientId, { ...a, scores: [] });
+      return {
+        typeKey: a.typeKey,
+        form: a.form,
+        customName: a.customName,
+        administeredOn: toDay(a.administeredOn),
+        name: [i.typeName, i.moduleName, i.formName].filter(Boolean).join(" · "),
+      };
+    }),
+    ...(
+      await tx.vbmappAdministration.findMany({
+        where: { clientId, verified: true, testDate: { not: null } },
+        select: { testDate: true },
+      })
+    ).map((a) => ({
+      typeKey: "vbmapp",
+      form: null,
+      customName: null,
+      administeredOn: toDay(a.testDate!),
+      name: "VB-MAPP",
+    })),
+  ];
   const goals = await tx.goal.findMany({
     where: { clientId },
     select: { _count: { select: { dataPoints: true } } },
@@ -294,6 +322,7 @@ export async function buildEvalContext(
       title: a.title,
       documentDate: a.documentDate ? toDay(a.documentDate) : null,
     })),
+    assessments,
     plan: plan
       ? {
           type: plan.type as "initial" | "reauth",

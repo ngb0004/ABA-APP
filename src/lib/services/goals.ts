@@ -7,7 +7,9 @@ import {
   requiredCategoryChecks,
   unresolvedPlaceholders,
 } from "../goals/checks";
-import { suggestGoals } from "../goals/suggest";
+import { assessmentCatalog } from "../assessments/catalog";
+import { assessmentItem } from "../assessments/view";
+import { suggestFromAreas, suggestGoals } from "../goals/suggest";
 import { requirePermission } from "../permissions";
 import { buildSourcedContext, loadClientData } from "../plan/context";
 import { goalGraphSvg } from "../plan/graphs";
@@ -38,6 +40,15 @@ export async function goalsView(ctx: OrgCtx, clientId: string, asOf: Day) {
           })),
         )
       : [];
+    // Low-scoring ABLLS-R and AFLS areas (catalog: suggest_goals), latest confirmed of each.
+    const catalog = assessmentCatalog();
+    const areaSuggestions = suggestFromAreas(
+      catalog,
+      data.assessments.map((a) => assessmentItem(catalog, clientId, a)),
+    ).map((s) => ({
+      ...s,
+      template: templates.find((t) => t.domainNumber === s.goalBankDomain && t.tier === s.tier) ?? null,
+    }));
     const likes = data.goals.map((g) => ({
       id: g.id,
       category: g.category,
@@ -72,6 +83,7 @@ export async function goalsView(ctx: OrgCtx, clientId: string, asOf: Day) {
         template: templates.find((t) => t.domainNumber === s.goalBankDomain && t.tier === s.tier) ?? null,
       })),
       latestVerified: latest ?? null,
+      areaSuggestions,
       categories: requiredCategoryChecks(likes),
       duplicates: duplicateRationales(likes),
       unlinked: diagnosisLinkIssues(likes, data.client.diagnoses),

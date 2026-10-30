@@ -233,6 +233,8 @@ export type RuleResult = {
   rawStatus: RuleStatus;
   message: string;
   evidence: string[];
+  /** Outcome measures: "Vineland-3 last given 2026-04-13: due by 2027-04-13", one line per measure. */
+  schedule?: string[];
 };
 
 /** A finding about the payor choice itself (wrong state, plan type unknown). Always a warning. */

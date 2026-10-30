@@ -25,6 +25,8 @@ export type ChecklistItem = {
   source: "auto" | "payor_rule" | "letter";
   action?: string;
   done?: boolean;
+  /** Lines shown under the item (outcome measures: last given and due dates). */
+  notes?: string[];
 };
 
 export function buildChecklist(
@@ -84,6 +86,7 @@ export function buildChecklist(
           ? "Manual check"
           : undefined,
       done: done[key],
+      ...(r.schedule ? { notes: r.schedule } : {}),
     });
   }
   for (const f of scope)

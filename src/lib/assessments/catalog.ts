@@ -53,7 +53,9 @@ const Key = z.string().regex(/^[a-z][a-z0-9_]{0,47}$/, "Use lowercase letters, d
 const Name = z.string().trim().min(1).max(120);
 /** Other ways a name is written in score reports and spreadsheets (used by file imports only). */
 const Aliases = z.array(z.string().trim().min(1).max(80)).default([]);
-const Choice = z.object({ key: Key, name: Name, aliases: Aliases }).strict();
+/** How payor rules name a tool or form ("Vineland-3", "PDDBI_parent"). Names only. */
+const PayorNames = z.array(z.string().trim().min(1).max(80)).default([]);
+const Choice = z.object({ key: Key, name: Name, aliases: Aliases, payor_names: PayorNames }).strict();
 
 const ScaleSchema = z
   .object({
@@ -64,6 +66,8 @@ const ScaleSchema = z
     max: z.number().finite().optional(),
     parent: Key.optional(),
     aliases: Aliases,
+    /** Goal bank domain number whose templates fit this area (goal suggestions). */
+    goal_domain: z.number().int().min(1).max(99).optional(),
   })
   .strict();
 
@@ -72,6 +76,7 @@ const TypeSchema = z
     key: Key,
     name: Name,
     aliases: Aliases,
+    payor_names: PayorNames,
     group: z.enum(ASSESSMENT_GROUPS),
     entry: z.enum(["manual", "vbmapp_import"]).default("manual"),
     forms: z.array(Choice).default([]),
@@ -84,6 +89,7 @@ const TypeSchema = z
     summary_total: z.boolean().default(false),
     custom_scales: z.boolean().default(false),
     group_by_form: z.boolean().default(false),
+    suggest_goals: z.boolean().default(false),
   })
   .strict();
 
@@ -93,11 +99,13 @@ const CatalogSchema = z
 
 export type CatalogScale = z.infer<typeof ScaleSchema>;
 export type CatalogModule = { key: string; name: string; scales: CatalogScale[] };
-export type CatalogChoice = { key: string; name: string; aliases: string[] };
+export type CatalogChoice = { key: string; name: string; aliases: string[]; payorNames: string[] };
 export type CatalogType = {
   key: string;
   name: string;
   aliases: string[];
+  /** How payor rules name this tool. */
+  payorNames: string[];
   group: AssessmentGroup;
   entry: "manual" | "vbmapp_import";
   forms: CatalogChoice[];
@@ -108,6 +116,8 @@ export type CatalogType = {
   summaryTotal: boolean;
   customScales: boolean;
   groupByForm: boolean;
+  /** Low-scoring areas suggest goals (goal_domain on each area). */
+  suggestGoals: boolean;
 };
 export type Catalog = { version: number; types: CatalogType[] };
 
@@ -176,6 +186,19 @@ function problems(types: CatalogType[]): string[] {
     if (!t.customScales && !t.scales.length && !t.modules.some((m) => m.scales.length))
       out.push(`${t.key}: has no scales and does not allow custom ones`);
   }
+  // A payor rule's tool name must lead to one tool (or one form of it).
+  const named = new Map<string, string>();
+  for (const t of types)
+    for (const [where, names] of [
+      [t.key, t.payorNames] as const,
+      ...t.forms.map((f) => [`${t.key}.${f.key}`, f.payorNames] as const),
+    ])
+      for (const n of names) {
+        const k = normalizeLabel(n);
+        const other = named.get(k);
+        if (other && other !== where) out.push(`payor name "${n}" names both ${other} and ${where}`);
+        named.set(k, where);
+      }
   return out;
 }
 
@@ -192,20 +215,28 @@ export function parseAssessmentCatalog(doc: unknown): Catalog {
         .map((i) => `${i.path.join(".")}: ${i.message}`)
         .join("; ")}`,
     );
+  const choice = (c: { key: string; name: string; aliases: string[]; payor_names: string[] }) => ({
+    key: c.key,
+    name: c.name,
+    aliases: c.aliases,
+    payorNames: c.payor_names,
+  });
   const types: CatalogType[] = r.data.assessments.map((t) => ({
     key: t.key,
     name: t.name,
     aliases: t.aliases,
+    payorNames: t.payor_names,
     group: t.group,
     entry: t.entry,
-    forms: t.forms,
-    respondents: t.respondents,
+    forms: t.forms.map(choice),
+    respondents: t.respondents.map(choice),
     modules: t.modules,
     scales: t.scales,
     summary: t.summary,
     summaryTotal: t.summary_total,
     customScales: t.custom_scales,
     groupByForm: t.group_by_form,
+    suggestGoals: t.suggest_goals,
   }));
   const p = problems(types);
   if (p.length) throw new CatalogError(`Assessment catalog is invalid: ${p.join("; ")}`);
@@ -248,4 +279,30 @@ export function customScaleKey(name: string): string {
     .replace(/^_+|_+$/g, "")
     .slice(0, 40);
   return `${CUSTOM_PREFIX}${slug || "scale"}`;
+}
+
+/** A catalog tool (and, for a form-specific name, its form) that a payor rule's tool name means. */
+export type ToolMatch = { typeKey: string; form: string | null };
+
+/**
+ * What a payor rule's tool name ("Vineland-3", "PDDBI_parent", "PSI (age 0-12) or SIPA (age
+ * 11-19)") means in the catalog, from the catalog's payor_names. The whole name is tried first,
+ * then each "or" alternative. Null when no part of it is a catalog tool: callers fall back to
+ * attachment titles. Parenthetical notes (age bands) are dropped.
+ */
+export function toolMatches(catalog: Catalog, toolName: string): ToolMatch[] | null {
+  const index = new Map<string, ToolMatch>();
+  for (const t of catalog.types) {
+    for (const n of t.payorNames) index.set(normalizeLabel(n), { typeKey: t.key, form: null });
+    for (const f of t.forms)
+      for (const n of f.payorNames) index.set(normalizeLabel(n), { typeKey: t.key, form: f.key });
+  }
+  const plain = normalizeLabel(toolName.replace(/\(.*?\)/g, " "));
+  const whole = index.get(plain);
+  if (whole) return [whole];
+  const parts = plain
+    .split(/\s+or\s+/)
+    .map((p) => index.get(p.trim()))
+    .filter((m): m is ToolMatch => !!m);
+  return parts.length ? parts : null;
 }

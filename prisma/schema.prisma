@@ -751,6 +751,9 @@ model Plan {
   status           String    @default("draft") // draft | finalized
   /// [{key, name, version}] payor documents this plan was written against.
   payorDocVersions Json      @default("[]")
+  /// Assessments (assessment.id) the BCBA selected for this plan. VB-MAPP administrations are
+  /// always used (verified ones), so they are not listed here.
+  assessmentIds    String[]  @default([]) @db.Uuid
   createdById      String?   @db.Uuid
   createdAt        DateTime  @default(now())
   finalizedAt      DateTime?
@@ -780,6 +783,8 @@ model PlanSection {
   items        Json      @default("{}")
   approvedById String?   @db.Uuid
   approvedAt   DateTime?
+  /// Why this section needs a redraft (e.g. the plan's assessments changed); null when it does not.
+  redraftReason String?
   updatedAt    DateTime  @updatedAt
 
   plan      Plan                  @relation(fields: [planId], references: [id])

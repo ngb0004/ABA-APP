@@ -23,6 +23,17 @@ export type EvalContext = {
   authorization: { kind: "initial" | "reauth"; startDate: Day; endDate: Day; units: ApprovedUnit[] } | null;
   sessions: (SupervisionSession & { startMinute?: number })[];
   attachments: { kind: string; title: string; documentDate: Day | null }[];
+  /**
+   * Confirmed assessments and verified VB-MAPP administrations: catalog type, form, the BCBA's
+   * name for an "other" assessment, the date given, and a display name. No scores, no notes.
+   */
+  assessments: {
+    typeKey: string;
+    form: string | null;
+    customName: string | null;
+    administeredOn: Day;
+    name: string;
+  }[];
   plan: {
     type: "initial" | "reauth";
     sections: { key: string; state: string; hasContent: boolean }[];

@@ -39,6 +39,11 @@ export class MockProvider implements LlmProvider {
     ];
     const total = pick("score.total.");
     if (total) sentences.push(`The most recent recomputed assessment total is {{${total}}}.`);
+    const assessment = keys.filter((k) => /^assessment\.[a-z0-9_]+\.\d+\.name$/.test(k)).at(-1);
+    if (assessment)
+      sentences.push(
+        `Results of {{${assessment}}} given on {{${assessment.replace(/\.name$/, ".date")}}} are summarized.`,
+      );
     const hours = pick("auth.97153.hours_per_week");
     if (hours) sentences.push(`Direct treatment is authorized at {{${hours}}} per week.`);
     const goal = keys.find((k) => /^goal\.\d+\.current_pct$/.test(k));

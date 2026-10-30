@@ -4,6 +4,7 @@
  * rule.params. An unverified rule can only produce "warn", never "fail"
  * (its would-be status is kept in rawStatus).
  */
+import { assessmentCatalog, normalizeLabel, toolMatches, type Catalog } from "../assessments/catalog";
 import { addDays, addMonths, diffDays, type Day } from "../dates";
 import { supervisionByMonth, DIRECT_CODE, SUPERVISION_CODE } from "../supervision";
 import { authWeeks } from "../utilization";
@@ -20,7 +21,7 @@ import {
   type ScopeFinding,
 } from "./types";
 
-type Outcome = { status: RuleStatus; message: string; evidence?: string[] };
+type Outcome = { status: RuleStatus; message: string; evidence?: string[]; schedule?: string[] };
 type Evaluator = (p: Record<string, unknown>, ctx: EvalContext, rule: Rule) => Outcome;
 
 const num = (v: unknown): number | undefined => (typeof v === "number" ? v : undefined);
@@ -122,6 +123,27 @@ function derivedEvent(event: string, p: Record<string, unknown>, ctx: EvalContex
   return undefined;
 }
 
+/**
+ * The newest confirmed assessment a rule's tool name means, through the catalog's payor_names
+ * (a form-specific name needs that form). An "other" assessment counts when the BCBA's name for
+ * it is the tool name. Undefined when none is on record.
+ */
+export function latestAssessmentFor(
+  tool: string,
+  ctx: EvalContext,
+  catalog: Catalog = assessmentCatalog(),
+): EvalContext["assessments"][number] | undefined {
+  const matches = toolMatches(catalog, tool) ?? [];
+  const wanted = tool.split(/\s+or\s+/i).map((x) => normalizeLabel(x.replace(/\(.*?\)/g, " ")));
+  return [...ctx.assessments]
+    .filter(
+      (a) =>
+        matches.some((m) => m.typeKey === a.typeKey && (m.form === null || m.form === a.form)) ||
+        (a.typeKey === "other" && !!a.customName && wanted.includes(normalizeLabel(a.customName))),
+    )
+    .sort((a, b) => b.administeredOn.localeCompare(a.administeredOn))[0];
+}
+
 function dailyHours(ctx: EvalContext, code?: string) {
   const byDay = new Map<Day, number>();
   for (const s of ctx.sessions) {
@@ -172,16 +194,23 @@ const EVALUATORS: Record<RuleType, Evaluator> = {
     const options = Array.isArray(p.options) ? (p.options as string[]) : [];
     if (options.length) {
       // Whole words only: "STAT" is a tool, "statement" is not.
-      const match = ctx.attachments.find((a) =>
+      const attached = ctx.attachments.find((a) =>
         options.some((o) => ` ${norm(a.title)} `.includes(` ${norm(o)} `)),
       );
+      // A confirmed assessment of an acceptable tool counts as well as an attachment.
+      const given = attached ? undefined : options.map((o) => latestAssessmentFor(o, ctx)).find(Boolean);
+      const match = attached
+        ? { title: attached.title, how: `attachment "${attached.title}"` }
+        : given
+          ? { title: given.name, how: `assessment ${given.name}, given ${given.administeredOn}` }
+          : undefined;
       const dxNeeded = /\bdiagnostic evaluation\b/.test(norm(doc));
       const dx = dxNeeded ? ctx.attachments.find((a) => a.kind === "diagnostic_evaluation") : undefined;
       if (match && (!dxNeeded || dx))
         return {
           status: "pass",
           message: `${doc}: present`,
-          evidence: [`attachment "${match.title}"`, ...(dx ? [`attachment "${dx.title}"`] : [])],
+          evidence: [match.how, ...(dx ? [`attachment "${dx.title}"`] : [])],
         };
       return {
         status: "warn",
@@ -581,10 +610,9 @@ const EVALUATORS: Record<RuleType, Evaluator> = {
       return guidance(p, "Outcome measures");
     const list = (k: string) => (Array.isArray(p[k]) ? (p[k] as string[]) : []);
     // Each measure is due within its cadence; a measure listed under several cadences takes the shortest.
-    const due = new Map<string, { cutoff: Day; cadence: string }>();
+    const due = new Map<string, { months: number; cadence: string }>();
     if (ctx.plan?.type === "initial" || ctx.authorization?.kind === "initial")
-      for (const m of list("initial"))
-        due.set(m, { cutoff: addMonths(ctx.asOf, -6), cadence: "at baseline" });
+      for (const m of list("initial")) due.set(m, { months: 6, cadence: "at baseline" });
     else
       for (const [k, months, cadence] of [
         ["every_2_years", 24, "every two years"],
@@ -594,32 +622,50 @@ const EVALUATORS: Record<RuleType, Evaluator> = {
         for (const m of list(k)) {
           // Free-text cadence entries ("two_year_review") are not measures to find in attachments.
           if (/review/i.test(m)) continue;
-          due.set(m, { cutoff: addMonths(ctx.asOf, -months), cadence });
+          due.set(m, { months, cadence });
         }
     if (!due.size) return NA("No outcome measures due");
     const missing: string[] = [];
     const evidence: string[] = [];
-    for (const [m, { cutoff, cadence }] of due) {
+    const schedule: string[] = [];
+    for (const [m, { months, cadence }] of due) {
+      // Confirmed assessments first (catalog payor names); attachments are the fallback.
+      const a = latestAssessmentFor(m, ctx);
       const alts = m.split(/\s+or\s+/i).map((x) => norm(x.replace(/_/g, " ").replace(/\(.*?\)/g, "")));
-      const hit = ctx.attachments.find(
-        (a) =>
-          a.kind === "outcome_measure" &&
-          alts.some(
-            (alt) =>
-              norm(a.title).includes(alt.split(" ")[0]!) &&
-              (!alt.includes("parent") || norm(a.title).includes("parent")) &&
-              (!alt.includes("teacher") || /teacher|bcba/.test(norm(a.title))),
-          ) &&
-          (a.documentDate ?? "") >= cutoff,
-      );
-      if (hit) evidence.push(`${m}: ${hit.title} (${hit.documentDate})`);
-      else missing.push(`${m} (${cadence})`);
+      const att = ctx.attachments
+        .filter(
+          (x) =>
+            x.kind === "outcome_measure" &&
+            !!x.documentDate &&
+            alts.some(
+              (alt) =>
+                norm(x.title).includes(alt.split(" ")[0]!) &&
+                (!alt.includes("parent") || norm(x.title).includes("parent")) &&
+                (!alt.includes("teacher") || /teacher|bcba/.test(norm(x.title))),
+            ),
+        )
+        .sort((x, y) => y.documentDate!.localeCompare(x.documentDate!))[0];
+      const given = [
+        a && { date: a.administeredOn, how: `assessment ${a.name}` },
+        att && { date: att.documentDate!, how: `attachment "${att.title}"` },
+      ].filter((x): x is { date: Day; how: string } => !!x);
+      const dueBy = (d: Day) => addMonths(d, months);
+      // Current while its next due date has not passed.
+      const current = given.find((g) => dueBy(g.date) >= ctx.asOf);
+      const newest = [...given].sort((x, y) => y.date.localeCompare(x.date))[0];
+      const shown = current ?? newest;
+      if (shown) {
+        schedule.push(`${m} last given ${shown.date}: due by ${dueBy(shown.date)}`);
+        evidence.push(`${m}: ${shown.how} (${shown.date}), due ${cadence}`);
+      }
+      if (!current)
+        missing.push(newest ? `${m} (${cadence}; last given ${newest.date})` : `${m} (${cadence})`);
     }
     if (p.full_publisher_report_required === true)
       evidence.push("Full publisher report required for each measure");
     return missing.length
-      ? { status: "fail", message: `Outcome measures due: ${missing.join(", ")}`, evidence }
-      : { status: "pass", message: "Outcome measures current", evidence };
+      ? { status: "fail", message: `Outcome measures due: ${missing.join(", ")}`, evidence, schedule }
+      : { status: "pass", message: "Outcome measures current", evidence, schedule };
   },
 
   staff_credential(p, ctx) {
@@ -802,7 +848,14 @@ export function evaluateRule(rule: Rule, ctx: EvalContext): RuleResult {
     }
   }
   if (rule.notes) evidence.push(`Note: ${rule.notes}`);
-  return { rule, status, rawStatus: out.status, message: out.message, evidence };
+  return {
+    rule,
+    status,
+    rawStatus: out.status,
+    message: out.message,
+    evidence,
+    ...(out.schedule?.length ? { schedule: out.schedule } : {}),
+  };
 }
 
 export function evaluateRules(rules: Rule[], ctx: EvalContext): RuleResult[] {

@@ -127,6 +127,11 @@ export default async function PacketPage({ params }: { params: Promise<{ id: str
                   </td>
                   <td data-label="">
                     {i.label}
+                    {i.notes?.map((n) => (
+                      <div key={n} className="muted" data-testid="checklist-note">
+                        {n}
+                      </div>
+                    ))}
                     {i.action && <div className="muted">Suggested action: {i.action}</div>}
                   </td>
                   <td className="muted" data-label="Source">

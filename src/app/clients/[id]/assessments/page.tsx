@@ -94,7 +94,7 @@ export default async function AssessmentsPage({ params }: { params: Promise<{ id
               const details = i.scores.filter((s) => !i.summary.some((x) => x.key === s.key));
               const draft = i.status === "draft";
               return (
-                <div key={i.id} className="list-row" data-testid="assessment-row">
+                <div key={i.id} id={`assessment-${i.id}`} className="list-row" data-testid="assessment-row">
                   <div>
                     <span className={`badge ${draft ? "draft" : "ok"}`}>{draft ? "draft" : "confirmed"}</span>{" "}
                     {i.href ? (

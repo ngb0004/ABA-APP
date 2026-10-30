@@ -35,6 +35,15 @@ export function evalContextFor(
     },
     sessions: c.sessions.map((s) => ({ ...s })),
     attachments: c.attachments.map((a) => ({ kind: a.kind, title: a.title, documentDate: a.documentDate })),
+    assessments: c.assessments
+      .filter((a) => a.status === "confirmed")
+      .map((a) => ({
+        typeKey: a.typeKey,
+        form: a.form ?? null,
+        customName: null,
+        administeredOn: a.administeredOn,
+        name: a.typeKey,
+      })),
     plan,
     offices: (sampleOrg.settings.offices as { state: string; address: string }[]) ?? [],
     packetSubmitted: false,

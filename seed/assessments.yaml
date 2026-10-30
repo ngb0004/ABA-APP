@@ -18,6 +18,13 @@
 #   aliases (on a type, form, respondent, or scale): other ways the NAME is written in score
 #     reports and spreadsheets, for file imports (abbreviations, shortened names). Names only.
 #   group_by_form: repeats are compared per form (e.g., parent vs teacher)
+#   payor_names (on a type or form): how payor rules name this tool or form (outcome measure
+#     schedules, acceptable tools), e.g. "Vineland-3" or "PDDBI_parent". A rule entry such as
+#     "PSI or SIPA" is matched whole first, then each alternative. Unlisted names fall back to
+#     attachment titles.
+#   suggest_goals: low-scoring areas of the latest confirmed administration suggest goals
+#   goal_domain (on a scale): the goal bank domain number (docs/reference/GOAL_BANK.md) whose
+#     templates fit this area; areas without one show as "no template yet"
 # Open questions about these lists: docs/QUESTIONS_FOR_BCBA.md (Assessments).
 
 version: 1
@@ -27,6 +34,7 @@ assessments:
     name: VB-MAPP
     group: skills
     entry: vbmapp_import
+    payor_names: [VB-MAPP]
     scales:
       - { key: total, name: Milestones total, kind: raw, min: 0, max: 170 }
       - { key: level_1, name: Level 1, kind: raw, min: 0, max: 45, parent: total }
@@ -38,6 +46,8 @@ assessments:
     name: ABLLS-R
     aliases: [ABLLS]
     group: skills
+    payor_names: [ABLLS-R, ABLLS]
+    suggest_goals: true
     # Scored per skill area as a score of the possible points. The BCBA enters "possible" for
     # each area; item counts are not hard-coded here.
     scales:
@@ -47,28 +57,28 @@ assessments:
           kind: score_of_possible,
           aliases: [Cooperation],
         }
-      - { key: visual_performance, name: Visual Performance, kind: score_of_possible }
-      - { key: receptive_language, name: Receptive Language, kind: score_of_possible }
-      - { key: imitation, name: Imitation, kind: score_of_possible }
-      - { key: vocal_imitation, name: Vocal Imitation, kind: score_of_possible }
-      - { key: requests, name: Requests, kind: score_of_possible }
-      - { key: labeling, name: Labeling, kind: score_of_possible }
-      - { key: intraverbals, name: Intraverbals, kind: score_of_possible }
+      - { key: visual_performance, name: Visual Performance, kind: score_of_possible, goal_domain: 7 }
+      - { key: receptive_language, name: Receptive Language, kind: score_of_possible, goal_domain: 3 }
+      - { key: imitation, name: Imitation, kind: score_of_possible, goal_domain: 6 }
+      - { key: vocal_imitation, name: Vocal Imitation, kind: score_of_possible, goal_domain: 5 }
+      - { key: requests, name: Requests, kind: score_of_possible, goal_domain: 1 }
+      - { key: labeling, name: Labeling, kind: score_of_possible, goal_domain: 2 }
+      - { key: intraverbals, name: Intraverbals, kind: score_of_possible, goal_domain: 4 }
       - { key: spontaneous_vocalizations, name: Spontaneous Vocalizations, kind: score_of_possible }
       - { key: syntax_grammar, name: Syntax and Grammar, kind: score_of_possible }
-      - { key: play_leisure, name: Play and Leisure, kind: score_of_possible }
-      - { key: social_interaction, name: Social Interaction, kind: score_of_possible }
-      - { key: group_instruction, name: Group Instruction, kind: score_of_possible }
-      - { key: classroom_routines, name: Classroom Routines, kind: score_of_possible }
+      - { key: play_leisure, name: Play and Leisure, kind: score_of_possible, goal_domain: 8 }
+      - { key: social_interaction, name: Social Interaction, kind: score_of_possible, goal_domain: 9 }
+      - { key: group_instruction, name: Group Instruction, kind: score_of_possible, goal_domain: 10 }
+      - { key: classroom_routines, name: Classroom Routines, kind: score_of_possible, goal_domain: 10 }
       - { key: generalized_responding, name: Generalized Responding, kind: score_of_possible }
-      - { key: reading, name: Reading, kind: score_of_possible }
-      - { key: math, name: Math, kind: score_of_possible }
-      - { key: writing, name: Writing, kind: score_of_possible }
-      - { key: spelling, name: Spelling, kind: score_of_possible }
-      - { key: dressing, name: Dressing, kind: score_of_possible }
-      - { key: eating, name: Eating, kind: score_of_possible }
-      - { key: grooming, name: Grooming, kind: score_of_possible }
-      - { key: toileting, name: Toileting, kind: score_of_possible }
+      - { key: reading, name: Reading, kind: score_of_possible, goal_domain: 14 }
+      - { key: math, name: Math, kind: score_of_possible, goal_domain: 14 }
+      - { key: writing, name: Writing, kind: score_of_possible, goal_domain: 14 }
+      - { key: spelling, name: Spelling, kind: score_of_possible, goal_domain: 14 }
+      - { key: dressing, name: Dressing, kind: score_of_possible, goal_domain: 12 }
+      - { key: eating, name: Eating, kind: score_of_possible, goal_domain: 12 }
+      - { key: grooming, name: Grooming, kind: score_of_possible, goal_domain: 12 }
+      - { key: toileting, name: Toileting, kind: score_of_possible, goal_domain: 11 }
       - { key: gross_motor, name: Gross Motor, kind: score_of_possible }
       - { key: fine_motor, name: Fine Motor, kind: score_of_possible }
     summary_total: true
@@ -76,6 +86,8 @@ assessments:
   - key: afls
     name: AFLS
     group: skills
+    payor_names: [AFLS]
+    suggest_goals: true
     custom_scales: true
     summary_total: true
     # Only the Basic Living Skills areas are listed; the other modules start empty and the BCBA
@@ -84,16 +96,16 @@ assessments:
       - key: basic_living
         name: Basic Living Skills
         scales:
-          - { key: self_management, name: Self-Management, kind: score_of_possible }
+          - { key: self_management, name: Self-Management, kind: score_of_possible, goal_domain: 15 }
           - { key: basic_communication, name: Basic Communication, kind: score_of_possible }
-          - { key: dressing, name: Dressing, kind: score_of_possible }
-          - { key: eating, name: Eating, kind: score_of_possible }
-          - { key: grooming, name: Grooming, kind: score_of_possible }
-          - { key: bathing, name: Bathing, kind: score_of_possible }
-          - { key: toileting, name: Toileting, kind: score_of_possible }
+          - { key: dressing, name: Dressing, kind: score_of_possible, goal_domain: 12 }
+          - { key: eating, name: Eating, kind: score_of_possible, goal_domain: 12 }
+          - { key: grooming, name: Grooming, kind: score_of_possible, goal_domain: 12 }
+          - { key: bathing, name: Bathing, kind: score_of_possible, goal_domain: 12 }
+          - { key: toileting, name: Toileting, kind: score_of_possible, goal_domain: 11 }
           - { key: health, name: Health, kind: score_of_possible }
-          - { key: safety, name: Safety, kind: score_of_possible }
-          - { key: nighttime_routines, name: Nighttime Routines, kind: score_of_possible }
+          - { key: safety, name: Safety, kind: score_of_possible, goal_domain: 13 }
+          - { key: nighttime_routines, name: Nighttime Routines, kind: score_of_possible, goal_domain: 12 }
       - { key: home, name: Home Skills, scales: [] }
       - { key: community, name: Community Participation Skills, scales: [] }
       - { key: school, name: School Skills, scales: [] }
@@ -104,6 +116,7 @@ assessments:
     name: Vineland-3
     aliases: [Vineland, Vineland-III, Vineland Adaptive Behavior Scales]
     group: standardized
+    payor_names: [Vineland-3, Vineland]
     forms:
       - { key: comprehensive_interview, name: Comprehensive Interview Form }
       - { key: domain_interview, name: Domain-Level Interview Form }
@@ -203,6 +216,7 @@ assessments:
     name: SRS-2
     aliases: [SRS, Social Responsiveness Scale]
     group: standardized
+    payor_names: [SRS-2, SRS]
     forms:
       - { key: preschool, name: Preschool Form }
       - { key: school_age, name: School-Age Form }
@@ -259,11 +273,13 @@ assessments:
     name: PDDBI
     aliases: [PDD Behavior Inventory]
     group: standardized
+    payor_names: [PDDBI]
     custom_scales: true
     group_by_form: true
     forms:
-      - { key: parent, name: Parent Form }
-      - { key: teacher, name: Teacher Form }
+      - { key: parent, name: Parent Form, payor_names: [PDDBI_parent] }
+      # The teacher form, completed by a teacher or the BCBA.
+      - { key: teacher, name: Teacher Form, payor_names: [PDDBI_teacher, PDDBI_teacher_or_BCBA] }
     respondents: *respondents
     # Kept minimal on purpose; the BCBA adds any other domain T-scores reported.
     scales:
@@ -284,6 +300,7 @@ assessments:
     name: PSI-4
     aliases: [PSI, Parenting Stress Index]
     group: standardized
+    payor_names: [PSI-4, PSI]
     custom_scales: true
     forms:
       - { key: full_length, name: Full-Length Form }
@@ -300,6 +317,7 @@ assessments:
     name: SIPA
     aliases: [Stress Index for Parents of Adolescents]
     group: standardized
+    payor_names: [SIPA]
     custom_scales: true
     respondents: *respondents
     scales:

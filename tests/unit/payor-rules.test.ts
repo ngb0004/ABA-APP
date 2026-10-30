@@ -206,6 +206,8 @@ describe("rule types (evaluated as verified)", () => {
     expect(r.message).toMatch(/PDDBI_parent/);
     expect(r.message).toMatch(/PDDBI_teacher_or_BCBA/);
     expect(r.message).not.toMatch(/PSI/);
+    // From the confirmed assessments: the Vineland-3 given about two hundred days ago is due within the year.
+    expect(r.schedule).toContain("Vineland-3 last given 2026-04-12: due by 2027-04-12");
   });
   it("staff_credential: technicians must be RBTs (TRICARE West checklist)", () => {
     const r = verified(find("tricare_west", "staff_credential", (x) => x.params.role === "technician"));
@@ -472,8 +474,10 @@ describe("review fixes: rules the app cannot fully decide warn instead of failin
       ),
     );
     const om = (title: string, date: string) => att("outcome_measure", title, date);
+    // Attachments only: confirmed assessments are covered in plan-assessments.test.ts.
     const ctx = (vinelandDate: string) => ({
       ...ctx3,
+      assessments: [],
       attachments: [
         om("PDDBI parent", "2026-09-01"),
         om("PSI", "2026-09-01"),
@@ -484,7 +488,7 @@ describe("review fixes: rules the app cannot fully decide warn instead of failin
     expect(evaluateRule(r, ctx("2026-03-01")).status).toBe("pass");
     const late = evaluateRule(r, ctx("2025-04-01"));
     expect(late.status).toBe("fail");
-    expect(late.message).toMatch(/Vineland-3 \(every year\)/);
+    expect(late.message).toMatch(/Vineland-3 \(every year; last given 2025-04-01\)/);
   });
 
   it("plan content that applies only to reauths or school services is gated", () => {

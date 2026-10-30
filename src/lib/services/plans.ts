@@ -4,6 +4,16 @@
  */
 import type { Prisma } from "@prisma/client";
 import { draftWithFirewall } from "../ai";
+import { assessmentCatalog } from "../assessments/catalog";
+import {
+  assessmentWindowStart,
+  defaultAssessmentSelection,
+  redraftMarks,
+  REDRAFT_REASON,
+  sameSelection,
+  seriesKey,
+} from "../assessments/plan";
+import { assessmentItem, newestFirst, vbmappItem } from "../assessments/view";
 import { audit, sha256 } from "../audit";
 import { withOrg, type OrgCtx, type Tx } from "../db";
 import { toDay, type Day } from "../dates";
@@ -105,6 +115,16 @@ export async function createPlan(ctx: OrgCtx, clientId: string, type: "initial" 
     });
     const primary = client.payors.find((p) => p.priority === "primary");
     const rules = primary ? await loadApplicableRules(tx, primary) : [];
+    // Default assessments: confirmed ones from the last twelve months (or the authorization period).
+    const auth = client.authorizations[0];
+    const assessments = await tx.assessment.findMany({
+      where: { clientId },
+      select: { id: true, status: true, administeredOn: true },
+    });
+    const assessmentIds = defaultAssessmentSelection(
+      assessments,
+      assessmentWindowStart(toDay(new Date()), auth ? toDay(auth.startDate) : null),
+    );
     // Record the payor document versions this plan is written against.
     const docs = new Map<string, { key: string; name: string; version: string }>();
     for (const r of rules)
@@ -122,6 +142,7 @@ export async function createPlan(ctx: OrgCtx, clientId: string, type: "initial" 
         type,
         createdById: ctx.userId,
         payorDocVersions: [...docs.values()],
+        assessmentIds,
       },
     });
     await tx.planSection.createMany({
@@ -135,7 +156,12 @@ export async function createPlan(ctx: OrgCtx, clientId: string, type: "initial" 
     });
     // Attach the client's goals that are not yet on a plan.
     await tx.goal.updateMany({ where: { clientId, planId: null }, data: { planId: plan.id } });
-    await audit(tx, { action: "plan:create", entityType: "Plan", entityId: plan.id, meta: { type } });
+    await audit(tx, {
+      action: "plan:create",
+      entityType: "Plan",
+      entityId: plan.id,
+      meta: { type, assessments: assessmentIds.length },
+    });
     return plan;
   });
 }
@@ -204,8 +230,21 @@ export async function planView(ctx: OrgCtx, planId: string, asOf: Day) {
         )
       : null;
     const blockers = exportBlockers(checks);
+    const catalog = assessmentCatalog();
+    const assessmentOptions = newestFirst([
+      ...b.assessments.map((a) => assessmentItem(catalog, b.client.id, a)),
+      ...b.administrations.map((a) => vbmappItem(catalog, b.client.id, a)),
+    ]).map((i) => ({
+      id: i.id,
+      typeName: [i.typeName, i.moduleName, i.formName].filter(Boolean).join(" · "),
+      administeredOn: i.administeredOn,
+      status: i.status,
+      vbmapp: i.source === "vbmapp_import",
+      selected: i.source === "vbmapp_import" || b.plan.assessmentIds.includes(i.id),
+    }));
     return {
       bundle: b,
+      assessmentOptions,
       sourced: sourced.values(),
       sections,
       goals,
@@ -277,7 +316,14 @@ export async function draftSection(ctx: OrgCtx, planId: string, key: string, asO
       );
     await tx.planSection.update({
       where: { id: prep.sectionId },
-      data: { aiDraft: text, content: text, state: "draft", approvedAt: null, approvedById: null },
+      data: {
+        aiDraft: text,
+        content: text,
+        state: "draft",
+        approvedAt: null,
+        approvedById: null,
+        redraftReason: null,
+      },
     });
     await tx.planSectionRevision.create({
       data: {
@@ -316,7 +362,8 @@ export async function editSection(ctx: OrgCtx, planId: string, key: string, cont
       );
     await tx.planSection.update({
       where: { id: section.id },
-      data: { content: v.normalized, state: "edited" },
+      // The BCBA rewrote the text, so a pending redraft flag is answered.
+      data: { content: v.normalized, state: "edited", redraftReason: null },
     });
     await tx.planSectionRevision.create({
       data: {
@@ -363,6 +410,8 @@ export async function approveSection(ctx: OrgCtx, planId: string, key: string, a
     if (section.state === "approved") return section;
     assertOpen(section.state, "approving");
     const problems: string[] = [];
+    if (section.redraftReason)
+      problems.push(`${section.redraftReason} Redraft it with AI or edit it before approving`);
     if (!section.content.trim()) problems.push("Section has no content");
     const v = validateBcbaText(section.content, buildSourcedContext(b, asOf));
     if (!v.ok) problems.push(`Invalid value references: ${v.errors.map((e) => e.detail).join(", ")}`);
@@ -481,6 +530,114 @@ export async function reopenSection(ctx: OrgCtx, planId: string, key: string) {
     });
     await audit(tx, { action: "section:reopen", entityType: "PlanSection", entityId: section.id });
   });
+}
+
+// ---------------------------------------------------------------- assessments used
+
+/**
+ * The assessments this plan uses (assessment ids; verified VB-MAPP administrations are always
+ * used). A change flags each section that drew on assessments for a redraft and reopens it if it
+ * was approved. Nothing is approved automatically.
+ */
+export async function setPlanAssessments(ctx: OrgCtx, planId: string, ids: string[]) {
+  requirePermission(ctx.role, "section:edit");
+  return withOrg(ctx, async (tx) => {
+    const plan = await tx.plan.findUnique({ where: { id: planId }, include: { sections: true } });
+    if (!plan) throw new HttpError(404, "Not found");
+    if (plan.status === "finalized")
+      throw new HttpError(409, "This plan is finalized; its assessments can no longer change");
+    const wanted = [...new Set(ids)];
+    const found = await tx.assessment.findMany({
+      where: { id: { in: wanted }, clientId: plan.clientId },
+      select: { id: true, administeredOn: true },
+      orderBy: [{ administeredOn: "asc" }, { id: "asc" }],
+    });
+    if (found.length !== wanted.length) throw new HttpError(422, "Choose assessments of this client");
+    const next = found.map((a) => a.id);
+    if (sameSelection(plan.assessmentIds, next)) return { changed: false, redraft: [] as string[] };
+    await tx.plan.update({ where: { id: planId }, data: { assessmentIds: next } });
+    const marks = await markForRedraft(tx, ctx, plan.sections);
+    await audit(tx, {
+      action: "plan:assessments",
+      entityType: "Plan",
+      entityId: planId,
+      meta: {
+        added: next.filter((x) => !plan.assessmentIds.includes(x)).length,
+        removed: plan.assessmentIds.filter((x) => !next.includes(x)).length,
+        redraft: marks.map((m) => m.key),
+      },
+    });
+    return { changed: true, redraft: marks.map((m) => m.key) };
+  });
+}
+
+/** Flags sections that use assessments for a redraft; approved ones are reopened. */
+export async function markForRedraft(
+  tx: Tx,
+  ctx: OrgCtx,
+  sections: { id: string; key: string; state: string; content: string; aiDraft: string | null }[],
+) {
+  const marks = redraftMarks(sections);
+  for (const m of marks) {
+    const s = sections.find((x) => x.key === m.key)!;
+    await tx.planSection.update({
+      where: { id: s.id },
+      data: {
+        redraftReason: REDRAFT_REASON,
+        state: m.state,
+        ...(m.reopened ? { approvedAt: null, approvedById: null } : {}),
+      },
+    });
+    if (m.reopened) {
+      await tx.planSectionRevision.create({
+        data: { orgId: ctx.orgId, sectionId: s.id, kind: "reopen", content: s.content, userId: ctx.userId },
+      });
+      await audit(tx, {
+        action: "section:reopen",
+        entityType: "PlanSection",
+        entityId: s.id,
+        meta: { reason: "assessments_changed" },
+      });
+    }
+  }
+  return marks;
+}
+
+/**
+ * After an assessment is confirmed: plans that selected it (as a draft) now have its scores, and
+ * a confirmed administration dated before others of its series renumbers their tokens. Either
+ * way, open plans that use the series get their assessment sections flagged for a redraft.
+ */
+export async function afterAssessmentConfirmed(tx: Tx, ctx: OrgCtx, assessmentId: string) {
+  const a = await tx.assessment.findUniqueOrThrow({ where: { id: assessmentId } });
+  const catalog = assessmentCatalog();
+  const series = seriesKey(catalog, a);
+  const sameSeries = (
+    await tx.assessment.findMany({ where: { clientId: a.clientId, typeKey: a.typeKey, status: "confirmed" } })
+  ).filter((x) => seriesKey(catalog, x) === series);
+  const renumbers = sameSeries.some((x) => x.id !== a.id && x.administeredOn > a.administeredOn);
+  const plans = await tx.plan.findMany({
+    where: { clientId: a.clientId, status: { not: "finalized" } },
+    include: { sections: true },
+  });
+  for (const p of plans) {
+    const affected =
+      p.assessmentIds.includes(a.id) || (renumbers && sameSeries.some((x) => p.assessmentIds.includes(x.id)));
+    if (affected) await markForRedraft(tx, ctx, p.sections);
+  }
+}
+
+/** A deleted draft leaves every plan's selection. */
+export async function dropFromPlanSelections(tx: Tx, clientId: string, assessmentId: string) {
+  const plans = await tx.plan.findMany({
+    where: { clientId, assessmentIds: { has: assessmentId } },
+    select: { id: true, assessmentIds: true },
+  });
+  for (const p of plans)
+    await tx.plan.update({
+      where: { id: p.id },
+      data: { assessmentIds: p.assessmentIds.filter((x) => x !== assessmentId) },
+    });
 }
 
 // ---------------------------------------------------------------- goals

@@ -24,6 +24,7 @@ import { dayToDate, toDay } from "../dates";
 import { assertDemoUploadAllowed } from "../demo";
 import { HttpError } from "../log";
 import { requirePermission } from "../permissions";
+import { afterAssessmentConfirmed } from "./plans";
 
 const ChosenType = z.object({
   typeKey: z.string().trim().min(1, "Choose the assessment").max(48),
@@ -280,6 +281,7 @@ export async function confirmAssessmentImport(
       entityId: a.id,
       meta: { typeKey: v.typeKey, source: "import", importId: imp.id },
     });
+    await afterAssessmentConfirmed(tx, ctx, a.id);
     return { assessmentId: a.id, clientId: imp.clientId };
   });
 }

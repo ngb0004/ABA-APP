@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Html } from "@/components/actions";
 import { AuditPanel } from "@/components/audit-panel";
+import { PlanAssessments } from "@/components/plan-assessments";
 import { SectionCard } from "@/components/section-editor";
 import { sectionDone } from "@/lib/plan/sections";
 import { can } from "@/lib/permissions";
@@ -59,6 +60,12 @@ export default async function PlanPage({ params }: { params: Promise<{ id: strin
           </ul>
         </details>
       </div>
+      <PlanAssessments
+        planId={id}
+        clientId={b.client.id}
+        options={v.assessmentOptions}
+        canEdit={can(ctx.role, "section:edit") && b.plan.status !== "finalized"}
+      />
       <div className="row" style={{ marginBottom: 12 }}>
         <Link className="btn" href={`/plans/${id}/packet`}>
           {b.plan.type === "reauth"
@@ -88,6 +95,7 @@ export default async function PlanPage({ params }: { params: Promise<{ id: strin
             bcbaOnly: s.bcbaOnly,
             conditional: s.conditional,
             notApplicableReason: s.notApplicableReason,
+            redraftReason: s.redraftReason,
           }}
           tokens={tokens}
           canDraft={can(ctx.role, "section:draft")}

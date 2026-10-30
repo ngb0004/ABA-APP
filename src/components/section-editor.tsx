@@ -21,6 +21,8 @@ export function SectionCard(props: {
     /** Conditional sections (group, school, telehealth) can be marked not applicable. */
     conditional?: boolean;
     notApplicableReason?: string | null;
+    /** Set when the section needs a redraft (e.g. the plan's assessments changed). */
+    redraftReason?: string | null;
   };
   tokens: { key: string; label: string; display: string }[];
   canDraft: boolean;
@@ -36,8 +38,9 @@ export function SectionCard(props: {
   const [note, setNote] = useState<string | null>(null);
   // A draft just returned, shown until the page refresh brings the saved section.
   const [fresh, setFresh] = useState<{ base: string; content: string; html: string } | null>(null);
+  const showingFresh = !!fresh && fresh.base === s.content && fresh.content !== s.content;
   const shown =
-    fresh && fresh.base === s.content && fresh.content !== s.content
+    fresh && showingFresh
       ? { content: fresh.content, html: fresh.html, state: "draft" }
       : { content: s.content, html: s.html, state: s.state };
   // Optimistic item answers, so a click registers before the refresh lands.
@@ -93,6 +96,11 @@ export function SectionCard(props: {
           {na ? "not applicable" : shown.state}
         </span>
       </h2>
+      {s.redraftReason && !na && !showingFresh && (
+        <div className="alert warn" data-testid={`redraft-${s.key}`}>
+          Needs a redraft. {s.redraftReason} Redraft it with AI or edit it, then approve it.
+        </div>
+      )}
       {na ? (
         <p className="muted" data-testid={`na-${s.key}`}>
           Not applicable to this request{s.notApplicableReason ? `: ${s.notApplicableReason}` : ""}.

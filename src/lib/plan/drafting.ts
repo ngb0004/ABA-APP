@@ -4,6 +4,8 @@
  * to the model's text before it is stored. The single AI module adds the
  * numeric-firewall rules, the privacy guard, and the audit event.
  */
+import { assessmentCatalog } from "../assessments/catalog";
+import { assessmentsForModel, usedAssessments } from "../assessments/plan";
 import type { SourcedContext } from "../firewall";
 import { intakeForAi, safetyFlags, type PseudonymNames } from "../intake/derive";
 import { INTAKE_FIELDS, type IntakeAnswers } from "../intake/schema";
@@ -81,6 +83,11 @@ export function buildDraftPayload(input: {
     payload.staffSafetyFlags = safetyFlags(answers).map(
       (f) => `${f.label}${f.intensity ? ` (${f.intensity})` : ""}`,
     );
+  if (def.context?.assessments) {
+    // Names, tokens, and domain names of the selected confirmed assessments. Never notes or files.
+    const used = usedAssessments(assessmentCatalog(), b.client.id, b.assessments, b.plan.assessmentIds);
+    payload.assessments = assessmentsForModel(used, sourced.values());
+  }
   if (def.context?.isolatedScores) {
     const flags = b.administrations.flatMap((a) =>
       (a.flags as { code: string; level?: number; domain?: string }[])

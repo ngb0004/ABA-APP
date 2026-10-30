@@ -212,3 +212,77 @@ test("assessments: import score files (image and PDF samples), check every numbe
   await expect(row.getByTestId("assessment-summary")).toContainText("Adaptive Behavior Composite 71");
   await expect(page.getByTestId("pending-imports")).toHaveCount(0);
 });
+
+test("assessments in a plan: choose them, the section is flagged for a redraft, and Charlie's Vineland due status", async ({
+  page,
+}) => {
+  await login(page, "bcba@sample-practice.test");
+  const c3 = await openClient(page, "Charlie Testchild");
+  await page.getByTestId("new-reauth-plan").click();
+  await page.waitForURL(/\/plans\//);
+  const planId = page.url().split("/plans/")[1]!;
+
+  // A collapsed checklist: recent confirmed assessments are chosen, the older Vineland-3 is not.
+  const panel = page.getByTestId("plan-assessments");
+  await panel.locator("summary").click();
+  const rows = panel.getByTestId("plan-assessment");
+  const vineland = rows.filter({ hasText: /^Vineland-3/ });
+  await expect(vineland).toHaveCount(2);
+  await expect(vineland.nth(0).getByRole("checkbox")).toBeChecked();
+  await expect(vineland.nth(1).getByRole("checkbox")).not.toBeChecked();
+  const vbmapp = rows.filter({ hasText: "VB-MAPP" }).first().getByRole("checkbox");
+  await expect(vbmapp).toBeChecked();
+  await expect(vbmapp).toBeDisabled();
+
+  // Draft the assessment section: it names the chosen assessments by token, with source links.
+  const section = page.getByTestId("section-assessment_results");
+  await section.getByTestId("draft-assessment_results").click();
+  await expect(section.getByTestId("state-assessment_results")).toHaveText("draft");
+  const named = section.locator('a.sourced[data-key^="assessment."]').first();
+  await expect(named).toBeVisible();
+  await expect(named).toHaveAttribute("href", new RegExp(`/clients/${c3}/assessments#assessment-`));
+
+  // Adding the older Vineland-3 flags the section for a redraft. Nothing is approved for the BCBA.
+  await vineland.nth(1).getByRole("checkbox").check();
+  await expect(panel.getByTestId("plan-assessments-note")).toHaveText("Saved. One section needs a redraft.");
+  await expect(section.getByTestId("redraft-assessment_results")).toContainText("Needs a redraft");
+  await expect(vineland.nth(1).getByRole("checkbox")).toBeChecked();
+  await page.reload();
+  await page.getByTestId("plan-assessments").locator("summary").click();
+  await expect(
+    page
+      .getByTestId("plan-assessment")
+      .filter({ hasText: /^Vineland-3/ })
+      .nth(1)
+      .getByRole("checkbox"),
+  ).toBeChecked();
+  await expect(page.getByTestId("audit-panel")).toContainText("need a redraft");
+
+  // 640px wide: the checklist fits.
+  await page.setViewportSize({ width: 640, height: 900 });
+  await noSidewaysScroll(page, "plan assessments");
+  await page.setViewportSize({ width: 1280, height: 900 });
+
+  // Redrafting clears the flag.
+  await section.getByTestId("draft-assessment_results").click();
+  await expect(section.getByTestId("redraft-assessment_results")).toHaveCount(0);
+
+  // Requirements: TRICARE outcome measures come from the confirmed assessments.
+  await page.goto(`/clients/${c3}/requirements`);
+  await expect(
+    page
+      .getByTestId("requirements-insurance")
+      .first()
+      .getByTestId("requirement-schedule")
+      .filter({ hasText: /^Vineland-3 last given \d{4}-\d{2}-\d{2}: due by \d{4}-\d{2}-\d{2}$/ })
+      .first(),
+  ).toBeVisible();
+  // The packet checklist shows the same line.
+  await page.goto(`/plans/${planId}/packet`);
+  await expect(
+    page
+      .getByTestId("checklist-note")
+      .filter({ hasText: /^Vineland-3 last given .+: due by / })
+      .first(),
+  ).toBeVisible();
+});

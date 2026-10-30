@@ -76,6 +76,8 @@ export type SectionDef = {
     goalFigures?: boolean;
     safetyFlags?: boolean;
     isolatedScores?: boolean;
+    /** The assessments selected for the plan (names, tokens, and domain names only). */
+    assessments?: boolean;
   };
   /** Intake answers this section collects (defaults to its own key). */
   intakeFrom?: SectionKey[];
@@ -153,15 +155,15 @@ export const SECTIONS: SectionDef[] = [
     key: "assessment_results",
     title: "Standardized Assessment Procedures and Results",
     guidance:
-      "Summarize the VB-MAPP profile and any other standardized results on file, level by level, and why targets were prioritized. Refer to scores only by token. Read each score's facts: a level whose facts say it is mastered is described as mastered; at a level the facts call emerging, do not call any domain a strength or a weakness. Rank domains only where the facts say lowest or highest. This is the only section that reports the VB-MAPP scores in detail. If the assessor or respondent is not provided, write a bracketed note for the BCBA. If the importer flagged isolated scores, add a bracketed note asking the BCBA to verify them against protocol.",
-    valuePrefixes: ["vbmapp.", "score.", "dx.eval_date"],
+      "Summarize the VB-MAPP profile, level by level, and each assessment listed in assessments (the ones the BCBA selected for this plan): name it, its date, form, and respondent by token, and its main scores by token, then why targets were prioritized. Name every assessment only by its name token. Refer to scores only by token; a score's facts say which areas or domains are lowest or highest and whether it is higher or lower than before. Higher is not always better: on symptom and stress measures (T-scores and stress percentiles) a higher score means more concern, so describe the direction without calling it progress unless the facts say so. Read each score's facts: a level whose facts say it is mastered is described as mastered; at a level the facts call emerging, do not call any domain a strength or a weakness. Rank domains only where the facts say lowest or highest. This is the only section that reports the VB-MAPP scores in detail. If the assessor or respondent is not provided, write a bracketed note for the BCBA. If the importer flagged isolated scores, add a bracketed note asking the BCBA to verify them against protocol.",
+    valuePrefixes: ["vbmapp.", "score.", "assessment.", "dx.eval_date"],
     items: [
       { key: "tools_and_dates", label: "Each tool with date, respondent, and form" },
       { key: "descriptive_analysis", label: "Results analyzed and tied to goal selection" },
       { key: "outcome_measures", label: "Payor-required outcome measures included (or none)" },
       { key: "isolated_scores_verified", label: "Isolated-score flags verified against protocol (or none)" },
     ],
-    context: { isolatedScores: true },
+    context: { isolatedScores: true, assessments: true },
   },
   {
     key: "goal_summary",
@@ -432,13 +434,13 @@ export const LEGACY_SECTIONS: SectionDef[] = [
     key: "assessment",
     title: "Assessment Procedures and Results",
     guidance:
-      "Summarize the VB-MAPP profile: strengths, the lowest domains, and why targets were prioritized. Refer to scores only by token. If the importer flagged isolated scores, add a sentence asking the BCBA to verify them against protocol.",
-    valuePrefixes: ["vbmapp.", "score.", "dx.eval_date"],
+      "Summarize the VB-MAPP profile and each assessment listed in assessments: strengths, the lowest domains or areas, and why targets were prioritized. Name every assessment only by its name token, and refer to scores only by token. If the importer flagged isolated scores, add a sentence asking the BCBA to verify them against protocol.",
+    valuePrefixes: ["vbmapp.", "score.", "assessment.", "dx.eval_date"],
     items: [
       { key: "assessment_dates", label: "Assessment dates and tools listed" },
       { key: "isolated_scores_verified", label: "Isolated-score flags verified against protocol (or none)" },
     ],
-    context: { isolatedScores: true },
+    context: { isolatedScores: true, assessments: true },
     intakeFields: ["prior_evaluations"],
   },
   {

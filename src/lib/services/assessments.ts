@@ -20,6 +20,7 @@ import { withOrg, type OrgCtx, type Tx } from "../db";
 import { dayToDate, toDay } from "../dates";
 import { HttpError } from "../log";
 import { requirePermission } from "../permissions";
+import { afterAssessmentConfirmed, dropFromPlanSelections } from "./plans";
 
 const scoreRows = (orgId: string, assessmentId: string, v: NormalizedAssessment) =>
   v.scores.map((s) => ({
@@ -129,6 +130,7 @@ export async function confirmAssessment(ctx: OrgCtx, clientId: string, id: strin
       data: { status: "confirmed", reviewerId: userId, reviewedAt: new Date() },
     });
     await audit(tx, { action: "assessment:confirm", entityType: "Assessment", entityId: id });
+    await afterAssessmentConfirmed(tx, ctx, id);
     return { id };
   });
 }
@@ -137,6 +139,7 @@ export async function deleteAssessment(ctx: OrgCtx, clientId: string, id: string
   requirePermission(ctx.role, "assessment:write");
   return withOrg(ctx, async (tx) => {
     const a = await draftOf(tx, clientId, id);
+    await dropFromPlanSelections(tx, clientId, id);
     await tx.assessmentScore.deleteMany({ where: { assessmentId: id } });
     await tx.assessment.delete({ where: { id } });
     await audit(tx, {

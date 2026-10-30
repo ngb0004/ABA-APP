@@ -44,7 +44,8 @@ export default async function GoalsPage({ params }: { params: Promise<{ id: stri
           </p>
         </div>
         <div className="panel">
-          <h2 style={{ marginTop: 0 }}>Suggestions from VB-MAPP</h2>
+          <h2 style={{ marginTop: 0 }}>Goal suggestions</h2>
+          <h3>From VB-MAPP</h3>
           {!v.latestVerified ? (
             <p className="muted">Import and verify a VB-MAPP to get suggestions.</p>
           ) : (
@@ -67,6 +68,42 @@ export default async function GoalsPage({ params }: { params: Promise<{ id: stri
                       secondary
                       small
                       ariaLabel={`Add ${s.template.domainName} tier ${s.template.tier}`}
+                    >
+                      + Add goal
+                    </ActionButton>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          {v.areaSuggestions.length > 0 && (
+            <div data-testid="area-suggestions">
+              <h3>Lowest skill areas</h3>
+              {v.areaSuggestions.map((s) => (
+                <div
+                  key={`${s.assessmentId}:${s.areaKey}`}
+                  className="list-row"
+                  data-testid="area-suggestion"
+                >
+                  <div>
+                    <strong>
+                      {s.assessmentName} {s.area}
+                    </strong>
+                    <div className="muted">
+                      {s.value} of {s.possible} ({Math.round(s.share * 100)}%)
+                      {s.administeredOn ? ` · ${s.administeredOn}` : ""}
+                      {s.template
+                        ? ` · suggests ${s.template.domainName} tier ${s.template.tier}`
+                        : " · no template yet"}
+                    </div>
+                  </div>
+                  {s.template && can(ctx.role, "goal:write") && (
+                    <ActionButton
+                      url={`/api/clients/${id}/goals`}
+                      body={{ templateId: s.template.id }}
+                      secondary
+                      small
+                      ariaLabel={`Add ${s.template.domainName} tier ${s.template.tier} for ${s.area}`}
                     >
                       + Add goal
                     </ActionButton>

@@ -26,6 +26,8 @@ export type Requirement = {
   /** The evaluator's one-line result for this client. */
   message: string;
   evidence: string[];
+  /** Outcome measures: when each was last given and when it is due next. */
+  schedule?: string[];
 };
 
 export type InsuranceRequirements = {
@@ -142,6 +144,7 @@ export async function clientRequirements(ctx: OrgCtx, clientId: string, asOf: Da
           status: requirementStatus(r.rawStatus),
           message: r.message,
           evidence: r.evidence,
+          ...(r.schedule ? { schedule: r.schedule } : {}),
         });
         byGroup.set(key, list);
       }

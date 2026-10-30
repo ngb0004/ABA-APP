@@ -295,7 +295,7 @@ export function groupAssessments(
 }
 
 const fmt = (n: number) => String(Math.round(n * 100) / 100);
-function ordinal(n: number): string {
+export function ordinal(n: number): string {
   if (!Number.isInteger(n)) return fmt(n);
   const t = n % 100;
   if (t >= 11 && t <= 13) return `${n}th`;

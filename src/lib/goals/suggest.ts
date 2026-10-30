@@ -1,4 +1,7 @@
 /** Goal suggestions from a verified VB-MAPP administration: lowest domains and next unmastered milestones. */
+import { catalogType, scalesFor, type Catalog } from "../assessments/catalog";
+import type { AssessmentItem } from "../assessments/view";
+import type { Day } from "../dates";
 import { LEVELS } from "../vbmapp/layout";
 import type { GridScore } from "../vbmapp/carry-forward";
 import { DOMAIN_VBMAPP } from "./bank";
@@ -40,4 +43,69 @@ export function suggestGoals(scores: GridScore[], limit = 8): Suggestion[] {
   return out
     .sort((a, b) => a.level - b.level || a.domainScore / a.domainMax - b.domainScore / b.domainMax)
     .slice(0, limit);
+}
+
+/** A low-scoring skill area of a confirmed ABLLS-R or AFLS (any type with suggest_goals). */
+export type AreaSuggestion = {
+  assessmentId: string;
+  /** "ABLLS-R" or "AFLS · Basic Living Skills". */
+  assessmentName: string;
+  administeredOn: Day | null;
+  areaKey: string;
+  area: string;
+  value: number;
+  possible: number;
+  /** Share of the possible points scored, 0 to 1. */
+  share: number;
+  /** Goal bank domain whose templates fit (catalog goal_domain); null: no template yet. */
+  goalBankDomain: number | null;
+  tier: number;
+};
+
+/** Tier by share of possible points: under a third is tier 1, under two thirds tier 2, else tier 3. */
+export function tierForShare(share: number): number {
+  return share < 1 / 3 ? 1 : share < 2 / 3 ? 2 : 3;
+}
+
+/**
+ * The lowest areas (by share of possible points) of the latest confirmed administration of each
+ * series (type and module) whose type suggests goals. Fully scored areas are skipped.
+ */
+export function suggestFromAreas(
+  catalog: Catalog,
+  items: AssessmentItem[],
+  perAssessment = 5,
+): AreaSuggestion[] {
+  const latest = new Map<string, AssessmentItem>();
+  for (const i of items) {
+    const t = catalogType(catalog, i.typeKey);
+    if (!t?.suggestGoals || i.status !== "confirmed") continue;
+    const k = `${i.typeKey}|${i.module ?? ""}`;
+    const cur = latest.get(k);
+    if (!cur || (i.administeredOn ?? "") > (cur.administeredOn ?? "")) latest.set(k, i);
+  }
+  const out: AreaSuggestion[] = [];
+  for (const i of [...latest.values()].sort((a, b) => a.typeName.localeCompare(b.typeName))) {
+    const t = catalogType(catalog, i.typeKey)!;
+    const scales = scalesFor(t, i.module);
+    const areas = i.scores
+      .filter((s) => s.kind === "score_of_possible" && !s.parent && s.possible && s.value < s.possible)
+      .map((s) => ({ s, share: s.value / s.possible!, order: scales.findIndex((c) => c.key === s.key) }))
+      .sort((a, b) => a.share - b.share || a.order - b.order)
+      .slice(0, perAssessment);
+    for (const { s, share } of areas)
+      out.push({
+        assessmentId: i.id,
+        assessmentName: [i.typeName, i.moduleName].filter(Boolean).join(" · "),
+        administeredOn: i.administeredOn,
+        areaKey: s.key,
+        area: s.name,
+        value: s.value,
+        possible: s.possible!,
+        share,
+        goalBankDomain: scales.find((c) => c.key === s.key)?.goal_domain ?? null,
+        tier: tierForShare(share),
+      });
+  }
+  return out;
 }

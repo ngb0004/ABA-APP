@@ -197,6 +197,11 @@ export default async function RequirementsPage({ params }: { params: Promise<{ i
                               {REQUIREMENT_STATUS_LABELS[r.status]}
                             </span>
                             <div>{r.message}</div>
+                            {r.schedule?.map((line) => (
+                              <div key={line} className="muted" data-testid="requirement-schedule">
+                                {line}
+                              </div>
+                            ))}
                             {(r.evidence.length > 0 || entries.length > 0) && (
                               <details data-testid="requirement-details">
                                 <summary className="muted">Details</summary>
