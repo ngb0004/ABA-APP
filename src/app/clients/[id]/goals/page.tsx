@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ActionButton, Html } from "@/components/actions";
-import { FlatExplanation, GoalMenu, GoalRecordEditor } from "@/components/goal-editor";
+import { FlatExplanation, GoalActionButton, GoalMenu, GoalRecordEditor } from "@/components/goal-editor";
 import { RecordForm } from "@/components/record-form";
 import { Status } from "@/components/status";
 import { toDay } from "@/lib/dates";
@@ -117,10 +117,10 @@ export default async function GoalsPage({ params }: { params: Promise<{ id: stri
       </div>
 
       {v.goals.map((g) => (
-        <div className="panel" key={g.id} id={`goal-${g.ordinal}`}>
+        <div className="panel" key={g.id} id={`goal-${g.id}`}>
           <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
             <h2 style={{ marginTop: 0 }}>
-              Goal {g.ordinal}: {g.domain}{" "}
+              {g.name}{" "}
               <span className="muted">
                 tier {g.tier} · {g.category.replace("_", " ")} · {g.initiationWindow}
               </span>{" "}
@@ -142,6 +142,8 @@ export default async function GoalsPage({ params }: { params: Promise<{ id: stri
                 goal={{
                   id: g.id,
                   ordinal: g.ordinal,
+                  name: g.name,
+                  updatedAt: g.updatedAt.toISOString(),
                   progressStatus: g.progressStatus,
                   objective: g.objective,
                   rationale: g.rationale,
@@ -230,17 +232,22 @@ export default async function GoalsPage({ params }: { params: Promise<{ id: stri
               : "not locked (the mean of the first three data points is used until it is locked)"}
           </p>
           {!g.baselineLockedAt && can(ctx.role, "goal:approve") && g.dataPoints.length >= 3 && (
-            <ActionButton url={`/api/goals/${g.id}/baseline`} testId={`lock-baseline-${g.ordinal}`} secondary>
+            <GoalActionButton
+              goalId={g.id}
+              url={`/api/goals/${g.id}/baseline`}
+              testId={`lock-baseline-${g.ordinal}`}
+              secondary
+            >
               Lock baseline from the first three data points
-            </ActionButton>
+            </GoalActionButton>
           )}
           <GoalRecordEditor
-            // Discontinue and Resume change the status from the menu: start over from the server's record.
-            key={`${g.id}-${g.progressStatus}`}
+            // Not remounted after Discontinue or Resume: what was typed stays (it was saved first).
             canWrite={can(ctx.role, "goal:write")}
             goal={{
               id: g.id,
               ordinal: g.ordinal,
+              updatedAt: g.updatedAt.toISOString(),
               introducedAt: g.introducedAt ? toDay(g.introducedAt) : null,
               projectedMasteryDate: g.projectedMasteryDate ? toDay(g.projectedMasteryDate) : null,
               progressStatus: g.progressStatus,
@@ -250,13 +257,21 @@ export default async function GoalsPage({ params }: { params: Promise<{ id: stri
           />
           {g.flat && <div className="alert warn">No improvement over the last 8 weeks.</div>}
           {g.flat && can(ctx.role, "goal:write") && (
-            <FlatExplanation goalId={g.id} initial={g.flatExplanation} />
+            <FlatExplanation
+              goalId={g.id}
+              updatedAt={g.updatedAt.toISOString()}
+              initial={g.flatExplanation}
+            />
           )}
           {can(ctx.role, "goal:approve") && g.status !== "approved" && (
             <div className="row" style={{ marginTop: 8 }}>
-              <ActionButton url={`/api/goals/${g.id}/approve`} testId={`approve-goal-${g.ordinal}`}>
+              <GoalActionButton
+                goalId={g.id}
+                url={`/api/goals/${g.id}/approve`}
+                testId={`approve-goal-${g.ordinal}`}
+              >
                 Approve goal
-              </ActionButton>
+              </GoalActionButton>
             </div>
           )}
         </div>

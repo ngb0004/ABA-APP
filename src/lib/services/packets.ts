@@ -1,4 +1,5 @@
 /** Reauth packet: checklist (payor rules + letter requirements), export to one ordered PDF, hand-off status. */
+import { goalNames } from "../goals/names";
 import type { Prisma } from "@prisma/client";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -207,10 +208,12 @@ export function packetHtml(b: PlanBundle, results: RuleResult[], asOf: Day): str
     .join("");
   // Plans written with the eleven-section structure export exactly as before.
   const legacy = isLegacyPlan(b.plan.sections.map((s) => s.key));
+  // Goals are named, never numbered (the BCBA's decision).
+  const names = goalNames(b.goals);
   const goals = b.goals
     .map(
       (g) =>
-        `<div class="goal"><h3>Goal ${g.ordinal}: ${esc(g.domain)}</h3><p>${render(g.objective)}</p><p class="rationale"><em>Medical necessity:</em> ${render(g.rationale)}</p>${legacy ? "" : goalRecordTable(g)}${g.flatExplanation ? `<p><em>Progress note:</em> ${esc(g.flatExplanation)}</p>` : ""}${goalGraphSvg({ title: `Goal ${g.ordinal}: ${g.domain}`, measure: g.measure, points: g.dataPoints.map((p) => ({ date: toDay(p.date), value: p.value })), phaseChanges: g.phaseChanges.map((p) => ({ date: toDay(p.date), label: p.label })), masteryPct: g.masteryAccuracyPct })}</div>`,
+        `<div class="goal"><h3>${esc(names.get(g.id)!)}</h3><p>${render(g.objective)}</p><p class="rationale"><em>Medical necessity:</em> ${render(g.rationale)}</p>${legacy ? "" : goalRecordTable(g)}${g.flatExplanation ? `<p><em>Progress note:</em> ${esc(g.flatExplanation)}</p>` : ""}${goalGraphSvg({ title: names.get(g.id)!, measure: g.measure, points: g.dataPoints.map((p) => ({ date: toDay(p.date), value: p.value })), phaseChanges: g.phaseChanges.map((p) => ({ date: toDay(p.date), label: p.label })), masteryPct: g.masteryAccuracyPct })}</div>`,
     )
     .join("");
   const latest = b.administrations.at(-1);

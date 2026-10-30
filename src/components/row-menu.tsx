@@ -38,7 +38,15 @@ export function RowMenu(props: {
     /** A link to another page. */
     | { href: string; form?: never; content?: never; request?: never }
   ))[];
-  remove?: { url: string; label?: string; confirm: string };
+  remove?: {
+    url: string;
+    label?: string;
+    confirm: string;
+    /** Runs after the confirm and before the request (e.g. save what was typed first). */
+    before?: () => Promise<unknown>;
+    /** Runs after a successful removal, before the page refreshes. */
+    after?: () => void;
+  };
   testId?: string;
 }) {
   const router = useRouter();
@@ -98,9 +106,11 @@ export function RowMenu(props: {
     if (!props.remove || !window.confirm(props.remove.confirm)) return;
     setBusy(true);
     setError(null);
+    await props.remove.before?.();
     const r = await send(props.remove.url, "DELETE", {});
     setBusy(false);
     if (!r.ok) return setError(String(r.data.error ?? "Request failed"));
+    props.remove.after?.();
     router.refresh();
   }
 

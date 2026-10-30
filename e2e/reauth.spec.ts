@@ -98,8 +98,8 @@ test("Client 2 reauth: AI draft with source links, letter upload, export blocked
   await page.goto(`/clients/${clientId}/goals`);
   const flatBox = page.locator("textarea[data-testid^=flat-explanation-]");
   await flatBox.fill("Plateau after a curriculum change; added visual supports and increased trials.");
-  await page.getByRole("button", { name: "Save explanation" }).click();
-  await expect(page.getByText("Saved")).toBeVisible();
+  // Saved as it is typed: no Save button.
+  await expect(page.getByTestId(/^flat-save-status-/)).toHaveText("Saved");
   for (let g = 1; g <= 9; g++) {
     await page.getByTestId(`approve-goal-${g}`).click();
     await expect(page.getByTestId(`approve-goal-${g}`)).toHaveCount(0);

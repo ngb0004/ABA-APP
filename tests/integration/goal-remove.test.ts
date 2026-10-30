@@ -18,6 +18,7 @@ import {
   discontinueGoal,
   draftSection,
   editSection,
+  planView,
   removeGoal,
   reopenSection,
   resumeGoal,
@@ -253,18 +254,121 @@ describe("removing a goal added by mistake", () => {
     expect(row!.meta).toMatchObject({ renumbered: 1, sectionsToRedraft: expect.any(Number) });
   });
 
-  it("refuses when renumbering would change an approved section that refers to a later goal", async () => {
-    const { cid, goals } = await newClientWithGoals("Removeshift", ["communication", "behavior_reduction"]);
-    const [g1] = goals as [(typeof goals)[0]];
+  it("renumbers approved and finalized text in place: it renders byte for byte the same and stays approved", async () => {
+    const { cid, goals } = await newClientWithGoals("Removeshift", [
+      "communication",
+      "communication",
+      "behavior_reduction",
+    ]);
+    const [, g2, g3] = goals as [(typeof goals)[0], (typeof goals)[0], (typeof goals)[0]];
     const plan = await createPlan(bcba, cid, "initial");
-    // Approved (before goal 1 existed is impossible here), but refers to goal 2 by number.
+    const approvedAt = new Date(Date.now() - 1000);
+    const text =
+      "Mastery is {{goal.3.mastery_pct}} across {{goal.3.mastery_sessions}} sessions ({{goal.1.mastery_pct}}).";
+    // Approved text that refers to a later goal by its token number (never shown to readers).
+    await withOrg(bcba, (tx) =>
+      tx.planSection.updateMany({
+        where: { planId: plan.id, key: "crisis_plan" },
+        data: { state: "approved", content: text, aiDraft: text, approvedAt, approvedById: bcba.userId },
+      }),
+    );
+    // A finalized plan from before these goals existed, with the same reference.
+    const old = await createPlan(bcba, cid, "initial");
+    await withOrg(bcba, async (tx) => {
+      await tx.plan.update({
+        where: { id: old.id },
+        data: { status: "finalized", finalizedAt: new Date(Date.now() - 86_400_000) },
+      });
+      await tx.planSection.updateMany({
+        where: { planId: old.id, key: "crisis_plan" },
+        data: { state: "approved", content: text, approvedAt },
+      });
+    });
+    const html = async (planId: string) =>
+      (await planView(bcba, planId, AS_OF)).sections.find((x) => x.key === "crisis_plan")!.html;
+    const before = await html(plan.id);
+    const beforeOld = await html(old.id);
+    expect(before).toContain('data-key="goal-');
+    expect(before).not.toMatch(/goal\.\d|Goal \d/);
+
+    expect((await goalsView(bcba, cid, AS_OF)).goals.find((g) => g.id === g2.id)!.removeBlocker).toBeNull();
+    await removeGoal(bcba, g2.id);
+
+    expect((await goalsOf(cid)).find((g) => g.id === g3.id)!.ordinal).toBe(2);
+    const s = await sectionOf(plan.id, "crisis_plan");
+    expect(s.content).toBe(
+      "Mastery is {{goal.2.mastery_pct}} across {{goal.2.mastery_sessions}} sessions ({{goal.1.mastery_pct}}).",
+    );
+    expect(s.aiDraft).toBe(s.content);
+    // Still approved, with the same approval: not reopened, not re-approved.
+    expect(s.state).toBe("approved");
+    expect(s.approvedAt?.getTime()).toBe(approvedAt.getTime());
+    expect(s.approvedById).toBe(bcba.userId);
+    expect(s.redraftReason).toBeNull();
+    // What readers see is byte for byte the same.
+    expect(await html(plan.id)).toBe(before);
+    expect(await html(old.id)).toBe(beforeOld);
+    const oldPlan = await withOrg(bcba, (tx) => tx.plan.findUniqueOrThrow({ where: { id: old.id } }));
+    expect(oldPlan.status).toBe("finalized");
+    const revs = await withOrg(bcba, (tx) =>
+      tx.planSectionRevision.findMany({ where: { sectionId: s.id, kind: "goal_renumbered" } }),
+    );
+    expect(revs).toHaveLength(1);
+    expect(revs[0]!.content).toBe(s.content);
+    expect(revs[0]!.diff).toMatch(/goal\.2\.mastery_pct/);
+    const [row] = await auditRows("goal:remove", g2.id);
+    expect(row!.meta).toMatchObject({ sectionsRenumbered: 2 });
+  });
+
+  it("refuses (409) when approved, finalized, or exported text shows the removed goal's own values", async () => {
+    const message = "This goal is used in approved plan text. Discontinue it instead.";
+    const { cid, goals } = await newClientWithGoals("Removeownvalues", [
+      "communication",
+      "behavior_reduction",
+    ]);
+    const [g1, g2] = goals as [(typeof goals)[0], (typeof goals)[0]];
+    const plan = await createPlan(bcba, cid, "initial");
     await withOrg(bcba, (tx) =>
       tx.planSection.updateMany({
         where: { planId: plan.id, key: "crisis_plan" },
         data: { state: "approved", content: "See {{goal.2.mastery_pct}}." },
       }),
     );
-    await expect(removeGoal(bcba, g1.id)).rejects.toMatchObject({ status: 409, message: /later goal/ });
+    await expect(removeGoal(bcba, g2.id)).rejects.toMatchObject({ status: 409, message });
+    const view = await goalsView(bcba, cid, AS_OF);
+    expect(view.goals.find((g) => g.id === g2.id)!.removeBlocker).toBe(message);
+    // The other goal can go: the approved text only moves to its new token number.
+    expect(view.goals.find((g) => g.id === g1.id)!.removeBlocker).toBeNull();
+
+    // A finalized plan from before the goal was added, still citing its number.
+    const { cid: cid2, goals: two } = await newClientWithGoals("Removeownfinal", ["communication"]);
+    const fin = await createPlan(bcba, cid2, "initial");
+    await withOrg(bcba, async (tx) => {
+      await tx.plan.update({
+        where: { id: fin.id },
+        data: { status: "finalized", finalizedAt: new Date(Date.now() - 86_400_000) },
+      });
+      await tx.planSection.updateMany({
+        where: { planId: fin.id, key: "crisis_plan" },
+        data: { content: "See {{goal.1.mastery_pct}}." },
+      });
+    });
+    await expect(removeGoal(bcba, two[0]!.id)).rejects.toMatchObject({ status: 409, message });
+
+    // An exported packet from before the goal was added.
+    const { cid: cid3, goals: three } = await newClientWithGoals("Removeownpacket", ["communication"]);
+    const exp = await createPlan(bcba, cid3, "initial");
+    await withOrg(bcba, async (tx) => {
+      await tx.packet.create({
+        data: { orgId: bcba.orgId, planId: exp.id, exportedAt: new Date(Date.now() - 86_400_000) },
+      });
+      await tx.planSection.updateMany({
+        where: { planId: exp.id, key: "crisis_plan" },
+        data: { content: "See {{goal.1.mastery_pct}}." },
+      });
+    });
+    await expect(removeGoal(bcba, three[0]!.id)).rejects.toMatchObject({ status: 409, message });
+    expect((await goalsOf(cid)).length).toBe(2);
   });
 
   it("is not blocked by a packet submitted before the goal existed (the usual reauth)", async () => {

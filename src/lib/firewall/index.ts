@@ -25,6 +25,13 @@ export type SourcedValue = {
   source: ValueSource;
   /** Non-numeric qualitative facts the model may use (e.g. "lowest domain"). */
   facts?: string[];
+  /**
+   * The stable name rendered links carry (data-key and the default anchor) when the token key can
+   * move: goal tokens follow the goal's position, which changes when an earlier goal is removed.
+   */
+  anchor?: string;
+  /** Hover text for rendered links when "label. Source: description" would depend on other records. */
+  title?: string;
 };
 
 export class SourcedContext {
@@ -107,6 +114,11 @@ const NUMBER_WORDS = [
   "fifth",
 ];
 const NUMBER_WORD_RE = new RegExp(`\\b(${NUMBER_WORDS.join("|")})\\b`, "i");
+/**
+ * A goal referred to by number. Goals are not numbered in the plan, and "one" is not a number word
+ * above, so "Goal One", "goal #", and "goal number" are caught here (digits already fail).
+ */
+const GOAL_BY_NUMBER_RE = /\bgoal\s*(?:#|no\.|number\b|one\b)/i;
 // "first"/"second" also appear in ordinary prose ("first, ..."), but an ordinal can
 // state a rank or date, so they are rejected; the prompt tells the model to avoid them.
 
@@ -142,7 +154,7 @@ export function validateAiText(text: string, ctx: SourcedContext): FirewallResul
   const { errors, keys, outside } = scan(normalized, ctx);
   const digits = outside.match(/\p{Nd}+/gu);
   if (digits) errors.push({ kind: "digit", detail: digits.slice(0, 5).join(", ") });
-  const word = outside.match(NUMBER_WORD_RE);
+  const word = outside.match(NUMBER_WORD_RE) ?? outside.match(GOAL_BY_NUMBER_RE);
   if (word) errors.push({ kind: "number_word", detail: word[0] });
   return { ok: errors.length === 0, errors, normalized, keys };
 }
@@ -175,10 +187,11 @@ export function renderTokens(text: string, ctx: SourcedContext, mode: "html" | "
     parts.push(mode === "html" ? esc(before) : before);
     if (mode === "text") parts.push(v.display);
     else {
-      const title = esc(`${v.label}. Source: ${v.source.description}`);
-      const href = esc(v.source.href ?? `#source-${v.key}`);
+      const title = esc(v.title ?? `${v.label}. Source: ${v.source.description}`);
+      const name = v.anchor ?? v.key;
+      const href = esc(v.source.href ?? `#source-${name}`);
       parts.push(
-        `<a class="sourced" data-key="${esc(v.key)}" href="${href}" title="${title}">${esc(v.display)}</a>`,
+        `<a class="sourced" data-key="${esc(name)}" href="${href}" title="${title}">${esc(v.display)}</a>`,
       );
     }
     last = m.index! + m[0].length;

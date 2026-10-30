@@ -295,7 +295,7 @@ describe("practice settings and team", () => {
     await updateSettings(bcba, { ...base, statesServed: ["GA"] });
   });
 
-  it("saves the practice time zone (Eastern until chosen) and rejects unknown zones", async () => {
+  it("saves the practice time zone (Eastern until chosen), any IANA zone, and rejects unknown zones", async () => {
     const before = (await practiceSettings(bcba)).org;
     const s0 = orgSettings(before.settings);
     const base = {
@@ -315,7 +315,12 @@ describe("practice settings and team", () => {
     await updateSettings(bcba, base);
     expect(await practiceTimeZone(bcba)).toBe("America/Chicago");
     await expect(updateSettings(bcba, { ...base, timeZone: "Mars/Olympus" })).rejects.toThrow();
-    await expect(updateSettings(bcba, { ...base, timeZone: "Europe/London" })).rejects.toThrow();
+    await expect(updateSettings(bcba, { ...base, timeZone: "" })).rejects.toThrow();
+    // Practices outside the US pick their own zone (any IANA zone this runtime supports).
+    await updateSettings(bcba, { ...base, timeZone: "Europe/London" });
+    expect(await practiceTimeZone(bcba)).toBe("Europe/London");
+    await updateSettings(bcba, { ...base, timeZone: "Asia/Kolkata" });
+    expect(await practiceTimeZone(bcba)).toBe("Asia/Kolkata");
     const ev = await withOrg(bcba, (tx) =>
       tx.auditEvent.findFirst({
         where: { action: "org:settings_update", entityId: bcba.orgId },

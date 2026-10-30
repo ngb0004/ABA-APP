@@ -307,7 +307,8 @@ test("assessments: ABLLS-R goal suggestions, the long entry form at 640px, and a
   const suggestions = page.getByTestId("area-suggestion");
   await expect(suggestions.first()).toBeVisible();
   await expect(suggestions.first()).toContainText("ABLLS-R");
-  const goals = page.getByRole("heading", { level: 2, name: /^Goal \d+:/ });
+  // Goals are named, never numbered: count the goal cards.
+  const goals = page.locator('div.panel[id^="goal-"]');
   const before = await goals.count();
   await suggestions
     .filter({ has: page.getByRole("button", { name: /^Add .* for / }) })

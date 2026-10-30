@@ -56,6 +56,23 @@ describe("numeric firewall: AI output", () => {
     expect(validateAiText("[Client] improved by fifty percent.", ctx).ok).toBe(false);
   });
 
+  it("rejects a goal referred to by number, in digits or words", () => {
+    const kinds = (t: string) => validateAiText(t, ctx).errors.map((e) => e.kind);
+    expect(kinds("Progress on Goal 2 was steady.")).toContain("digit");
+    expect(kinds("Progress on Goal Two was steady.")).toContain("number_word");
+    expect(kinds("Progress on goal three was steady.")).toContain("number_word");
+    expect(kinds("Progress on the second goal was steady.")).toContain("number_word");
+    // "one" is usually a pronoun, but "Goal One" names a goal by number.
+    expect(kinds("Progress on Goal One was steady.")).toContain("number_word");
+    expect(kinds("Progress on goal #A was steady.")).toContain("number_word");
+    expect(kinds("Progress on goal number A was steady.")).toContain("number_word");
+    // Goals named by their skill pass.
+    expect(
+      validateAiText("Progress on the manding goal was steady; one goal was discontinued.", ctx).ok,
+    ).toBe(true);
+    expect(validateAiText("Each goal's data are graphed.", ctx).ok).toBe(true);
+  });
+
   it("rejects malformed tokens and non-ASCII digits", () => {
     expect(validateAiText("Score {{score.total.admin2} rose.", ctx).ok).toBe(false);
     expect(validateAiText("Score ٩ rose.", ctx).ok).toBe(false);
@@ -74,6 +91,32 @@ describe("numeric firewall: AI output", () => {
 });
 
 describe("numeric firewall: rendering", () => {
+  it("links a value by its stable anchor and hover text when it has them", () => {
+    const value = (key: string) => ({
+      key,
+      label: "Manding goal mastery accuracy",
+      value: 80,
+      display: "80%",
+      anchor: "goal-g1.mastery_pct",
+      title: "Manding goal: “independently mand” mastery accuracy. Source: goal record",
+      source: { kind: "goal", id: "g1", description: "goal record", href: "/clients/c1/goals#goal-g1" },
+    });
+    // The same goal record under two token numbers (before and after an earlier goal is removed).
+    const before = renderTokens(
+      "At {{goal.3.mastery_pct}}.",
+      new SourcedContext([value("goal.3.mastery_pct")]),
+      "html",
+    );
+    const after = renderTokens(
+      "At {{goal.2.mastery_pct}}.",
+      new SourcedContext([value("goal.2.mastery_pct")]),
+      "html",
+    );
+    expect(after).toBe(before);
+    expect(before).toContain('data-key="goal-g1.mastery_pct"');
+    expect(before).not.toMatch(/goal\.\d/);
+  });
+
   it("renders a valid token with its source link", () => {
     const html = renderTokens("Total {{score.total.admin2}}.", ctx, "html");
     expect(html).toContain("92.5");

@@ -6,7 +6,7 @@ import { MEMBER_ROLES, practiceSettings } from "@/lib/services/records";
 import { orgSettings } from "@/lib/services/clients";
 import { requirePageCtx } from "@/lib/server/page-session";
 import { STATE_NAMES, US_STATES } from "@/lib/payors/types";
-import { PRACTICE_TIME_ZONES } from "@/lib/time-format";
+import { timeZoneGroups } from "@/lib/time-format";
 
 export const metadata: Metadata = { title: "Practice settings" };
 
@@ -18,7 +18,8 @@ const settingsFields: FieldSpec[] = [
     name: "timeZone",
     label: "Time zone (times across the app are shown in this zone)",
     type: "select",
-    options: PRACTICE_TIME_ZONES.map((z) => ({ value: z.value, label: z.label })),
+    // The common US zones first, then every other zone by region.
+    optionGroups: timeZoneGroups(),
   },
   {
     name: "reauthLeadDays",

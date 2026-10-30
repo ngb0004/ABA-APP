@@ -160,9 +160,13 @@ describe("AI drafting through the single LLM module", () => {
     await draftSection(bcba, planId, "behavior_reduction_goals", AS_OF);
     const red = JSON.parse(mock.calls.at(-1)!.user) as {
       availableValues: { key: string }[];
-      goals: { goalNumber: string; objective?: string }[];
+      goals: { name: string; valuePrefix: string; objective?: string }[];
     };
-    const redGoals = new Set(red.goals.map((g) => `${g.goalNumber}.`));
+    const redGoals = new Set(red.goals.map((g) => g.valuePrefix));
+    // Goals reach the model by name, never by number.
+    for (const g of red.goals) expect(g.name).toMatch(/ goal\b/);
+    expect(JSON.stringify(red)).not.toMatch(/\bGoal \d/i);
+    expect(mock.calls.at(-1)!.system).toMatch(/never refer to a goal by a number/);
     const goalKeys = red.availableValues.map((x) => x.key).filter((k) => k.startsWith("goal."));
     expect(goalKeys.length).toBeGreaterThan(0);
     for (const k of goalKeys)

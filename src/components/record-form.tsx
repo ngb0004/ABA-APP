@@ -22,6 +22,8 @@ export type FieldSpec = {
     | "password"
     | "email";
   options?: readonly (string | { value: string; label: string })[];
+  /** For type "select": options in labelled groups (shown after any ungrouped options). */
+  optionGroups?: readonly { label: string; options: readonly { value: string; label: string }[] }[];
   placeholder?: string;
   help?: string;
   /** Empty becomes null instead of "" (optional text and dates). */
@@ -186,6 +188,15 @@ function Input({
             <option key={optionValue(o)} value={optionValue(o)}>
               {optionLabel(o)}
             </option>
+          ))}
+          {(f.optionGroups ?? []).map((g) => (
+            <optgroup key={g.label} label={g.label}>
+              {g.options.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </optgroup>
           ))}
         </select>
       ) : f.type === "time" ? (
