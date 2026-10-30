@@ -57,5 +57,6 @@ For administration `k`, a milestone's score counts the scoring cells whose value
 | File | Expected |
 |---|---|
 | `sample_A_level2.xlsm` | Admin 1 recomputed total **77.5** (L1 45, L2 29.5, L3 3). The workbook says **73.5** because cell `N49` (L1 Listener total) was overwritten with `1`. The test date in `AT6` reads `08/204/2026`. Echoic L1 cells are literals. |
+| `sample_G_level1.xlsm` | Early learner. One administration tested 2026-10-31 by "AW": total **6.5**, all Level 1 (Listener 0.5, VP/MTS 2.5, Play 1.5, Social 2), matching the workbook. Name and birth date are fictional test values and are never imported. |
 | `sample_B_level1.xlsm` | Admin 1 total **27.5** (L1 25.5, L2 1, L3 1). Isolated scores: L2 Play (`X36`, `X40`) and L3 Math (`BL22`, `BL23`) with no supporting milestones. `AT7` contains a formula, not a date. Echoic formulas were deleted in `AM52:AM54`. |
 | `blank_template.xlsm` | No administrations. |

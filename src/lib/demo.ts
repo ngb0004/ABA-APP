@@ -11,7 +11,7 @@ import { HttpError } from "./log";
 export const isDemo = () => process.env.DEMO_MODE === "true";
 
 export const DEMO_SAMPLES = {
-  vbmapp: ["sample_B_level1.xlsm", "sample_A_level2.xlsm", "blank_template.xlsm"],
+  vbmapp: ["sample_B_level1.xlsm", "sample_A_level2.xlsm", "sample_G_level1.xlsm", "blank_template.xlsm"],
   letters: [
     "client2_cigna_approval.txt",
     "client2_cigna_approval.pdf",

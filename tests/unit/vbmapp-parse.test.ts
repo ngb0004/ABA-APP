@@ -108,3 +108,28 @@ describe("VB-MAPP import: input safety", () => {
     expect(() => parseVbmappWorkbook(Buffer.from("hello"), { now: NOW })).toThrow(/not an Excel workbook/i);
   });
 });
+
+describe("VB-MAPP import: sample_G_level1.xlsm (early learner)", () => {
+  // Tested 2026-10-31; the parser accepts dates up to a day ahead of "now".
+  const r = parseVbmappWorkbook(load("sample_G_level1.xlsm"), { now: new Date("2026-11-01T12:00:00Z") });
+
+  it("has one Level 1 administration totalling 6.5, matching the workbook", () => {
+    expect(r.administrations).toHaveLength(1);
+    const a = r.administrations[0]!;
+    expect(a.testDate).toBe("2026-10-31");
+    expect(a.testerInitials).toBe("AW");
+    expect(a.totals.total).toBe(6.5);
+    expect(a.totals.levels).toEqual({ 1: 6.5, 2: 0, 3: 0 });
+    expect(a.totals.domains).toMatchObject({
+      "L1.Listener": 0.5,
+      "L1.VP/MTS": 2.5,
+      "L1.Play": 1.5,
+      "L1.Social": 2,
+    });
+    expect(a.workbookTotal).toBe(6.5);
+  });
+
+  it("only flags the name and birth date cells, which are never imported", () => {
+    expect(r.flags.map((f) => f.code)).toEqual(["phi_present"]);
+  });
+});
