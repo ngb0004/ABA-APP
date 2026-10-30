@@ -1,12 +1,17 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import type { AutosaveState } from "@/lib/goals/autosave";
+import { saveStatusText } from "@/lib/goals/save-status";
 import { send } from "./actions";
+import { flushGoal, forgetGoal, goalShownValues, goalVersionChanged, useGoalAutosave } from "./goal-autosave";
 import { RowMenu } from "./row-menu";
 
 type EditableGoal = {
   id: string;
+  /** The goal's version: autosaves are refused if it changed elsewhere. */
+  updatedAt: string;
   objective: string;
   rationale: string;
   masteryAccuracyPct: number;
@@ -14,75 +19,187 @@ type EditableGoal = {
   masteryInstructors: number;
 };
 
-/** The goal's wording and mastery criteria, edited in the goal menu's dialog. */
+/** The fields of each editor (they share one queue per goal; each shows only its own status). */
+const DIALOG_FIELDS = [
+  "objective",
+  "rationale",
+  "masteryAccuracyPct",
+  "masteryConsecutiveSessions",
+  "masteryInstructors",
+] as const;
+const RECORD_FIELDS = [
+  "introducedAt",
+  "projectedMasteryDate",
+  "progressStatus",
+  "barriers",
+  "settings",
+] as const;
+const FLAT_FIELDS = ["flatExplanation"] as const;
+
+/**
+ * "Saving…", "Saved", or why not, next to an autosaving editor: for its own fields, and naming a
+ * field shown elsewhere (with where to fix it) that is not saved.
+ */
+export function SaveStatus({
+  state,
+  fields,
+  testId,
+}: {
+  state: AutosaveState;
+  fields: readonly string[];
+  testId?: string;
+}) {
+  const { text, bad } = saveStatusText(state, fields);
+  return (
+    <span role="status" aria-live="polite" className={bad ? "error" : "muted"} data-testid={testId}>
+      {text}
+    </span>
+  );
+}
+
+const shownValue = (v: unknown) =>
+  v === null || v === undefined || v === ""
+    ? "(empty)"
+    : Array.isArray(v)
+      ? v.join(", ") || "(empty)"
+      : String(v);
+
+/**
+ * The problem with one field: a value that would be refused, the server's reason a save failed,
+ * or a change made somewhere else while it was edited here (with the choice of which to keep).
+ */
+function FieldProblem({
+  field,
+  state,
+  resolve,
+}: {
+  field: string;
+  state: AutosaveState;
+  resolve?: (field: string, keep: "mine" | "theirs") => void;
+}) {
+  if (Object.hasOwn(state.conflicts, field))
+    return (
+      <div className="alert warn" role="alert" data-testid={`conflict-${field}`}>
+        <div>
+          This was changed somewhere else while you were editing it. Your text is kept above. The other
+          version:
+        </div>
+        <blockquote style={{ margin: "6px 0", whiteSpace: "pre-wrap" }}>
+          {shownValue(state.conflicts[field])}
+        </blockquote>
+        {state.problems[field] && <div className="error">{state.problems[field]}</div>}
+        {resolve && (
+          <div className="row" style={{ marginTop: 6 }}>
+            <button type="button" onClick={() => resolve(field, "mine")}>
+              Keep mine
+            </button>
+            <button type="button" className="secondary" onClick={() => resolve(field, "theirs")}>
+              Use the other version
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  const problem = state.problems[field] ?? (state.failedFields.includes(field) ? state.error : null);
+  if (!problem) return null;
+  return (
+    <div className="error" role="alert" data-testid={`problem-${field}`}>
+      {problem}
+    </div>
+  );
+}
+
+/** A number input's value: "" while the box is empty. */
+const shownNumber = (n: number) => (Number.isFinite(n) ? String(n) : "");
+const parsedNumber = (s: string) => (s.trim() === "" ? Number.NaN : Number(s));
+
+/**
+ * The goal's wording and mastery criteria, edited in the goal menu's dialog. Saves as you type
+ * (about a second after you stop, and when you leave a field); there is no Save button.
+ */
 export function GoalEditor({ goal, onDone }: { goal: EditableGoal; onDone: () => void }) {
-  const router = useRouter();
-  const [g, setG] = useState(goal);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const { id, updatedAt, ...fields } = goal;
+  const { values: g, set, state, flush, resolve } = useGoalAutosave(id, updatedAt, fields);
+  const blur = () => void flush();
+  const [stuck, setStuck] = useState(false);
   return (
     <div>
-      <label htmlFor={`objective-${goal.id}`}>
+      <label htmlFor={`objective-${id}`}>
         Objective (use {"{{goal.N.mastery_pct}}"}-style tokens for figures; brackets like [X] must be filled)
       </label>
       <textarea
-        id={`objective-${goal.id}`}
+        id={`objective-${id}`}
         value={g.objective}
-        onChange={(e) => setG({ ...g, objective: e.target.value })}
+        onChange={(e) => set("objective", e.target.value)}
+        onBlur={blur}
       />
-      <label htmlFor={`rationale-${goal.id}`}>Medical necessity rationale</label>
+      <FieldProblem field="objective" state={state} resolve={resolve} />
+      <label htmlFor={`rationale-${id}`}>Medical necessity rationale</label>
       <textarea
-        id={`rationale-${goal.id}`}
+        id={`rationale-${id}`}
         value={g.rationale}
-        onChange={(e) => setG({ ...g, rationale: e.target.value })}
+        onChange={(e) => set("rationale", e.target.value)}
+        onBlur={blur}
       />
+      <FieldProblem field="rationale" state={state} resolve={resolve} />
       <div className="row">
-        <label>Mastery %</label>
+        <label htmlFor={`mastery-pct-${id}`}>Mastery %</label>
         <input
+          id={`mastery-pct-${id}`}
           type="number"
-          value={g.masteryAccuracyPct}
+          value={shownNumber(g.masteryAccuracyPct)}
           min={1}
           max={100}
-          onChange={(e) => setG({ ...g, masteryAccuracyPct: Number(e.target.value) })}
+          onChange={(e) => set("masteryAccuracyPct", parsedNumber(e.target.value))}
+          onBlur={blur}
           style={{ width: 80 }}
         />
-        <label>Consecutive sessions</label>
+        <label htmlFor={`mastery-sessions-${id}`}>Consecutive sessions</label>
         <input
+          id={`mastery-sessions-${id}`}
           type="number"
-          value={g.masteryConsecutiveSessions}
+          value={shownNumber(g.masteryConsecutiveSessions)}
           min={1}
-          onChange={(e) => setG({ ...g, masteryConsecutiveSessions: Number(e.target.value) })}
+          onChange={(e) => set("masteryConsecutiveSessions", parsedNumber(e.target.value))}
+          onBlur={blur}
           style={{ width: 80 }}
         />
-        <label>Instructors</label>
+        <label htmlFor={`mastery-people-${id}`}>Instructors</label>
         <input
+          id={`mastery-people-${id}`}
           type="number"
-          value={g.masteryInstructors}
+          value={shownNumber(g.masteryInstructors)}
           min={1}
-          onChange={(e) => setG({ ...g, masteryInstructors: Number(e.target.value) })}
+          onChange={(e) => set("masteryInstructors", parsedNumber(e.target.value))}
+          onBlur={blur}
           style={{ width: 80 }}
         />
       </div>
-      <div className="row" style={{ marginTop: 8 }}>
+      <FieldProblem field="masteryAccuracyPct" state={state} resolve={resolve} />
+      <FieldProblem field="masteryConsecutiveSessions" state={state} resolve={resolve} />
+      <FieldProblem field="masteryInstructors" state={state} resolve={resolve} />
+      <p className="muted" style={{ marginBottom: 0 }}>
+        Changes save as you type. Changing an approved goal returns it to draft for approval.
+      </p>
+      <div className="row" style={{ marginTop: 8, alignItems: "center" }}>
         <button
-          disabled={busy}
+          className="secondary"
           onClick={async () => {
-            const { id, ...rest } = g;
-            setBusy(true);
-            const r = await send(`/api/goals/${id}`, "PATCH", rest);
-            setBusy(false);
-            if (!r.ok) return setError(String(r.data.error));
-            onDone();
-            router.refresh();
+            // Something typed here is not saved (held back, failed, or in conflict): stay open.
+            if (await flush()) return onDone();
+            setStuck(true);
           }}
         >
-          Save (returns goal to draft)
+          Done
         </button>
-        <button className="secondary" onClick={onDone}>
-          Cancel
-        </button>
+        <SaveStatus state={state} fields={DIALOG_FIELDS} testId={`goal-save-status-${id}`} />
       </div>
-      {error && <div className="error">{error}</div>}
+      {stuck && saveStatusText(state, DIALOG_FIELDS).bad && (
+        <p className="error" role="alert" style={{ marginBottom: 0 }}>
+          Not everything here is saved yet. Fix the highlighted field (or choose a version) before closing;
+          closing now keeps your text unsaved.
+        </p>
+      )}
     </div>
   );
 }
@@ -106,8 +223,15 @@ function DiscontinueForm({ goalId, asOf, onDone }: { goalId: string; asOf: strin
         e.preventDefault();
         setBusy(true);
         setError(null);
+        // Whatever was typed into the goal is saved first.
+        const notSaved = await flushGoal(goalId);
+        if (notSaved) {
+          setBusy(false);
+          return setError(notSaved);
+        }
         const r = await send(`/api/goals/${goalId}/discontinue`, "POST", { reason, date });
         setBusy(false);
+        if (r.ok) goalVersionChanged(goalId, r.data.updatedAt);
         if (!r.ok)
           return setError(
             [
@@ -172,9 +296,16 @@ function ResumeConfirm({ goalId, onDone }: { goalId: string; onDone: () => void 
           disabled={busy}
           onClick={async () => {
             setBusy(true);
+            setError(null);
+            const notSaved = await flushGoal(goalId);
+            if (notSaved) {
+              setBusy(false);
+              return setError(notSaved);
+            }
             const r = await send(`/api/goals/${goalId}/resume`, "POST", {});
             setBusy(false);
             if (!r.ok) return setError(String(r.data.error ?? "Could not resume the goal"));
+            goalVersionChanged(goalId, r.data.updatedAt);
             onDone();
             router.refresh();
           }}
@@ -211,7 +342,7 @@ function RemoveBlocked({ reason, onDone }: { reason: string; onDone: () => void 
 /**
  * The one "⋯" menu on a goal card: Edit goal, Discontinue… or Resume, and Remove. Remove deletes
  * only when the server's rule allows it (a goal added by mistake, with no data and never approved);
- * otherwise "Remove…" explains why not.
+ * otherwise "Remove…" explains why not. Each action saves what was typed into the goal first.
  */
 export function GoalMenu({
   goal,
@@ -219,21 +350,20 @@ export function GoalMenu({
   canRemove,
   removeBlocker,
 }: {
-  goal: EditableGoal & { ordinal: number; progressStatus: string };
+  /** name: how readers know the goal ("Manding goal"); goals are never numbered. */
+  goal: EditableGoal & { ordinal: number; name: string; progressStatus: string };
   /** The server's today (YYYY-MM-DD). */
   asOf: string;
   /** The user may remove goals. */
   canRemove: boolean;
   removeBlocker: string | null;
 }) {
-  const name = `Goal ${goal.ordinal}`;
-  const { ordinal, progressStatus, ...editable } = goal;
-  void ordinal;
+  const { ordinal, progressStatus, name, ...editable } = goal;
   const discontinued = progressStatus === "discontinued";
   return (
     <RowMenu
       name={name}
-      testId={`goal-menu-${goal.ordinal}`}
+      testId={`goal-menu-${ordinal}`}
       actions={[
         {
           label: "Edit goal",
@@ -267,6 +397,9 @@ export function GoalMenu({
               url: `/api/goals/${goal.id}`,
               label: "Remove",
               confirm: "Remove this goal? It was added by mistake and has no data.",
+              // Saved first, in case the server refuses the removal; dropped once it is gone.
+              before: () => flushGoal(goal.id),
+              after: () => forgetGoal(goal.id),
             }
           : undefined
       }
@@ -274,29 +407,94 @@ export function GoalMenu({
   );
 }
 
-export function FlatExplanation({ goalId, initial }: { goalId: string; initial: string | null }) {
+/** An action on the goal (Approve, Lock baseline) that first saves anything typed into it. */
+export function GoalActionButton({
+  goalId,
+  url,
+  testId,
+  secondary,
+  expected,
+  children,
+}: {
+  goalId: string;
+  url: string;
+  /** For Approve: what the page shows of the goal (its wording, mastery criteria, and dates). */
+  expected?: Record<string, unknown>;
+  testId?: string;
+  secondary?: boolean;
+  children: ReactNode;
+}) {
   const router = useRouter();
-  const [text, setText] = useState(initial ?? "");
-  const [msg, setMsg] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   return (
-    <div>
-      <label>Flat progress: BCBA explanation (required before export)</label>
-      <textarea
-        data-testid={`flat-explanation-${goalId}`}
-        style={{ minHeight: 60, fontFamily: "inherit" }}
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-      />
+    <span>
       <button
+        data-testid={testId}
+        className={secondary ? "secondary" : undefined}
+        disabled={busy}
         onClick={async () => {
-          const r = await send(`/api/goals/${goalId}`, "PATCH", { flatExplanation: text.trim() || null });
-          setMsg(r.ok ? "Saved" : String(r.data.error));
+          setBusy(true);
+          setError(null);
+          const notSaved = await flushGoal(goalId);
+          if (notSaved) {
+            setBusy(false);
+            return setError(notSaved);
+          }
+          // Approve names what the approver was shown; a goal changed since is refused.
+          const r = await send(url, "POST", expected ? { expected: goalShownValues(goalId, expected) } : {});
+          setBusy(false);
+          if (!r.ok) {
+            setError(String(r.data.error ?? "Request failed"));
+            // The goal changed since the page showed it: show the latest.
+            if (r.status === 409) router.refresh();
+            return;
+          }
+          goalVersionChanged(goalId, r.data.updatedAt);
           router.refresh();
         }}
       >
-        Save explanation
+        {busy ? "Working…" : children}
       </button>
-      {msg && <span className="muted"> {msg}</span>}
+      {error && (
+        <div className="error" role="alert">
+          {error}
+        </div>
+      )}
+    </span>
+  );
+}
+
+/** The BCBA's explanation of flat progress; saves as you type. */
+export function FlatExplanation({
+  goalId,
+  updatedAt,
+  initial,
+}: {
+  goalId: string;
+  updatedAt: string;
+  initial: string | null;
+}) {
+  const { values, set, state, flush, resolve } = useGoalAutosave(goalId, updatedAt, {
+    flatExplanation: initial,
+  });
+  return (
+    <div>
+      <label htmlFor={`flat-explanation-${goalId}`}>
+        Flat progress: BCBA explanation (required before export)
+      </label>
+      <textarea
+        id={`flat-explanation-${goalId}`}
+        data-testid={`flat-explanation-${goalId}`}
+        style={{ minHeight: 60, fontFamily: "inherit" }}
+        value={values.flatExplanation ?? ""}
+        onChange={(e) =>
+          set("flatExplanation", e.target.value, e.target.value.trim() ? e.target.value : null)
+        }
+        onBlur={() => void flush()}
+      />
+      <FieldProblem field="flatExplanation" state={state} resolve={resolve} />
+      <SaveStatus state={state} fields={FLAT_FIELDS} testId={`flat-save-status-${goalId}`} />
     </div>
   );
 }
@@ -309,7 +507,16 @@ const STATUSES = [
   ["discontinued", "Discontinued"],
 ] as const;
 
-/** Dates, status, barriers, and settings: the parts of a goal record payors ask for besides the goal itself. */
+const splitSettings = (t: string) =>
+  t
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean);
+
+/**
+ * Dates, status, barriers, and settings: the parts of a goal record payors ask for besides the
+ * goal itself. Saves as you type; Discontinue and Resume (in the goal's menu) keep what is here.
+ */
 export function GoalRecordEditor({
   goal,
   canWrite,
@@ -317,6 +524,7 @@ export function GoalRecordEditor({
   goal: {
     id: string;
     ordinal: number;
+    updatedAt: string;
     introducedAt: string | null;
     projectedMasteryDate: string | null;
     progressStatus: string;
@@ -325,29 +533,34 @@ export function GoalRecordEditor({
   };
   canWrite: boolean;
 }) {
-  const router = useRouter();
-  const [g, setG] = useState(goal);
-  // Raw text while typing, so commas survive; split into settings on blur and save.
-  const [settingsText, setSettingsText] = useState(goal.settings.join(", "));
-  const splitSettings = (t: string) =>
-    t
-      .split(",")
-      .map((x) => x.trim())
-      .filter(Boolean);
-  const [msg, setMsg] = useState<string | null>(null);
+  const { id, ordinal, updatedAt, ...fields } = goal;
+  const { values: g, set, state, flush, revision, resolve } = useGoalAutosave(id, updatedAt, fields);
+  // Raw text while typing, so commas and spaces survive; saved as a list.
+  const [settingsText, setSettingsText] = useState(g.settings.join(", "));
+  useEffect(() => {
+    if (revision) setSettingsText(g.settings.join(", "));
+    // Only when a newer record came from the server, not on every keystroke.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [revision]);
   const dis = !canWrite;
+  const blur = () => void flush();
+  const datesNote = "Changing dates returns an approved goal to draft.";
   return (
-    <div data-testid={`goal-record-${goal.ordinal}`}>
+    <div data-testid={`goal-record-${ordinal}`}>
       <div className="row">
-        <label>Status</label>
+        <label htmlFor={`status-${id}`}>Status</label>
         {/* Discontinuing needs a reason and date, so it lives in the goal's menu (as does Resume). */}
         <select
-          disabled={dis || goal.progressStatus === "discontinued"}
+          id={`status-${id}`}
+          disabled={dis || goal.progressStatus === "discontinued" || g.progressStatus === "discontinued"}
           value={g.progressStatus}
-          title={goal.progressStatus === "discontinued" ? "Use Resume in the goal's menu" : undefined}
-          onChange={(e) => setG({ ...g, progressStatus: e.target.value })}
+          title={g.progressStatus === "discontinued" ? "Use Resume in the goal's menu" : undefined}
+          onChange={(e) => {
+            set("progressStatus", e.target.value);
+            void flush();
+          }}
         >
-          {STATUSES.filter(([v]) => v !== "discontinued" || goal.progressStatus === "discontinued").map(
+          {STATUSES.filter(([v]) => v !== "discontinued" || g.progressStatus === "discontinued").map(
             ([v, l]) => (
               <option key={v} value={v}>
                 {l}
@@ -355,66 +568,57 @@ export function GoalRecordEditor({
             ),
           )}
         </select>
-        <label>Introduced</label>
+        <label htmlFor={`introduced-${id}`}>Introduced</label>
         <input
+          id={`introduced-${id}`}
           type="date"
           disabled={dis}
+          title={datesNote}
           value={g.introducedAt ?? ""}
-          onChange={(e) => setG({ ...g, introducedAt: e.target.value || null })}
+          onChange={(e) => set("introducedAt", e.target.value || null)}
+          onBlur={blur}
         />
-        <label>Projected mastery</label>
+        <label htmlFor={`projected-${id}`}>Projected mastery</label>
         <input
+          id={`projected-${id}`}
           type="date"
           disabled={dis}
+          title={datesNote}
           value={g.projectedMasteryDate ?? ""}
-          onChange={(e) => setG({ ...g, projectedMasteryDate: e.target.value || null })}
+          onChange={(e) => set("projectedMasteryDate", e.target.value || null)}
+          onBlur={blur}
         />
       </div>
-      <label>Settings (comma separated)</label>
+      <FieldProblem field="progressStatus" state={state} resolve={resolve} />
+      <FieldProblem field="introducedAt" state={state} resolve={resolve} />
+      <FieldProblem field="projectedMasteryDate" state={state} resolve={resolve} />
+      <label htmlFor={`settings-${id}`}>Settings (comma separated)</label>
       <input
+        id={`settings-${id}`}
         disabled={dis}
         value={settingsText}
         placeholder="home, clinic"
-        onChange={(e) => setSettingsText(e.target.value)}
-        onBlur={() => setG({ ...g, settings: splitSettings(settingsText) })}
+        onChange={(e) => {
+          setSettingsText(e.target.value);
+          set("settings", splitSettings(e.target.value));
+        }}
+        onBlur={blur}
       />
-      <label>Barriers to progress and actions taken</label>
+      <FieldProblem field="settings" state={state} resolve={resolve} />
+      <label htmlFor={`barriers-${id}`}>Barriers to progress and actions taken</label>
       <textarea
+        id={`barriers-${id}`}
+        data-testid={`goal-barriers-${ordinal}`}
         disabled={dis}
         style={{ minHeight: 50, fontFamily: "inherit" }}
         value={g.barriers}
-        onChange={(e) => setG({ ...g, barriers: e.target.value })}
+        onChange={(e) => set("barriers", e.target.value)}
+        onBlur={blur}
       />
+      <FieldProblem field="barriers" state={state} resolve={resolve} />
       {canWrite && (
-        <button
-          className="secondary"
-          data-testid={`save-goal-record-${goal.ordinal}`}
-          onClick={async () => {
-            const current = { ...g, settings: splitSettings(settingsText) };
-            const changed = Object.fromEntries(
-              (Object.keys(current) as (keyof typeof current)[])
-                .filter(
-                  (k) =>
-                    k !== "id" && k !== "ordinal" && JSON.stringify(current[k]) !== JSON.stringify(goal[k]),
-                )
-                .map((k) => [k, current[k]]),
-            );
-            if (!Object.keys(changed).length) return setMsg("No changes");
-            const r = await send(`/api/goals/${goal.id}`, "PATCH", changed);
-            setMsg(
-              r.ok
-                ? "introducedAt" in changed || "projectedMasteryDate" in changed
-                  ? "Saved. Changing dates returns the goal to draft."
-                  : "Saved"
-                : String(r.data.error),
-            );
-            router.refresh();
-          }}
-        >
-          Save goal record
-        </button>
+        <SaveStatus state={state} fields={RECORD_FIELDS} testId={`goal-record-status-${ordinal}`} />
       )}
-      {msg && <span className="muted"> {msg}</span>}
     </div>
   );
 }

@@ -112,7 +112,7 @@ export default async function PlanPage({ params }: { params: Promise<{ id: strin
         {v.goals.map((g) => (
           <div key={g.id} style={{ marginBottom: 16 }}>
             <h3>
-              Goal {g.ordinal}: {g.domain} <span className={`badge ${g.status}`}>{g.status}</span>
+              {g.name} <span className={`badge ${g.status}`}>{g.status}</span>
               {g.progressStatus === "discontinued" && (
                 <>
                   {" "}

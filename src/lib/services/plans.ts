@@ -19,12 +19,21 @@ import { withOrg, type OrgCtx, type Tx } from "../db";
 import { toDay, type Day } from "../dates";
 import { renderTokens, validateBcbaText } from "../firewall";
 import { unresolvedPlaceholders } from "../goals/checks";
+import {
+  GOAL_APPROVED_FIELDS,
+  GOAL_CHANGED_BEFORE_APPROVAL,
+  GOAL_CHANGED_ELSEWHERE,
+  storedGoalValues,
+  type ApprovedGoalValues,
+  type GoalPatch,
+} from "../goals/goal-patch";
+import { goalNames } from "../goals/names";
 import { REMOVED_GOAL_PLACEHOLDER, goalTokenOrdinals, renumberGoalTokens } from "../goals/renumber";
 import { pseudonymNames } from "../intake/derive";
 import { INTAKE_FIELDS, isNa, type IntakeAnswers } from "../intake/schema";
 import { HttpError } from "../log";
 import { requirePermission } from "../permissions";
-import { buildSourcedContext, loadPlanBundle, type GoalStatus, type PlanBundle } from "../plan/context";
+import { buildSourcedContext, loadPlanBundle, type PlanBundle } from "../plan/context";
 import { baseline, BASELINE_POINTS } from "../plan/progress";
 import { lineDiff } from "../plan/diff";
 import { buildDraftPayload, DRAFT_SYSTEM_PROMPT, tidyDraft } from "../plan/drafting";
@@ -202,13 +211,16 @@ export async function planView(ctx: OrgCtx, planId: string, asOf: Day) {
       conditional: !!SECTION_BY_KEY.get(s.key)?.condition,
       notApplicableReason: ((s.items ?? {}) as Record<string, ItemState>)[NOT_APPLICABLE_ITEM]?.note ?? null,
     }));
+    // Goals are named, never numbered, in what readers see.
+    const names = goalNames(b.goals);
     const goals = b.goals.map((g) => ({
       ...g,
+      name: names.get(g.id)!,
       objectiveHtml: render(g.objective),
       rationaleHtml: render(g.rationale),
       placeholders: unresolvedPlaceholders(g.objective, g.rationale),
       graph: goalGraphSvg({
-        title: `Goal ${g.ordinal}: ${g.domain}`,
+        title: names.get(g.id)!,
         measure: g.measure,
         points: g.dataPoints.map((p) => ({ date: toDay(p.date), value: p.value })),
         phaseChanges: g.phaseChanges.map((p) => ({ date: toDay(p.date), label: p.label })),
@@ -709,75 +721,119 @@ export async function dropFromPlanSelections(tx: Tx, clientId: string, assessmen
 
 // ---------------------------------------------------------------- goals
 
-export async function approveGoal(ctx: OrgCtx, goalId: string) {
+/** Lock the goal's row for this transaction, so saves and approvals of one goal never interleave. */
+async function lockGoalRow(tx: Tx, goalId: string) {
+  await tx.$queryRaw`SELECT 1 FROM goal WHERE id = ${goalId}::uuid FOR UPDATE`;
+}
+
+const sameValue = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+
+/**
+ * Approve a goal. `expected` is what the approver was shown (its wording, mastery criteria, and
+ * dates): if the goal now says anything else (an autosave from another tab or person landed
+ * meanwhile), nothing is approved (409), so text nobody reviewed is never approved.
+ */
+export async function approveGoal(ctx: OrgCtx, goalId: string, opts: { expected?: ApprovedGoalValues } = {}) {
   requirePermission(ctx.role, "goal:approve");
   return withOrg(ctx, async (tx) => {
     await assertGoalClientActive(tx, goalId);
+    await lockGoalRow(tx, goalId);
     const g = await tx.goal.findUniqueOrThrow({ where: { id: goalId } });
+    if (opts.expected) {
+      const now = storedGoalValues(g);
+      if (GOAL_APPROVED_FIELDS.some((k) => !sameValue(now[k], opts.expected![k])))
+        throw new HttpError(409, GOAL_CHANGED_BEFORE_APPROVAL);
+    }
     const ph = unresolvedPlaceholders(g.objective, g.rationale, g.sd, g.targetBehavior);
     if (ph.length) throw new HttpError(422, `Goal has unresolved placeholders: ${ph.join(", ")}`);
-    await tx.goal.update({
+    const saved = await tx.goal.update({
       where: { id: goalId },
       data: { status: "approved", approvedById: ctx.userId, approvedAt: new Date() },
     });
     await audit(tx, { action: "goal:approve", entityType: "Goal", entityId: goalId });
+    return { updatedAt: saved.updatedAt.toISOString() };
   });
 }
+
+export type GoalSaveResult = {
+  /** The goal's new version, for the editor's next save. */
+  updatedAt: string;
+  status: string;
+  /** The save changed what an approved goal says, so it went back to draft for approval. */
+  returnedToDraft: boolean;
+};
 
 export async function updateGoal(
   ctx: OrgCtx,
   goalId: string,
-  data: {
-    objective?: string;
-    rationale?: string;
-    flatExplanation?: string | null;
-    masteryAccuracyPct?: number;
-    masteryConsecutiveSessions?: number;
-    masteryInstructors?: number;
-    introducedAt?: Day | null;
-    projectedMasteryDate?: Day | null;
-    progressStatus?: GoalStatus;
-    barriers?: string;
-    settings?: string[];
-  },
-) {
+  data: GoalPatch,
+  opts: { base?: Record<string, unknown>; baseAlt?: Record<string, unknown> } = {},
+): Promise<GoalSaveResult> {
   requirePermission(ctx.role, "goal:write");
   if (data.progressStatus === "discontinued")
     throw new HttpError(422, "Use Discontinue in the goal's menu: it records the date and your reason.");
   return withOrg(ctx, async (tx) => {
     await assertGoalClientActive(tx, goalId);
-    if (data.progressStatus !== undefined) {
-      const cur = await tx.goal.findUniqueOrThrow({ where: { id: goalId } });
-      if (cur.progressStatus === "discontinued")
-        throw new HttpError(422, "This goal is discontinued. Use Resume in the goal's menu first.");
+    await lockGoalRow(tx, goalId);
+    const cur = await tx.goal.findUniqueOrThrow({ where: { id: goalId } });
+    // Per-field optimistic concurrency: an editor names the value each field held when it was
+    // edited. Only a field someone else changed meanwhile conflicts (a field already holding the
+    // new value does not); changes to other fields, or to the goal's position, plan, approval, or
+    // baseline, never do. Nothing is saved on a conflict; the editor gets the current values.
+    if (opts.base) {
+      const now = storedGoalValues(cur);
+      const sent = Object.keys(data) as (keyof typeof now)[];
+      const conflicts = sent.filter(
+        (k) =>
+          Object.hasOwn(opts.base!, k) &&
+          !sameValue(now[k], opts.base![k]) &&
+          !(opts.baseAlt && Object.hasOwn(opts.baseAlt, k) && sameValue(now[k], opts.baseAlt[k])) &&
+          !sameValue(now[k], data[k]),
+      );
+      if (conflicts.length)
+        throw new HttpError(409, GOAL_CHANGED_ELSEWHERE, undefined, {
+          conflict: {
+            fields: conflicts,
+            current: Object.fromEntries(sent.map((k) => [k, now[k]])),
+            updatedAt: cur.updatedAt.toISOString(),
+          },
+        });
     }
+    if (data.progressStatus !== undefined && cur.progressStatus === "discontinued")
+      throw new HttpError(422, "This goal is discontinued. Use Resume in the goal's menu first.");
     // Changing what the goal says (including its dates) sends it back for approval;
-    // status, barriers, settings, and a flat-progress explanation do not.
-    const changesContent = [
-      "objective",
-      "rationale",
-      "masteryAccuracyPct",
-      "masteryConsecutiveSessions",
-      "masteryInstructors",
-      "introducedAt",
-      "projectedMasteryDate",
-    ].some((k) => k in data);
+    // status, barriers, settings, and a flat-progress explanation do not. Only real changes count.
     const day = (d: Day | null | undefined) =>
       d === undefined ? undefined : d === null ? null : new Date(`${d}T00:00:00Z`);
     const { introducedAt, projectedMasteryDate, ...rest } = data;
     const intro = day(introducedAt);
     const projected = day(projectedMasteryDate);
+    const sameDay = (a: Date | null, b: Date | null | undefined) =>
+      b === undefined || (a === null ? b === null : b !== null && a.getTime() === b.getTime());
+    const changesContent =
+      (
+        [
+          "objective",
+          "rationale",
+          "masteryAccuracyPct",
+          "masteryConsecutiveSessions",
+          "masteryInstructors",
+        ] as const
+      ).some((k) => data[k] !== undefined && data[k] !== cur[k]) ||
+      !sameDay(cur.introducedAt, intro) ||
+      !sameDay(cur.projectedMasteryDate, projected);
     if (intro !== undefined || projected !== undefined) {
-      const g = await tx.goal.findUniqueOrThrow({ where: { id: goalId } });
-      const i = intro === undefined ? g.introducedAt : intro;
-      const pm = projected === undefined ? g.projectedMasteryDate : projected;
+      const i = intro === undefined ? cur.introducedAt : intro;
+      const pm = projected === undefined ? cur.projectedMasteryDate : projected;
       if (i && pm && pm < i)
         throw new HttpError(422, "Projected mastery cannot be before the date introduced");
-      if (intro && g.discontinuedOn && intro > g.discontinuedOn)
+      if (intro && cur.discontinuedOn && intro > cur.discontinuedOn)
         throw new HttpError(422, "The date introduced cannot be after the date discontinued");
     }
-    await tx.goal.update({
-      where: { id: goalId },
+    const returnedToDraft = changesContent && cur.status === "approved";
+    // Guarded on the version read above, so two saves never interleave.
+    const r = await tx.goal.updateMany({
+      where: { id: goalId, updatedAt: cur.updatedAt },
       data: {
         ...rest,
         ...(intro !== undefined ? { introducedAt: intro } : {}),
@@ -785,12 +841,19 @@ export async function updateGoal(
         ...(changesContent ? { status: "draft", approvedAt: null, approvedById: null } : {}),
       },
     });
+    if (r.count !== 1) throw new HttpError(409, GOAL_CHANGED_ELSEWHERE);
+    const saved = await tx.goal.findUniqueOrThrow({
+      where: { id: goalId },
+      select: { updatedAt: true, status: true },
+    });
+    // One row per save (the editors debounce typing), with field names only: never goal text.
     await audit(tx, {
       action: "goal:update",
       entityType: "Goal",
       entityId: goalId,
-      meta: { fields: Object.keys(data) },
+      meta: { fields: Object.keys(data), ...(returnedToDraft ? { returnedToDraft: true } : {}) },
     });
+    return { updatedAt: saved.updatedAt.toISOString(), status: saved.status, returnedToDraft };
   });
 }
 
@@ -825,7 +888,12 @@ export async function lockGoalBaseline(ctx: OrgCtx, goalId: string) {
     });
     if (r.count === 0) throw new HttpError(409, "This goal's baseline is already locked");
     await audit(tx, { action: "goal:lock_baseline", entityType: "Goal", entityId: goalId, meta: { date } });
-    return { value, date };
+    const { updatedAt } = await tx.goal.findUniqueOrThrow({
+      where: { id: goalId },
+      select: { updatedAt: true },
+    });
+    // The goal's new version, so the page's autosave moves to it.
+    return { value, date, updatedAt: updatedAt.toISOString() };
   });
 }
 
@@ -864,6 +932,12 @@ function sectionCoversGoal(key: string, text: string, g: { ordinal: number; cate
 }
 
 const DISCONTINUE_INSTEAD = "Discontinue it instead.";
+export const USED_IN_APPROVED_TEXT = `This goal is used in approved plan text. ${DISCONTINUE_INSTEAD}`;
+
+/** The plan's packet was exported or submitted (at any time). */
+function packetWentOut(pk: { status: string; exportedAt: Date | null; submittedAt: Date | null } | null) {
+  return !!pk && (!!pk.exportedAt || !!pk.submittedAt || pk.status === "submitted");
+}
 
 /**
  * Why a goal cannot be removed, or null when it can: only a goal added by mistake (no data,
@@ -875,6 +949,13 @@ export function goalRemovalBlocker(goal: RemovableGoal, rc: GoalRemovalContext):
     return `This goal's baseline is locked, so it can't be removed. ${DISCONTINUE_INSTEAD}`;
   if (goal.status === "approved" || goal.approvedAt)
     return `This goal was approved, so it can't be removed. ${DISCONTINUE_INSTEAD}`;
+  // Approved, finalized, or exported text that shows this goal's own values would change.
+  for (const p of rc.plans) {
+    const fixed = p.status === "finalized" || packetWentOut(p.packet);
+    for (const s of p.sections)
+      if ((fixed || s.state === "approved") && goalTokenOrdinals(s.content).includes(goal.ordinal))
+        return USED_IN_APPROVED_TEXT;
+  }
   const since = goal.createdAt;
   for (const p of rc.plans) {
     if (p.status === "finalized" && (!p.finalizedAt || p.finalizedAt >= since))
@@ -898,18 +979,15 @@ export function goalRemovalBlocker(goal: RemovableGoal, rc: GoalRemovalContext):
         return `This goal is part of an approved plan section, so it can't be removed. ${DISCONTINUE_INSTEAD}`;
     }
   }
-  // Removing renumbers later goals; approved text that refers to them by number must not change.
-  for (const p of rc.plans)
-    for (const s of p.sections)
-      if (
-        (s.state === "approved" || p.status === "finalized") &&
-        goalTokenOrdinals(s.content).some((k) => k > goal.ordinal)
-      )
-        return `A later goal is referred to in an approved plan section, and removing this one would renumber it. Reopen that section first, or discontinue this goal instead.`;
   return null;
 }
 
-/** Remove a goal added by mistake. Later goals move down one; drafted sections that covered it are marked for redraft. */
+/**
+ * Remove a goal added by mistake. Later goals move down one. Goals are never numbered in what
+ * readers see, so moving the value references ({{goal.4.x}} becomes {{goal.3.x}}) changes no
+ * rendered text: approved sections are rewritten too and stay approved (a "goal_renumbered"
+ * revision records it). Drafted sections that covered the removed goal are marked for redraft.
+ */
 export async function removeGoal(ctx: OrgCtx, goalId: string) {
   requirePermission(ctx.role, "goal:approve");
   return withOrg(ctx, async (tx) => {
@@ -1012,6 +1090,43 @@ export async function removeGoal(ctx: OrgCtx, goalId: string) {
           },
         });
     }
+    // Everything else that refers to a later goal (approved sections, finalized plans): the same
+    // goal records, renumbered. The blocker above guarantees none refers to the removed goal.
+    const redrafted = new Set(toRedraft.map((s) => s.id));
+    const toRenumber = rc.plans
+      .flatMap((p) => p.sections)
+      .filter(
+        (s) =>
+          !redrafted.has(s.id) &&
+          goalTokenOrdinals(`${s.content}\n${s.aiDraft ?? ""}`).some((k) => k > removed),
+      );
+    for (const s of toRenumber) {
+      const content = re(s.content);
+      const aiDraft = s.aiDraft === null ? null : re(s.aiDraft);
+      // (The stored AI draft is never shown as approved text; a reference to the removed goal there
+      // becomes the placeholder, as in any draft.)
+      if (content.includes(REMOVED_GOAL_PLACEHOLDER)) throw new HttpError(409, USED_IN_APPROVED_TEXT);
+      // Guarded like the redraft above; the state, approval, and approver are left as they are.
+      const updated = await tx.planSection.updateMany({
+        where: { id: s.id, state: s.state, content: s.content },
+        data: { content, aiDraft },
+      });
+      if (updated.count !== 1)
+        throw new HttpError(
+          409,
+          "A plan section changed while the goal was being removed. Nothing was changed; try again.",
+        );
+      await tx.planSectionRevision.create({
+        data: {
+          orgId: ctx.orgId,
+          sectionId: s.id,
+          kind: "goal_renumbered",
+          content,
+          diff: lineDiff(s.content, content),
+          userId: ctx.userId,
+        },
+      });
+    }
     // The goal's domain and category only: no goal text.
     await audit(tx, {
       action: "goal:remove",
@@ -1024,6 +1139,7 @@ export async function removeGoal(ctx: OrgCtx, goalId: string) {
         ordinal: removed,
         renumbered: later.length,
         sectionsToRedraft: toRedraft.length,
+        sectionsRenumbered: toRenumber.length,
       },
     });
   });
@@ -1059,7 +1175,7 @@ export async function discontinueGoal(
     if (g.progressStatus === "discontinued") throw new HttpError(409, "This goal is already discontinued");
     if (g.introducedAt && input.date < toDay(g.introducedAt))
       throw new HttpError(422, "The date discontinued cannot be before the date introduced");
-    await tx.goal.update({
+    const saved = await tx.goal.update({
       where: { id: goalId },
       data: {
         progressStatus: "discontinued",
@@ -1074,6 +1190,7 @@ export async function discontinueGoal(
       // The date is a plain value; the reason is free text, so only its hash is kept.
       meta: { from: g.progressStatus, discontinuedOn: input.date, reasonHash: sha256(reason) },
     });
+    return { updatedAt: saved.updatedAt.toISOString() };
   });
 }
 
@@ -1098,6 +1215,8 @@ export async function resumeGoal(ctx: OrgCtx, goalId: string) {
         reasonHash: g.discontinuedReason ? sha256(g.discontinuedReason) : null,
       },
     });
+    const saved = await tx.goal.findUniqueOrThrow({ where: { id: goalId }, select: { updatedAt: true } });
+    return { updatedAt: saved.updatedAt.toISOString() };
   });
 }
 

@@ -3,6 +3,7 @@
  * blocks export. Payor rules come from the evaluator: unverified rules can only
  * warn, so they never block.
  */
+import { goalNames } from "../goals/names";
 import { assessmentCatalog } from "../assessments/catalog";
 import { assessmentItem } from "../assessments/view";
 import { diffDays, toDay, type Day } from "../dates";
@@ -48,12 +49,16 @@ export function runPresubmissionAudit(
   const authStart = b.auth ? toDay(b.auth.startDate) : null;
   const windowStart = authStart && b.plan.type === "reauth" ? authStart : null;
 
+  // Goals are named, never numbered, in what the BCBA reads.
+  const names = goalNames(b.goals);
+  const nameOf = (id: string) => names.get(id) ?? "A goal";
+
   // ---- Graphs
   for (const g of b.goals) {
     const pts = g.dataPoints
       .map((p) => ({ date: toDay(p.date), value: p.value }))
       .filter((p) => !windowStart || p.date >= windowStart || b.plan.type === "reauth");
-    const label = `Goal ${g.ordinal} (${g.domain})`;
+    const label = nameOf(g.id);
     if (!pts.length) {
       push({
         id: `graph.missing.${g.ordinal}`,
@@ -119,7 +124,7 @@ export function runPresubmissionAudit(
     message: unlinked.length
       ? `${unlinked.length} goal(s) not linked to a diagnosis deficit area`
       : "Every goal is linked to a diagnosed deficit area",
-    details: unlinked.map((id) => `Goal ${b.goals.find((g) => g.id === id)?.ordinal}`),
+    details: unlinked.map((id) => nameOf(id)),
   });
   for (const g of b.goals) {
     const ph = unresolvedPlaceholders(g.objective, g.rationale, g.sd, g.targetBehavior);
@@ -128,7 +133,7 @@ export function runPresubmissionAudit(
         id: `goals.placeholder.${g.ordinal}`,
         category: "Goals",
         status: "fail",
-        message: `Goal ${g.ordinal}: unresolved placeholders ${ph.join(", ")}`,
+        message: `${nameOf(g.id)}: unresolved placeholders ${ph.join(", ")}`,
         goalId: g.id,
       });
     // Dated goal records: when a goal was introduced and when mastery is expected.
@@ -144,7 +149,7 @@ export function runPresubmissionAudit(
         id: `goals.record.${g.ordinal}`,
         category: "Goals",
         status: "warn",
-        message: `Goal ${g.ordinal}: no ${missingDates.join(", ")}`,
+        message: `${nameOf(g.id)}: no ${missingDates.join(", ")}`,
         goalId: g.id,
         action: "Complete the goal record on the goals page",
       });
@@ -153,7 +158,7 @@ export function runPresubmissionAudit(
         id: `goals.approved.${g.ordinal}`,
         category: "Goals",
         status: "fail",
-        message: `Goal ${g.ordinal} is not approved by the BCBA`,
+        message: `${nameOf(g.id)} is not approved by the BCBA`,
         goalId: g.id,
       });
   }
@@ -165,10 +170,7 @@ export function runPresubmissionAudit(
     message: dups.length
       ? `${dups.length} pair(s) of goals with near-identical rationale text`
       : "Rationales are distinct",
-    details: dups.map(
-      (d) =>
-        `Goal ${b.goals.find((g) => g.id === d.a)?.ordinal} and goal ${b.goals.find((g) => g.id === d.b)?.ordinal} (similarity ${d.similarity})`,
-    ),
+    details: dups.map((d) => `${nameOf(d.a)} and ${nameOf(d.b)} (similarity ${d.similarity})`),
   });
   for (const c of requiredCategoryChecks(goalLikes))
     push({
@@ -228,7 +230,7 @@ export function runPresubmissionAudit(
       message: missing.length
         ? `Progress summary is thin: ${missing.length} goal(s) lack a baseline-vs-current comparison`
         : "Progress summary compares baseline and current data for every goal",
-      details: missing.map((g) => `Goal ${g.ordinal} (${g.domain})`),
+      details: missing.map((g) => nameOf(g.id)),
     });
   }
 

@@ -1,8 +1,8 @@
 /**
- * Goal values are referenced by number ({{goal.3.baseline_pct}}). When a goal
- * added by mistake is removed, later goals move down one so the plan reads
- * "Goal 1, 2, 3" without gaps; their tokens move with them, so every reference
- * still points at the same goal record.
+ * Goal values are referenced internally by the goal's position ({{goal.3.baseline_pct}}); readers
+ * never see that number (goals are named, not numbered). When a goal added by mistake is removed,
+ * later goals move down one and their tokens move with them, so every reference still points at
+ * the same goal record and renders exactly as before.
  */
 
 /** Stands in for a reference to a removed goal: an unresolved bracket blocks approval until the BCBA fixes it. */

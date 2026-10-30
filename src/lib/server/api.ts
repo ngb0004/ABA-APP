@@ -41,7 +41,7 @@ export function assertSameOrigin(req: Request) {
 export function errorResponse(e: unknown) {
   if (e instanceof HttpError)
     return NextResponse.json(
-      { error: e.message, ...(e.issues?.length ? { issues: e.issues } : {}) },
+      { ...e.data, error: e.message, ...(e.issues?.length ? { issues: e.issues } : {}) },
       { status: e.status },
     );
   if (e instanceof ZodError)

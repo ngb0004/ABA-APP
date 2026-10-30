@@ -10,18 +10,13 @@ import { addDays, diffDays, toDay, type Day } from "../dates";
 import { SourcedContext, type SourcedValue } from "../firewall";
 import { availableHoursPerWeek } from "../intake/derive";
 import { DAYS, valueOf, type IntakeAnswers } from "../intake/schema";
+import { goalNames, stableGoalName } from "../goals/names";
 import { computeUtilization, type UnitBasis } from "../utilization";
 import { baseline, current, flatProgress } from "./progress";
 
-export const GOAL_STATUSES = ["new", "in_progress", "mastered", "on_hold", "discontinued"] as const;
-export type GoalStatus = (typeof GOAL_STATUSES)[number];
-export const GOAL_STATUS_LABEL: Record<GoalStatus, string> = {
-  new: "new",
-  in_progress: "in progress",
-  mastered: "mastered",
-  on_hold: "on hold",
-  discontinued: "discontinued",
-};
+import { GOAL_STATUSES, GOAL_STATUS_LABEL, type GoalStatus } from "../goals/status";
+
+export { GOAL_STATUSES, GOAL_STATUS_LABEL, type GoalStatus };
 
 export async function loadPlanBundle(tx: Tx, planId: string) {
   const plan = await tx.plan.findUniqueOrThrow({
@@ -489,13 +484,28 @@ export function buildSourcedContext(b: ClientData, asOf: Day): SourcedContext {
   if (selected?.length)
     for (const v of assessmentValues(assessmentCatalog(), c.id, b.assessments, selected)) add(v);
 
+  // Readers see goals by name, never by number; the token keys keep the goal's position.
+  const names = goalNames(b.goals);
   for (const g of b.goals) {
     const n = g.ordinal;
-    const gHref = `${clientHref}/goals#goal-${n}`;
+    const name = names.get(g.id) ?? `${g.domain} goal`;
+    // Hover text and sources name the goal by itself alone, so they never change with other goals.
+    const stable = stableGoalName(g);
+    const gHref = `${clientHref}/goals#goal-${g.id}`;
+    // Rendered links name the goal record, not its position, so removing an earlier goal (which
+    // renumbers the tokens) leaves approved text rendering exactly as it did.
+    const anchor = (field: string) => `goal-${g.id}.${field}`;
     const pts = g.dataPoints.map((p) => ({ date: toDay(p.date), value: p.value }));
     const kind = goalKeyKind(g.measure);
     const unit = measureUnit(g.measure);
     const src = (description: string) => ({ kind: "goal_data_point", id: g.id, description, href: gHref });
+    const addGoal = (field: string, v: Omit<SourcedValue, "key" | "anchor" | "title">) =>
+      add({
+        ...v,
+        key: `goal.${n}.${field}`,
+        anchor: anchor(field),
+        title: `${stable}${v.label.slice(name.length)}. Source: ${v.source.description}`,
+      });
     // A locked baseline (recorded and dated by the BCBA) wins over the computed one.
     const locked = g.baselineLockedAt && g.baselineValue !== null && g.baselineDate;
     const bl = locked ? g.baselineValue : baseline(pts);
@@ -507,9 +517,8 @@ export function buildSourcedContext(b: ClientData, asOf: Day): SourcedContext {
         ? "improving"
         : "decreasing";
     if (bl !== null)
-      add({
-        key: `goal.${n}.baseline_${kind}`,
-        label: `Goal ${n} (${g.domain}) baseline`,
+      addGoal(`baseline_${kind}`, {
+        label: `${name} baseline`,
         value: bl,
         display: `${fmt(bl)}${unit}`,
         source: locked
@@ -517,22 +526,21 @@ export function buildSourcedContext(b: ClientData, asOf: Day): SourcedContext {
               kind: "goal",
               id: g.id,
               field: "baselineValue",
-              description: `Goal ${n} baseline, locked ${usDate(toDay(g.baselineDate!))}`,
+              description: `${stable} baseline, locked ${usDate(toDay(g.baselineDate!))}`,
               href: gHref,
             }
-          : src(`Mean of the first three data points for goal ${n}`),
+          : src(`Mean of the first three data points for the ${stable}`),
       });
     if (locked)
-      add({
-        key: `goal.${n}.baseline_date`,
-        label: `Goal ${n} (${g.domain}) baseline date`,
+      addGoal("baseline_date", {
+        label: `${name} baseline date`,
         value: toDay(g.baselineDate!),
         display: usDate(toDay(g.baselineDate!)),
         source: {
           kind: "goal",
           id: g.id,
           field: "baselineDate",
-          description: `Goal ${n} baseline date`,
+          description: `${stable} baseline date`,
           href: gHref,
         },
       });
@@ -544,54 +552,48 @@ export function buildSourcedContext(b: ClientData, asOf: Day): SourcedContext {
     ] as const) {
       const d = g[field];
       if (d)
-        add({
-          key: `goal.${n}.${key}`,
-          label: `Goal ${n} (${g.domain}) ${label}`,
+        addGoal(key, {
+          label: `${name} ${label}`,
           value: toDay(d),
           display: usDate(toDay(d)),
-          source: { kind: "goal", id: g.id, field, description: `Goal ${n} ${label}`, href: gHref },
+          source: { kind: "goal", id: g.id, field, description: `${stable} ${label}`, href: gHref },
         });
     }
     if (cur !== null)
-      add({
-        key: `goal.${n}.current_${kind}`,
-        label: `Goal ${n} (${g.domain}) current level`,
+      addGoal(`current_${kind}`, {
+        label: `${name} current level`,
         value: cur,
         display: `${fmt(cur)}${unit}`,
-        source: src(`Mean of the last three data points for goal ${n}`),
+        source: src(`Mean of the last three data points for the ${stable}`),
         facts: [trend],
       });
-    add({
-      key: `goal.${n}.datapoints`,
-      label: `Goal ${n} number of data points${UNIT_NOTE}`,
+    addGoal("datapoints", {
+      label: `${name} number of data points${UNIT_NOTE}`,
       value: pts.length,
       display: withUnit(pts.length, "data point"),
-      source: src(`Data points recorded for goal ${n}`),
+      source: src(`Data points recorded for the ${stable}`),
     });
     const gsrc = (field: string) => ({
       kind: "goal",
       id: g.id,
       field,
-      description: `Goal ${n} mastery criteria`,
+      description: `${stable} mastery criteria`,
       href: gHref,
     });
-    add({
-      key: `goal.${n}.mastery_pct`,
-      label: `Goal ${n} mastery accuracy`,
+    addGoal("mastery_pct", {
+      label: `${name} mastery accuracy`,
       value: g.masteryAccuracyPct,
       display: `${g.masteryAccuracyPct}%`,
       source: gsrc("masteryAccuracyPct"),
     });
-    add({
-      key: `goal.${n}.mastery_sessions`,
-      label: `Goal ${n} consecutive sessions for mastery`,
+    addGoal("mastery_sessions", {
+      label: `${name} consecutive sessions for mastery`,
       value: g.masteryConsecutiveSessions,
       display: String(g.masteryConsecutiveSessions),
       source: gsrc("masteryConsecutiveSessions"),
     });
-    add({
-      key: `goal.${n}.mastery_people`,
-      label: `Goal ${n} instructors for mastery`,
+    addGoal("mastery_people", {
+      label: `${name} instructors for mastery`,
       value: g.masteryInstructors,
       display: String(g.masteryInstructors),
       source: gsrc("masteryInstructors"),

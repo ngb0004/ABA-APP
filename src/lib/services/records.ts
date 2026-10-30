@@ -26,7 +26,7 @@ import {
 } from "../payors/benefits";
 import { PLAN_TYPES, US_STATES, type PlanType } from "../payors/types";
 import { isDemo } from "../demo";
-import { PRACTICE_TIME_ZONE_IDS } from "../time-format";
+import { isPracticeTimeZone } from "../time-format";
 import { requirePermission } from "../permissions";
 import { assertClientActive, assertGoalClientActive } from "./client-status";
 
@@ -332,7 +332,10 @@ export const SettingsSchema = z.object({
     .optional()
     .transform((v) => (v ? [...new Set(v)].sort() : undefined)),
   /** Times across the app are shown in this zone (12-hour clock). Optional so older clients keep it. */
-  timeZone: z.enum(PRACTICE_TIME_ZONE_IDS, "Choose a time zone").optional(),
+  timeZone: z
+    .string("Choose a time zone")
+    .refine(isPracticeTimeZone, "Choose a time zone from the list")
+    .optional(),
 });
 
 export const NewMemberSchema = z.object({

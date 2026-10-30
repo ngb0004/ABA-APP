@@ -9,6 +9,7 @@ import { assessmentsForModel, usedAssessments } from "../assessments/plan";
 import type { SourcedContext } from "../firewall";
 import { intakeForAi, safetyFlags, type PseudonymNames } from "../intake/derive";
 import { INTAKE_FIELDS, type IntakeAnswers } from "../intake/schema";
+import { goalNames } from "../goals/names";
 import { goalKeyKind, levelToken, type PlanBundle } from "./context";
 import { sectionTakesField, type SectionDef } from "./sections";
 
@@ -18,7 +19,7 @@ Write two or three short paragraphs of plain clinical prose, ready to submit. No
 
 Use only the information provided. Never invent operational definitions, procedures, policies, history, diagnoses, assessment results, emergency details, contacts, locations, settings, or dates. When something the section needs is not provided, write one short bracketed note for the BCBA in its place, such as "[BCBA: add the operational definition of hitting]". Those notes block export until the BCBA replaces them, so use them only for missing information, keep them short, and use no more than two per section.
 
-Cover only this section's topic. The plan's other sections are listed in otherSections; do not repeat their content, and do not contradict them. Goal progress figures (baseline and current levels, mastery criteria) belong only to the goal sections that are given them; elsewhere, refer to goals by number or domain without restating figures. Never restate a goal's target, criterion, or mastery requirement in your own words (for example, do not turn "fewer than one episode" into "no episodes"); the goal records are printed with the plan and carry those details.
+Cover only this section's topic. The plan's other sections are listed in otherSections; do not repeat their content, and do not contradict them. Goal progress figures (baseline and current levels, mastery criteria) belong only to the goal sections that are given them; elsewhere, refer to goals by their skill or domain without restating figures. Goals are not numbered in the plan: never refer to a goal by a number or position (not "Goal 2", "goal #2", or "the second goal"); name it by its skill or domain instead, such as "the manding goal" or "the goal for reducing elopement". Never restate a goal's target, criterion, or mastery requirement in your own words (for example, do not turn "fewer than one episode" into "no episodes"); the goal records are printed with the plan and carry those details.
 
 Values whose labels say "reported at intake" are what caregivers estimated before or at the start of services; they are not current performance. Current performance comes only from goal data. Never present an intake estimate as current, and do not claim risks (such as injury) that the information does not state.
 
@@ -50,6 +51,7 @@ export function buildDraftPayload(input: {
   const goalsFor = def.context?.goals;
   const goals = goalsFor ? b.goals.filter((g) => goalsFor === true || goalsFor.includes(g.category)) : [];
   const figures = !!def.context?.goalFigures;
+  const goalNamesById = goalNames(b.goals);
   const payload: Record<string, unknown> = {
     task: "draft_section",
     sectionKey: def.key,
@@ -70,7 +72,9 @@ export function buildDraftPayload(input: {
   };
   if (goalsFor)
     payload.goals = goals.map((g) => ({
-      goalNumber: `goal.${g.ordinal}`,
+      // How the plan names the goal (never a number), and the prefix of its value keys.
+      name: goalNamesById.get(g.id),
+      valuePrefix: `goal.${g.ordinal}.`,
       domain: g.domain,
       category: g.category,
       measure: g.measure,

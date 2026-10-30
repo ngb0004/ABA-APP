@@ -38,7 +38,15 @@ export function RowMenu(props: {
     /** A link to another page. */
     | { href: string; form?: never; content?: never; request?: never }
   ))[];
-  remove?: { url: string; label?: string; confirm: string };
+  remove?: {
+    url: string;
+    label?: string;
+    confirm: string;
+    /** Runs after the confirm and before the request (e.g. save what was typed first). */
+    before?: () => Promise<unknown>;
+    /** Runs after a successful removal, before the page refreshes. */
+    after?: () => void;
+  };
   testId?: string;
 }) {
   const router = useRouter();
@@ -74,7 +82,20 @@ export function RowMenu(props: {
   const action = typeof dialog === "number" ? props.actions?.[dialog] : undefined;
   const form = dialog === "edit" ? props.edit : action?.form;
   const close = () => setDialog(null);
-  const title = action ? (action.title ?? `${action.label}: ${props.name}`) : `Edit ${props.name}`;
+  const titleFor = (d: "edit" | number) => {
+    const a = typeof d === "number" ? props.actions?.[d] : undefined;
+    return a ? (a.title ?? `${a.label}: ${props.name}`) : `Edit ${props.name}`;
+  };
+  /**
+   * The dialog's title, fixed when it opens: a name made from text being edited (a goal's name
+   * comes from its objective, which autosaves) must not change under the person typing.
+   */
+  const [openTitle, setOpenTitle] = useState("");
+  const openDialog = (d: "edit" | number) => {
+    setOpenTitle(titleFor(d));
+    setDialog(d);
+  };
+  const title = openTitle || (dialog !== null ? titleFor(dialog) : "");
 
   async function request(r: { url: string; method?: "POST" | "DELETE"; confirm?: string }) {
     setOpen(false);
@@ -98,9 +119,11 @@ export function RowMenu(props: {
     if (!props.remove || !window.confirm(props.remove.confirm)) return;
     setBusy(true);
     setError(null);
+    await props.remove.before?.();
     const r = await send(props.remove.url, "DELETE", {});
     setBusy(false);
     if (!r.ok) return setError(String(r.data.error ?? "Request failed"));
+    props.remove.after?.();
     router.refresh();
   }
 
@@ -125,7 +148,7 @@ export function RowMenu(props: {
               role="menuitem"
               onClick={() => {
                 setOpen(false);
-                setDialog("edit");
+                openDialog("edit");
               }}
             >
               Edit
@@ -140,7 +163,7 @@ export function RowMenu(props: {
                 if (a.request) return void request(a.request);
                 setOpen(false);
                 if (a.href) return router.push(a.href);
-                setDialog(i);
+                openDialog(i);
               }}
             >
               {a.label}

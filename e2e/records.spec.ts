@@ -241,6 +241,16 @@ test("goal data entry by an RBT, and practice settings and team by a BCBA", asyn
   await s.getByLabel(/Submit reauths/).fill("28");
   // Times across the app show in the practice's zone: Eastern until chosen.
   await expect(s.getByLabel(/^Time zone/)).toHaveValue("America/New_York");
+  // Common US zones first, then every other zone by region.
+  await expect(
+    s
+      .getByLabel(/^Time zone/)
+      .locator("optgroup")
+      .first(),
+  ).toHaveAttribute("label", "Common US zones");
+  await expect(
+    s.getByLabel(/^Time zone/).locator('optgroup[label="Europe"] option[value="Europe/London"]'),
+  ).toHaveText("London (Europe/London)");
   // States served default to the office states (GA): chips with full names, not a wall of checkboxes.
   const picked = s.getByTestId("picked-statesServed");
   await expect(picked).toHaveText(/Georgia \(GA\)/);
@@ -327,7 +337,9 @@ test("a BCBA removes a goal added by mistake and discontinues a goal with data, 
   // One menu per goal card; no loose Edit button.
   await expect(page.getByRole("button", { name: "Edit goal" })).toHaveCount(0);
 
-  // Goal 1 gets data, so it can only be discontinued.
+  // Goals are named, never numbered.
+  await expect(page.locator('div.panel[id^="goal-"] h2').first()).not.toContainText(/Goal \d/);
+  // The first goal gets data, so it can only be discontinued.
   const box = page.getByTestId("goal-data-1");
   await box.locator("summary").click();
   const form = page.getByTestId("data-form-1");
@@ -335,16 +347,22 @@ test("a BCBA removes a goal added by mistake and discontinues a goal with data, 
   await form.getByLabel(/Percent correct|Count per session|Minutes/).fill("40");
   await form.getByTestId("data-form-1-submit").click();
   await expect(box).toContainText("2026-10-20");
-  await page.getByRole("button", { name: "Actions for Goal 1" }).click();
+  await page
+    .getByTestId("goal-menu-1")
+    .getByRole("button", { name: /^Actions for / })
+    .click();
   await expect(page.getByRole("menuitem", { name: "Remove", exact: true })).toHaveCount(0);
   // "Remove…" says why it can't be removed instead of deleting.
   await page.getByRole("menuitem", { name: "Remove…" }).click();
-  const why = page.getByRole("dialog", { name: "Goal 1 can't be removed" });
+  const why = page.getByRole("dialog", { name: /can't be removed$/ });
   await expect(why).toContainText("This goal has data, so it can't be removed. Discontinue it instead.");
   await why.getByRole("button", { name: "OK" }).click();
-  await page.getByRole("button", { name: "Actions for Goal 1" }).click();
+  await page
+    .getByTestId("goal-menu-1")
+    .getByRole("button", { name: /^Actions for / })
+    .click();
   await page.getByRole("menuitem", { name: "Discontinue…" }).click();
-  const dialog = page.getByRole("dialog", { name: "Discontinue Goal 1" });
+  const dialog = page.getByRole("dialog", { name: /^Discontinue / });
   await dialog.getByLabel(/^Reason/).fill("Family asked to focus on other goals.");
   await dialog.getByLabel("Date discontinued").fill("2026-10-21");
   await dialog.getByRole("button", { name: "Discontinue goal" }).click();
@@ -355,21 +373,155 @@ test("a BCBA removes a goal added by mistake and discontinues a goal with data, 
   // The data stays.
   await expect(page.getByTestId("goal-data-1")).toContainText("1 points");
 
-  // Goal 2 was added by mistake: Remove, after a confirm.
+  // The second goal was added by mistake: Remove, after a confirm.
   page.once("dialog", (d) => {
     expect(d.message()).toBe("Remove this goal? It was added by mistake and has no data.");
     void d.accept();
   });
-  await page.getByRole("button", { name: "Actions for Goal 2" }).click();
+  await page
+    .getByTestId("goal-menu-2")
+    .getByRole("button", { name: /^Actions for / })
+    .click();
   await page.getByRole("menuitem", { name: "Remove", exact: true }).click();
   await expect(page.getByTestId("goal-menu-2")).toHaveCount(0);
 
-  // Resume puts goal 1 back in progress.
-  await page.getByRole("button", { name: "Actions for Goal 1" }).click();
+  // Resume puts the first goal back in progress.
+  await page
+    .getByTestId("goal-menu-1")
+    .getByRole("button", { name: /^Actions for / })
+    .click();
   await page.getByRole("menuitem", { name: "Resume" }).click();
   await page
-    .getByRole("dialog", { name: "Resume Goal 1?" })
+    .getByRole("dialog", { name: /^Resume .*\?$/ })
     .getByRole("button", { name: "Resume goal" })
     .click();
   await expect(page.getByTestId("discontinued-1")).toHaveCount(0);
+});
+
+test("a goal saves as it is typed, and Discontinue keeps what was just typed", async ({ page }) => {
+  await login(page, "bcba@sample-practice.test");
+  const client = await api(page, "POST", "/api/clients", {
+    firstName: "Foxtrot",
+    lastName: "Testchild",
+    dob: "2021-05-06",
+    serviceAddress: { line1: "6 Fiction Way", city: "Example City", state: "GA", zip: "30000" },
+    guardians: [{ name: "Lee Testchild", relationship: "mother", legalCustody: true, canSign: true }],
+    fictional: true,
+  });
+  await page.goto(`/clients/${client.id}/goals`);
+  await page.getByText(/Browse 18 domains/).click();
+  await page.getByRole("button", { name: "Add", exact: true }).nth(0).click();
+  await expect(page.getByTestId("goal-menu-1")).toBeVisible();
+  const menu = page.getByTestId("goal-menu-1").getByRole("button", { name: /^Actions for / });
+
+  // The goal's own text, in its dialog: no Save button; "Saved" once typing stops.
+  await menu.click();
+  await page.getByRole("menuitem", { name: "Edit goal" }).click();
+  const dialog = page.getByRole("dialog", { name: /^Edit / });
+  await expect(dialog.getByRole("button", { name: /^Save/ })).toHaveCount(0);
+  const objective = dialog.getByLabel(/^Objective/);
+  await objective.fill("[Client] will request a break by signing in a calm voice.");
+  await expect(dialog.getByRole("status")).toHaveText("Saved");
+  // An empty objective is never sent: the problem shows instead, and the saved text stays.
+  await objective.fill("   ");
+  await expect(dialog.getByTestId("problem-objective")).toHaveText("Write the objective");
+  await objective.fill("[Client] will request a break by signing in a calm voice.");
+  await expect(dialog.getByTestId("problem-objective")).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Done" }).click();
+  await page.reload();
+  await expect(page.locator('div.panel[id^="goal-"]').first()).toContainText(
+    "will request a break by signing in a calm voice.",
+  );
+  await page
+    .getByTestId("goal-menu-1")
+    .getByRole("button", { name: /^Actions for / })
+    .click();
+  await page.getByRole("menuitem", { name: "Edit goal" }).click();
+  await expect(page.getByRole("dialog", { name: /^Edit / }).getByLabel(/^Objective/)).toHaveValue(
+    "[Client] will request a break by signing in a calm voice.",
+  );
+  await page
+    .getByRole("dialog", { name: /^Edit / })
+    .getByRole("button", { name: "Done" })
+    .click();
+
+  // The goal record: no "Save goal record" button either.
+  await expect(page.getByTestId("save-goal-record-1")).toHaveCount(0);
+  const barriers = page.getByTestId("goal-barriers-1");
+  await barriers.fill("Schedule changed; sessions moved to the clinic.");
+  await expect(page.getByTestId("goal-record-status-1")).toHaveText("Saved");
+  await page.reload();
+  await expect(page.getByTestId("goal-barriers-1")).toHaveValue(
+    "Schedule changed; sessions moved to the clinic.",
+  );
+
+  // Typed, then Discontinue at once (before the autosave delay): the text is saved first and stays.
+  await page.getByTestId("goal-barriers-1").fill("Typed just before discontinuing.");
+  await page
+    .getByTestId("goal-menu-1")
+    .getByRole("button", { name: /^Actions for / })
+    .click();
+  await page.getByRole("menuitem", { name: "Discontinue…" }).click();
+  const discontinue = page.getByRole("dialog", { name: /^Discontinue / });
+  await discontinue.getByLabel(/^Reason/).fill("Family asked to pause this goal.");
+  await discontinue.getByRole("button", { name: "Discontinue goal" }).click();
+  await expect(page.getByTestId("discontinued-1")).toBeVisible();
+  await expect(page.getByTestId("goal-barriers-1")).toHaveValue("Typed just before discontinuing.");
+  await page.reload();
+  await expect(page.getByTestId("goal-barriers-1")).toHaveValue("Typed just before discontinuing.");
+
+  // Resume keeps it too.
+  await page.getByTestId("goal-barriers-1").fill("Typed just before resuming.");
+  await page
+    .getByTestId("goal-menu-1")
+    .getByRole("button", { name: /^Actions for / })
+    .click();
+  await page.getByRole("menuitem", { name: "Resume" }).click();
+  await page
+    .getByRole("dialog", { name: /^Resume / })
+    .getByRole("button", { name: "Resume goal" })
+    .click();
+  await expect(page.getByTestId("discontinued-1")).toHaveCount(0);
+  await expect(page.getByTestId("goal-barriers-1")).toHaveValue("Typed just before resuming.");
+  await page.reload();
+  await expect(page.getByTestId("goal-barriers-1")).toHaveValue("Typed just before resuming.");
+});
+
+test("a change made in another tab never wipes what is typed: the BCBA chooses which version to keep", async ({
+  page,
+  context,
+}) => {
+  await login(page, "bcba@sample-practice.test");
+  const client = await api(page, "POST", "/api/clients", {
+    firstName: "Golf",
+    lastName: "Testchild",
+    dob: "2021-05-06",
+    serviceAddress: { line1: "7 Fiction Way", city: "Example City", state: "GA", zip: "30000" },
+    guardians: [{ name: "Lee Testchild", relationship: "mother", legalCustody: true, canSign: true }],
+    fictional: true,
+  });
+  await page.goto(`/clients/${client.id}/goals`);
+  await page.getByText(/Browse 18 domains/).click();
+  await page.getByRole("button", { name: "Add", exact: true }).nth(0).click();
+  await expect(page.getByTestId("goal-barriers-1")).toBeVisible();
+  // A second tab, opened now, saves its barriers first.
+  const other = await context.newPage();
+  await other.goto(`/clients/${client.id}/goals`);
+  await other.getByTestId("goal-barriers-1").fill("From the other tab.");
+  await expect(other.getByTestId("goal-record-status-1")).toHaveText("Saved");
+  // This tab still has the old copy; what is typed here is kept, beside the other version.
+  await page.getByTestId("goal-barriers-1").fill("Typed in this tab.");
+  const conflict = page.getByTestId("conflict-barriers");
+  await expect(conflict).toContainText("From the other tab.");
+  await expect(page.getByTestId("goal-barriers-1")).toHaveValue("Typed in this tab.");
+  await expect(page.getByTestId("goal-record-status-1")).toContainText("choose which version to keep");
+  // A change to another field of the goal is not a conflict.
+  await page.getByLabel("Settings (comma separated)").fill("home, clinic");
+  await conflict.getByRole("button", { name: "Keep mine" }).click();
+  await expect(conflict).toHaveCount(0);
+  await expect(page.getByTestId("goal-record-status-1")).toHaveText("Saved");
+  await page.reload();
+  await expect(page.getByTestId("goal-barriers-1")).toHaveValue("Typed in this tab.");
+  await expect(page.getByLabel("Settings (comma separated)")).toHaveValue("home, clinic");
+  await other.close();
 });

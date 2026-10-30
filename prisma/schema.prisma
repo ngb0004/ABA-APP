@@ -723,6 +723,8 @@ model Goal {
   discontinuedReason         String?
   /// When the goal record was added: decides whether it was ever in an approved section or exported packet.
   createdAt                  DateTime  @default(now())
+  /// Changes with every save: autosaving editors send the version they edited, and a stale one is refused.
+  updatedAt                  DateTime  @default(now()) @updatedAt
 
   client       Client            @relation(fields: [clientId], references: [id])
   plan         Plan?             @relation(fields: [planId], references: [id])

@@ -1,3 +1,4 @@
+import { goalNames } from "../goals/names";
 import { withOrg, type OrgCtx } from "../db";
 import { toDay, type Day } from "../dates";
 import { renderTokens } from "../firewall";
@@ -60,12 +61,15 @@ export async function goalsView(ctx: OrgCtx, clientId: string, asOf: Day) {
       diagnosisId: g.diagnosisId,
       deficitArea: g.deficitArea,
     }));
+    // Goals are named, never numbered, in what readers see.
+    const names = goalNames(data.goals);
     return {
       client: data.client,
       goals: data.goals.map((g) => {
         const pts = g.dataPoints.map((p) => ({ date: toDay(p.date), value: p.value }));
         return {
           ...g,
+          name: names.get(g.id)!,
           objectiveHtml: render(g.objective),
           rationaleHtml: render(g.rationale),
           placeholders: unresolvedPlaceholders(g.objective, g.rationale, g.sd, g.targetBehavior),
@@ -76,7 +80,7 @@ export async function goalsView(ctx: OrgCtx, clientId: string, asOf: Day) {
           ),
           flat: flatProgress(pts, g.measure, asOf).flat,
           graph: goalGraphSvg({
-            title: `Goal ${g.ordinal}: ${g.domain}`,
+            title: names.get(g.id)!,
             measure: g.measure,
             points: pts,
             phaseChanges: g.phaseChanges.map((p) => ({ date: toDay(p.date), label: p.label })),
