@@ -24,19 +24,19 @@ test("unknown ids show the normal 404 page with the menu, and the tab still name
     await expect(page.getByRole("heading", { name: "Page not found" })).toBeVisible();
     await expect(page.getByRole("link", { name: "Caseload" }).first()).toBeVisible();
     // Pages that look a record up set their own title before finding nothing; the tab names the app either way.
-    await expect(page).toHaveTitle(/ABA Plan Assistant$/);
+    await expect(page).toHaveTitle(/Yoma$/);
   }
 });
 
 test("pages have distinct tab titles", async ({ page }) => {
   await login(page, "bcba@sample-practice.test");
-  await expect(page).toHaveTitle("Caseload · ABA Plan Assistant");
+  await expect(page).toHaveTitle("Caseload · Yoma");
   const id = await openClient(page, "Alpha Testchild");
-  await expect(page).toHaveTitle("Client · ABA Plan Assistant");
+  await expect(page).toHaveTitle("Client · Yoma");
   await page.goto(`/clients/${id}/goals`);
-  await expect(page).toHaveTitle("Goals · ABA Plan Assistant");
+  await expect(page).toHaveTitle("Goals · Yoma");
   await page.goto("/payors");
-  await expect(page).toHaveTitle("Payor rules · ABA Plan Assistant");
+  await expect(page).toHaveTitle("Payor rules · Yoma");
 });
 
 test("the audit log hides automatic record reads unless asked, and names users", async ({ page }) => {

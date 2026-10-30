@@ -149,9 +149,15 @@ export function SectionCard(props: {
         </div>
       )}
       {!na && (
-        <details open={!approved && openItems > 0}>
+        // The checklist opens once there is text to check it against; until then it stays out of the way.
+        <details open={!approved && openItems > 0 && !!s.content.trim()}>
           <summary>
             Required items ({items.length - openItems}/{items.length} resolved)
+            {!approved && openItems > 0 && (
+              <span className="badge warn" style={{ marginLeft: 8 }}>
+                {openItems} open
+              </span>
+            )}
           </summary>
           <table>
             <tbody>

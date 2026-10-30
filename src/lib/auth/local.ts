@@ -1,4 +1,5 @@
 import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { APP_NAME } from "../brand";
 import { authenticator } from "otplib";
 import { db } from "../db";
 import type { AuthProvider } from "./provider";
@@ -53,7 +54,7 @@ export class LocalAuthProvider implements AuthProvider {
     const user = await db().user.findUniqueOrThrow({ where: { id: userId } });
     if (user.mfaEnabled) throw new Error("MFA already enrolled");
     const secret = authenticator.generateSecret();
-    return { secret, otpauthUrl: authenticator.keyuri(user.email, "ABA Plan Assistant", secret) };
+    return { secret, otpauthUrl: authenticator.keyuri(user.email, APP_NAME, secret) };
   }
 
   async confirmTotpEnrollment(userId: string, secret: string, code: string) {

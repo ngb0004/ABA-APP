@@ -24,6 +24,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.3.0",
+    "@fontsource/poppins": "5.1.0",
     "@prisma/client": "6.19.3",
     "next": "15.5.28",
     "otplib": "12.0.1",

@@ -25,19 +25,47 @@ export default async function PlanPage({ params }: { params: Promise<{ id: strin
         </Link>
       </p>
       <h1>{b.plan.type === "reauth" ? "Reauthorization" : "Initial"} treatment plan</h1>
-      <p className="muted">
-        {approved}/{v.sections.length} sections approved · status {b.plan.status} · written against{" "}
-        {(b.plan.payorDocVersions as { name: string; version: string }[])
-          .map((d) => `${d.name} (${d.version})`)
-          .join("; ") || "no payor documents"}
-      </p>
+      <div className="panel plan-progress">
+        <div className="row" style={{ justifyContent: "space-between" }}>
+          <strong>
+            {approved} of {v.sections.length} sections approved
+          </strong>
+          <span className="muted">Status: {b.plan.status}</span>
+        </div>
+        <div className="progress" aria-hidden="true">
+          <span style={{ width: `${Math.round((approved / Math.max(1, v.sections.length)) * 100)}%` }} />
+        </div>
+        <nav className="section-chips" aria-label="Sections">
+          {v.sections.map((s) => (
+            <a
+              key={s.id}
+              href={`#section-${s.key}`}
+              title={`${s.ordinal}. ${s.title}: ${s.state.replace(/_/g, " ")}`}
+              className={`chip ${sectionDone(s.state) ? "done" : s.content.trim() ? "started" : ""}`}
+            >
+              {s.ordinal}
+            </a>
+          ))}
+        </nav>
+        <details>
+          <summary className="muted">Payor documents this plan is written against</summary>
+          <ul className="muted">
+            {(b.plan.payorDocVersions as { name: string; version: string }[]).map((d) => (
+              <li key={d.name}>
+                {d.name} ({d.version})
+              </li>
+            ))}
+            {!(b.plan.payorDocVersions as unknown[]).length && <li>No payor documents</li>}
+          </ul>
+        </details>
+      </div>
       <div className="row" style={{ marginBottom: 12 }}>
         <Link className="btn" href={`/plans/${id}/packet`}>
           {b.plan.type === "reauth"
             ? "Reauthorization packet and export"
             : "Initial request packet and export"}
         </Link>
-        <Link className="btn" href={`/clients/${b.client.id}/goals`}>
+        <Link className="btn dark" href={`/clients/${b.client.id}/goals`}>
           Edit goals
         </Link>
       </div>

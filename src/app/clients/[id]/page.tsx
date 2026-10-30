@@ -26,16 +26,16 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
         {c.firstName} {c.lastName} {c.isSynthetic && <span className="badge info">synthetic</span>}
       </h1>
       <div className="row" style={{ marginBottom: 12 }}>
-        <Link className="btn" href={`/clients/${id}/intake`}>
+        <Link className="btn secondary" href={`/clients/${id}/intake`}>
           Intake
         </Link>
-        <Link className="btn" href={`/clients/${id}/vbmapp`}>
+        <Link className="btn secondary" href={`/clients/${id}/vbmapp`}>
           VB-MAPP
         </Link>
-        <Link className="btn" href={`/clients/${id}/goals`}>
+        <Link className="btn secondary" href={`/clients/${id}/goals`}>
           Goals
         </Link>
-        <Link className="btn" href={`/clients/${id}/records`} data-testid="records-link">
+        <Link className="btn secondary" href={`/clients/${id}/records`} data-testid="records-link">
           Records
         </Link>
       </div>
