@@ -14,15 +14,19 @@ import { registerSensitiveName } from "../log";
 import { requirePermission } from "../permissions";
 import { redactRestricted } from "../sensitivity";
 import { supervisionByMonth } from "../supervision";
+import { DEFAULT_TIME_ZONE, isTimeZone } from "../time-format";
 import { computeUtilization, type UnitBasis } from "../utilization";
 import { evaluateClientRules, loadApplicableRules } from "./payors";
 
-export function orgSettings(
-  settings: unknown,
-): CalendarSettings & { offices: { state: string; address: string }[]; statesServed: string[] } {
+export function orgSettings(settings: unknown): CalendarSettings & {
+  offices: { state: string; address: string }[];
+  statesServed: string[];
+  timeZone: string;
+} {
   const s = (settings ?? {}) as Partial<CalendarSettings> & {
     offices?: { state: string; address: string }[];
     statesServed?: string[];
+    timeZone?: string;
   };
   const offices = s.offices ?? [];
   return {
@@ -32,7 +36,17 @@ export function orgSettings(
     offices,
     // Never chosen: the states the practice has offices in. A saved empty list stays empty.
     statesServed: s.statesServed ?? [...new Set(offices.map((o) => o.state.toUpperCase()))].sort(),
+    // Times are shown in the practice's zone; Eastern until the practice picks one.
+    timeZone: s.timeZone && isTimeZone(s.timeZone) ? s.timeZone : DEFAULT_TIME_ZONE,
   };
+}
+
+/** The practice's time zone, for showing stored times (any role may read it). */
+export async function practiceTimeZone(ctx: OrgCtx): Promise<string> {
+  return withOrg(ctx, async (tx) => {
+    const org = await tx.org.findUnique({ where: { id: ctx.orgId }, select: { settings: true } });
+    return orgSettings(org?.settings).timeZone;
+  });
 }
 
 export const displayName = (c: { preferredName: string | null; firstName: string }) =>

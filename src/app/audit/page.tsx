@@ -3,6 +3,8 @@ import Link from "next/link";
 import { withOrg } from "@/lib/db";
 import { requirePermission } from "@/lib/permissions";
 import { requirePageCtx } from "@/lib/server/page-session";
+import { orgSettings } from "@/lib/services/clients";
+import { formatDateTime } from "@/lib/time-format";
 
 export const metadata: Metadata = { title: "Audit log" };
 
@@ -30,7 +32,7 @@ export default async function AuditPage({
   const before = sp.before && !Number.isNaN(Date.parse(sp.before)) ? new Date(sp.before) : null;
   // Many events share a millisecond: page by (time, id) so none is skipped at a page boundary.
   const beforeId = sp.beforeId && /^[0-9a-f-]{36}$/i.test(sp.beforeId) ? sp.beforeId : null;
-  const { rows, users } = await withOrg(ctx, async (tx) => {
+  const { rows, users, timeZone } = await withOrg(ctx, async (tx) => {
     const rows = await tx.auditEvent.findMany({
       where: {
         ...(before
@@ -48,7 +50,12 @@ export default async function AuditPage({
       where: { orgId: ctx.orgId },
       include: { user: { select: { name: true, email: true } } },
     });
-    return { rows, users: new Map(members.map((m) => [m.userId, m.user.name || m.user.email])) };
+    const org = await tx.org.findUnique({ where: { id: ctx.orgId }, select: { settings: true } });
+    return {
+      timeZone: orgSettings(org?.settings).timeZone,
+      rows,
+      users: new Map(members.map((m) => [m.userId, m.user.name || m.user.email])),
+    };
   });
   const href = (q: { all?: boolean; before?: string; beforeId?: string }) => {
     const p = new URLSearchParams();
@@ -89,7 +96,7 @@ export default async function AuditPage({
         <table className="stack">
           <thead>
             <tr>
-              <th>When (UTC)</th>
+              <th>When</th>
               <th>User</th>
               <th>Action</th>
               <th>Record</th>
@@ -99,8 +106,8 @@ export default async function AuditPage({
           <tbody>
             {rows.map((r) => (
               <tr key={r.id}>
-                <td data-label="When" style={{ whiteSpace: "nowrap" }}>
-                  {r.createdAt.toISOString().replace("T", " ").slice(0, 19)}
+                <td data-label="When" style={{ whiteSpace: "nowrap" }} title={r.createdAt.toISOString()}>
+                  {formatDateTime(r.createdAt, timeZone, { seconds: true })}
                 </td>
                 <td data-label="User" className="muted">
                   {r.userId ? (users.get(r.userId) ?? `former member ${r.userId.slice(0, 8)}`) : "system"}

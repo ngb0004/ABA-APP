@@ -11,6 +11,8 @@ import { withOrg } from "@/lib/db";
 import { can } from "@/lib/permissions";
 import { packetView } from "@/lib/services/packets";
 import { planView } from "@/lib/services/plans";
+import { practiceTimeZone } from "@/lib/services/clients";
+import { formatDateTime } from "@/lib/time-format";
 import { asOfToday, orNotFound, requirePageCtx, uuidParam } from "@/lib/server/page-session";
 
 export const metadata: Metadata = { title: "Packet and export" };
@@ -19,8 +21,8 @@ export default async function PacketPage({ params }: { params: Promise<{ id: str
   const id = await uuidParam(params);
   const ctx = await requirePageCtx();
   const asOf = asOfToday();
-  const [pv, plan] = await orNotFound(() =>
-    Promise.all([packetView(ctx, id, asOf), planView(ctx, id, asOf)]),
+  const [pv, plan, timeZone] = await orNotFound(() =>
+    Promise.all([packetView(ctx, id, asOf), planView(ctx, id, asOf), practiceTimeZone(ctx)]),
   );
   const b = pv.bundle;
   const initial = plan.bundle.plan.type !== "reauth";
@@ -63,7 +65,7 @@ export default async function PacketPage({ params }: { params: Promise<{ id: str
         {pv.packet?.exportedAt && (
           <span className="muted">
             {" "}
-            · exported {pv.packet.exportedAt.toISOString().slice(0, 16).replace("T", " ")} · sha256{" "}
+            · exported {formatDateTime(pv.packet.exportedAt, timeZone)} · sha256{" "}
             {pv.packet.pdfSha256?.slice(0, 12)}…
           </span>
         )}

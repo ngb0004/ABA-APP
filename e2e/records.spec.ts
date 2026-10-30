@@ -104,6 +104,9 @@ test("a BCBA enters a fictional client end to end: details, insurance, diagnosis
   await fill(se, "Staff code", "RBT-Q");
   await se.getByTestId("session-form-submit").click();
   await expect(page.getByTestId("records-sessions")).toContainText("RBT-Q");
+  // Start times use the 12-hour clock (the form starts at 9:00 AM).
+  await expect(page.getByTestId("records-sessions")).toContainText("9:00 AM");
+  await expect(page.getByTestId("records-sessions")).not.toContainText("09:00");
 
   // The client page now shows the authorization and evaluates the payor's rules against it.
   await page.getByRole("link", { name: /Delta Testchild/ }).click();
@@ -236,6 +239,8 @@ test("goal data entry by an RBT, and practice settings and team by a BCBA", asyn
   await page.getByRole("link", { name: "Settings" }).click();
   const s = page.getByTestId("settings-form");
   await s.getByLabel(/Submit reauths/).fill("28");
+  // Times across the app show in the practice's zone: Eastern until chosen.
+  await expect(s.getByLabel(/^Time zone/)).toHaveValue("America/New_York");
   // States served default to the office states (GA): chips with full names, not a wall of checkboxes.
   const picked = s.getByTestId("picked-statesServed");
   await expect(picked).toHaveText(/Georgia \(GA\)/);

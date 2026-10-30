@@ -17,6 +17,7 @@ import { loadRules } from "@/lib/services/payors";
 import { listOpenReports } from "@/lib/services/rule-reports";
 import { REPORT_REASON_LABELS } from "@/lib/payors/report-reasons";
 import { orgSettings } from "@/lib/services/clients";
+import { formatDateTime } from "@/lib/time-format";
 import { requirePageCtx } from "@/lib/server/page-session";
 
 export const metadata: Metadata = { title: "Payor rules" };
@@ -29,7 +30,7 @@ export default async function PayorsPage({
   const ctx = await requirePageCtx();
   requirePermission(ctx.role, "payor:read");
   const showAll = (await searchParams).states === "all";
-  const { payors, docs, statesServed } = await withOrg(ctx, async (tx) => {
+  const { payors, docs, statesServed, timeZone } = await withOrg(ctx, async (tx) => {
     const org = await tx.org.findUniqueOrThrow({ where: { id: ctx.orgId } });
     const list = await tx.payor.findMany({ orderBy: { name: "asc" } });
     const payors = await Promise.all(list.map(async (p) => ({ ...p, rules: await loadRules(tx, p.id) })));
@@ -50,7 +51,8 @@ export default async function PayorsPage({
         },
       },
     });
-    return { payors, docs, statesServed: orgSettings(org.settings).statesServed };
+    const settings = orgSettings(org.settings);
+    return { payors, docs, statesServed: settings.statesServed, timeZone: settings.timeZone };
   });
   const canCheck = can(ctx.role, "payor:verify");
   // Verifying rules is Yoma's curation job: only platform curators see those controls (the API re-checks).
@@ -303,7 +305,7 @@ export default async function PayorsPage({
                         </td>
                         <td className="muted" data-label="Last checked">
                           {d.lastCheckedAt
-                            ? d.lastCheckedAt.toISOString().slice(0, 16).replace("T", " ")
+                            ? formatDateTime(d.lastCheckedAt, timeZone)
                             : d.locator
                               ? "never"
                               : "not checked automatically"}
