@@ -11,6 +11,7 @@ import {
   requiredCategoryChecks,
   unresolvedPlaceholders,
 } from "../goals/checks";
+import { benefitsFindings } from "../payors/benefits";
 import type { RuleResult, ScopeFinding } from "../payors/types";
 import { goalKeyKind, type PlanBundle } from "./context";
 import { dataGaps, flatProgress } from "./progress";
@@ -341,6 +342,19 @@ export function runPresubmissionAudit(
         (r) => `${r.rule.type.replace(/_/g, " ")}: ${r.rule.trust!.reasons[0] ?? "re-check the source"}`,
       ),
       action: "Review the current payor document on the Payor rules page and re-verify these rules",
+    });
+  // The practice's own benefits check: a warning, never a block (it is not a payor rule).
+  for (const f of benefitsFindings(
+    b.benefitsChecks,
+    b.auth ? { payorId: b.auth.payorId, payorName: b.auth.payor.name, startDate: b.auth.startDate } : null,
+  ))
+    push({
+      id: f.id,
+      category: "Benefits check",
+      status: "warn",
+      message: f.message,
+      details: f.details,
+      action: "Record a benefits check from the insurance's ⋯ menu on Records",
     });
   for (const f of scope)
     push({

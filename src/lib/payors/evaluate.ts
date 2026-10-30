@@ -764,7 +764,7 @@ const planLabel = (t: string) => PLAN_TYPE_LABELS[t as PlanType] ?? t.replace(/_
  * Does a rule limited to some plan types apply to this client's plan? "maybe" when the plan
  * type is not confirmed and could go either way: the rule stays in, with a note.
  */
-function planTypeFit(rule: Rule, planType: PlanType): "yes" | "no" | "maybe" {
+export function planTypeFit(rule: Rule, planType: PlanType): "yes" | "no" | "maybe" {
   const only = rule.planTypes ?? [];
   if (!only.length) return "yes";
   const could = possiblePlanTypes(planType);

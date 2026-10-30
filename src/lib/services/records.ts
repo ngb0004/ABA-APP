@@ -16,7 +16,14 @@ import { withOrg, withUser, type OrgCtx, type Tx } from "../db";
 import { dayToDate, toDay } from "../dates";
 import { HttpError, registerSensitiveName } from "../log";
 import { RECORDED_EVENTS } from "../payors/evaluate";
-import { PLAN_TYPES, US_STATES } from "../payors/types";
+import { looksLikePhiInNote } from "../rules-watch/text";
+import {
+  BENEFITS_CHECK_METHODS,
+  PLAN_FUNDING,
+  planTypeFromFunding,
+  YES_NO_UNKNOWN,
+} from "../payors/benefits";
+import { PLAN_TYPES, US_STATES, type PlanType } from "../payors/types";
 import { isDemo } from "../demo";
 import { requirePermission } from "../permissions";
 
@@ -200,6 +207,29 @@ export const ClientPayorSchema = z.object({
     .optional()
     .transform((v) => v ?? null),
   secondaryDocsSigned: z.boolean().default(false),
+});
+
+/** A benefits check (VOB) on one insurance. Blank optional fields are stored as not recorded. */
+export const BenefitsCheckSchema = z.object({
+  checkedOn: DaySchema,
+  method: z.enum(BENEFITS_CHECK_METHODS),
+  /** The call or portal reference number; synthetic in v1.0, like every identifier. */
+  referenceNumber: SynId.nullable()
+    .optional()
+    .transform((v) => v ?? null),
+  abaCovered: z.enum(YES_NO_UNKNOWN),
+  priorAuthRequired: z.enum(YES_NO_UNKNOWN),
+  planFunding: z.enum(PLAN_FUNDING),
+  ageLimitYears: z
+    .number()
+    .int()
+    .min(1)
+    .max(99)
+    .nullable()
+    .optional()
+    .transform((v) => v ?? null),
+  visitOrHourLimits: OptText(300),
+  notes: OptText(1000),
 });
 
 export const DiagnosisSchema = z.object({
@@ -467,6 +497,65 @@ export async function deleteClientPayor(ctx: OrgCtx, clientId: string, id: strin
       throw new HttpError(409, "Make another payor primary before removing the primary payor.");
     await tx.clientPayor.delete({ where: { id } });
     await note(tx, "insurance:delete", "ClientPayor", id);
+  });
+}
+
+/**
+ * Records a benefits check on one of the client's insurances. A check that confirms how an
+ * unconfirmed commercial plan is funded also sets the insurance's plan type (audit-logged);
+ * Medicaid, TRICARE, and confirmed plan types are never overwritten.
+ */
+export async function saveBenefitsCheck(
+  ctx: OrgCtx,
+  clientId: string,
+  clientPayorId: string,
+  input: unknown,
+  asOf: string = toDay(new Date()),
+) {
+  requirePermission(ctx.role, "insurance:manage");
+  const v = BenefitsCheckSchema.parse(input);
+  assertNotFuture(v.checkedOn, asOf, "The benefits check date");
+  // The insurance already holds the member ID: free text never needs a name, birth date, or ID.
+  if ([v.notes, v.visitOrHourLimits].some((t) => t && looksLikePhiInNote(t)))
+    throw new HttpError(
+      422,
+      "Leave names, dates of birth, and member IDs out of the notes and limits; the insurance already holds the member ID.",
+    );
+  if (!ctx.userId) throw new HttpError(403, "Sign in to record a benefits check");
+  const userId = ctx.userId;
+  return withOrg(ctx, async (tx) => {
+    const cp = await tx.clientPayor.findFirst({
+      where: { id: clientPayorId, clientId },
+      include: { payor: { select: { lineOfBusiness: true } } },
+    });
+    if (!cp) throw new HttpError(404, "Not found");
+    const row = await tx.benefitsCheck.create({
+      data: {
+        orgId: ctx.orgId,
+        clientId,
+        clientPayorId: cp.id,
+        payorId: cp.payorId,
+        checkedByUserId: userId,
+        ...v,
+        checkedOn: dayToDate(v.checkedOn),
+      },
+      select: { id: true },
+    });
+    await note(tx, "benefits_check:create", "BenefitsCheck", row.id, {
+      clientPayorId: cp.id,
+      method: v.method,
+    });
+    const from = cp.planType as PlanType;
+    const to = planTypeFromFunding(from, cp.payor.lineOfBusiness, v.planFunding);
+    if (to) {
+      await tx.clientPayor.update({ where: { id: cp.id }, data: { planType: to } });
+      await note(tx, "insurance:plan_type_from_benefits_check", "ClientPayor", cp.id, {
+        from,
+        to,
+        benefitsCheckId: row.id,
+      });
+    }
+    return { id: row.id, planType: to ? { from, to } : null };
   });
 }
 
@@ -867,7 +956,14 @@ export async function clientRecords(ctx: OrgCtx, clientId: string) {
     const client = await tx.client.findUnique({
       where: { id: clientId },
       include: {
-        payors: { include: { payor: true }, orderBy: { priority: "asc" } },
+        payors: {
+          include: {
+            payor: true,
+            // The latest check, for "Benefits last checked" on each insurance.
+            benefitsChecks: { orderBy: [{ checkedOn: "desc" }, { createdAt: "desc" }], take: 1 },
+          },
+          orderBy: { priority: "asc" },
+        },
         diagnoses: { orderBy: [{ isPrimary: "desc" }, { icd10Code: "asc" }] },
         authorizations: { include: { units: true, payor: true }, orderBy: { endDate: "desc" } },
         attachments: { orderBy: { uploadedAt: "desc" } },

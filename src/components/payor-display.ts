@@ -1,4 +1,6 @@
 /** Display helpers for the payor rules screens. Pure functions, so they are unit tested. */
+import type { RequirementStatus } from "@/lib/payors/categories";
+import type { RuleType } from "@/lib/payors/types";
 
 /** Revoke only on OK. window.prompt returns null on Cancel, which must not revoke. */
 export function revokeNoteFromPrompt(
@@ -84,3 +86,30 @@ export const STATUS_LEGEND: [string, string, string][] = [
   ],
   ["unsourced", "no source", "No document is recorded for this rule. Warnings only."],
 ];
+
+/** Rule types in plain words, for people who do not read policy manuals. */
+export const RULE_TYPE_LABELS: Record<RuleType, string> = {
+  required_document: "A document the request must include",
+  signature_type: "How documents must be signed",
+  form_address: "Address the request form must show",
+  supervision_ratio: "Minimum BCBA supervision",
+  daily_cap: "Most hours or units in one day",
+  concurrent_billing: "Codes that can (or cannot) be billed at the same time",
+  min_sessions_per_auth: "Fewest sessions per authorization",
+  unit_limit: "Most units approved",
+  unit_basis: "How units are counted",
+  request_timing: "When to submit the request",
+  outcome_measure_schedule: "Outcome measures and when they are due",
+  staff_credential: "Who may deliver the service",
+  event_trigger: "Something that must happen after an event",
+  plan_content: "What the treatment plan must cover",
+  submission_channel: "Where and how to submit",
+  decision_timeframe: "How long the payor takes to decide",
+};
+
+export const REQUIREMENT_STATUS_LABELS: Record<RequirementStatus, string> = {
+  met: "met",
+  missing: "missing",
+  manual: "manual check",
+  "n/a": "not applicable",
+};

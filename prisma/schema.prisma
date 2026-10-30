@@ -139,6 +139,7 @@ model Client {
   plans           Plan[]
   letters         PayorLetter[]
   attachments     Attachment[]
+  benefitsChecks  BenefitsCheck[]
 
   @@map("client")
 }
@@ -177,10 +178,46 @@ model ClientPayor {
   planState           String?
   secondaryDocsSigned Boolean @default(false)
 
-  client Client @relation(fields: [clientId], references: [id])
-  payor  Payor  @relation(fields: [payorId], references: [id])
+  client         Client          @relation(fields: [clientId], references: [id])
+  payor          Payor           @relation(fields: [payorId], references: [id])
+  benefitsChecks BenefitsCheck[]
 
   @@map("client_payor")
+}
+
+/// A verification of benefits (VOB): what the payor said about this client's coverage, by portal,
+/// phone, or electronic eligibility. Kept as history; the latest one is what the audit looks at.
+model BenefitsCheck {
+  id                String   @id @default(uuid()) @db.Uuid
+  orgId             String   @map("org_id") @db.Uuid
+  clientId          String   @db.Uuid
+  /// The insurance checked; null once that insurance is removed (the check stays as history).
+  clientPayorId     String?  @db.Uuid
+  /// The payor checked, kept so the history still says whom it was with.
+  payorId           String   @db.Uuid
+  checkedOn         DateTime @db.Date
+  checkedByUserId   String   @db.Uuid
+  /// portal | phone | electronic_eligibility | other
+  method            String
+  /// The call or portal reference number (synthetic in v1.0).
+  referenceNumber   String?
+  /// yes | no | unknown
+  abaCovered        String   @default("unknown")
+  /// yes | no | unknown
+  priorAuthRequired String   @default("unknown")
+  /// fully_insured | self_funded | unknown. Decides whether state autism mandates apply.
+  planFunding       String   @default("unknown")
+  ageLimitYears     Int?
+  visitOrHourLimits String?
+  notes             String?
+  createdAt         DateTime @default(now())
+
+  client      Client       @relation(fields: [clientId], references: [id])
+  clientPayor ClientPayor? @relation(fields: [clientPayorId], references: [id], onDelete: SetNull)
+  payor       Payor        @relation(fields: [payorId], references: [id])
+
+  @@index([clientId, checkedOn])
+  @@map("benefits_check")
 }
 
 model Attachment {
@@ -354,6 +391,7 @@ model Payor {
   rules          PayorRule[]
   clientPayors   ClientPayor[]
   authorizations Authorization[]
+  benefitsChecks BenefitsCheck[]
 
   @@unique([orgId, key])
   @@map("payor")

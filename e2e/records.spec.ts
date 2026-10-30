@@ -47,6 +47,25 @@ test("a BCBA enters a fictional client end to end: details, insurance, diagnosis
     "Commercial, self-funded employer (ERISA) · issued in GA",
   );
 
+  // A benefits check is recorded from the insurance row's ⋯ menu (no extra buttons on the row).
+  const insPanel = page.getByTestId("records-insurance");
+  await expect(insPanel.getByTestId("benefits-checked")).toHaveText("Benefits not checked yet");
+  await insPanel.getByRole("button", { name: "Actions for insurance" }).click();
+  await insPanel.getByRole("menuitem", { name: "Record benefits check" }).click();
+  const bc = page.getByTestId("benefits-check-form");
+  await pick(bc, "How", "Payor portal");
+  await fill(bc, "Reference number", "REF-4040");
+  await pick(bc, "ABA covered", "Yes");
+  await pick(bc, "Prior authorization required", "Yes");
+  await fill(bc, "Visit or hour limits", "Up to 40 hours per week");
+  await bc.getByTestId("benefits-check-form-submit").click();
+  // Identifiers are synthetic in v1.0, call references included.
+  await expect(bc.getByRole("alert")).toContainText("SYN-");
+  await fill(bc, "Reference number", "SYN-REF-4040");
+  await bc.getByTestId("benefits-check-form-submit").click();
+  await expect(insPanel.getByTestId("benefits-checked")).toContainText("Benefits last checked");
+  await expect(insPanel.getByTestId("benefits-checked")).toContainText("(payor portal)");
+
   await page.getByTestId("add-diagnosis").click();
   const dx = page.getByTestId("diagnosis-form");
   await fill(dx, "ICD-10 code", "F84.0");
@@ -89,6 +108,26 @@ test("a BCBA enters a fictional client end to end: details, insurance, diagnosis
   // The client page now shows the authorization and evaluates the payor's rules against it.
   await page.getByRole("link", { name: /Delta Testchild/ }).click();
   await expect(page.locator("#authorization")).toContainText("SYN-AUTH-4040");
+
+  // The client's payor requirements: the insurance, its plan, the check history, and the rules.
+  await page.getByTestId("requirements-link").click();
+  await page.waitForURL(/\/requirements$/);
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Payor requirements");
+  const req = page.getByTestId("requirements-insurance");
+  await expect(req).toHaveCount(1);
+  await expect(req.getByRole("heading", { level: 2 })).toContainText("Cigna / Evernorth");
+  await expect(req.getByTestId("requirements-plan-type")).toHaveText(
+    "Commercial, self-funded employer (ERISA)",
+  );
+  const history = req.getByTestId("benefits-history");
+  await expect(history).toContainText("SYN-REF-4040");
+  await expect(history).toContainText("Up to 40 hours per week");
+  await expect(history).toContainText("payor portal");
+  await expect(req.getByTestId("requirement-status").first()).toBeVisible();
+  await expect(req.getByTestId("rule-quote").first()).not.toHaveAttribute("open", "");
+  await expect(page.getByTestId("requirements-letters")).toContainText(
+    "No requirements from confirmed payor letters",
+  );
 });
 
 test("goal data entry by an RBT, and practice settings and team by a BCBA", async ({ page }) => {

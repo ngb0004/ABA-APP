@@ -8,6 +8,7 @@ import { createHash } from "node:crypto";
 import { sid } from "../../src/lib/stable-id";
 import { addDays, addMonths, diffDays, weekday, type Day } from "../../src/lib/dates";
 import type { IntakeAnswers } from "../../src/lib/intake/schema";
+import type { BenefitsCheckMethod, PlanFunding, YesNoUnknown } from "../../src/lib/payors/benefits";
 import type { PlanType } from "../../src/lib/payors/types";
 
 // ---------------------------------------------------------------- helpers
@@ -120,6 +121,21 @@ export type SynClient = {
     secondaryDocsSigned?: boolean;
   }[];
   attachments: { id: string; kind: string; title: string; documentDate: Day; caregiverSigned: boolean }[];
+  /** Benefits checks (VOB) on the client's insurance, dated within the current authorization. */
+  benefitsChecks: {
+    id: string;
+    clientPayorId: string;
+    checkedOn: Day;
+    checkedByUserId: string;
+    method: BenefitsCheckMethod;
+    referenceNumber: string | null;
+    abaCovered: YesNoUnknown;
+    priorAuthRequired: YesNoUnknown;
+    planFunding: PlanFunding;
+    ageLimitYears: number | null;
+    visitOrHourLimits: string | null;
+    notes: string | null;
+  }[];
   authorization: {
     id: string;
     payorKey: string;
@@ -309,7 +325,7 @@ export const DEMO_PASSWORD = "synthetic-demo-only";
  * Bump when the fictional dataset or the plan structure changes in a way the hosted
  * demo should pick up: the demo reloads its fictional clients once on the next boot.
  * 2: 23-section plans and goal records (dates, status, locked baselines).
- * 3: insurance plan types and plan states.
+ * 3: insurance plan types and plan states (and, in the same release, benefits checks).
  */
 export const SEED_VERSION = 3;
 
@@ -423,6 +439,23 @@ export function buildDataset(asOf: Day): SynDataset {
         title: "Letter of medical necessity",
         documentDate: addDays(asOf, -70),
         caregiverSigned: false,
+      },
+    ],
+    benefitsChecks: [
+      {
+        id: sid("c1:vob"),
+        clientPayorId: sid("c1:payor"),
+        checkedOn: addDays(c1Start, 3),
+        checkedByUserId: sid("user:coord"),
+        method: "phone",
+        referenceNumber: "SYN-REF-C1-0001",
+        abaCovered: "yes",
+        priorAuthRequired: "yes",
+        // Medicaid: funding is a commercial-plan question.
+        planFunding: "unknown",
+        ageLimitYears: null,
+        visitOrHourLimits: null,
+        notes: "Medicaid EPSDT benefit (synthetic call)",
       },
     ],
     authorization: {
@@ -743,6 +776,22 @@ export function buildDataset(asOf: Day): SynDataset {
         title: "IEP (current school year)",
         documentDate: addDays(asOf, -90),
         caregiverSigned: true,
+      },
+    ],
+    benefitsChecks: [
+      {
+        id: sid("c2:vob"),
+        clientPayorId: sid("c2:payor"),
+        checkedOn: addDays(c2Start, 5),
+        checkedByUserId: sid("user:coord"),
+        method: "portal",
+        referenceNumber: null,
+        abaCovered: "yes",
+        priorAuthRequired: "yes",
+        planFunding: "fully_insured",
+        ageLimitYears: null,
+        visitOrHourLimits: null,
+        notes: null,
       },
     ],
     authorization: {
@@ -1110,6 +1159,22 @@ export function buildDataset(asOf: Day): SynDataset {
         caregiverSigned: false,
       },
     ],
+    benefitsChecks: [
+      {
+        id: sid("c3:vob"),
+        clientPayorId: sid("c3:payor"),
+        checkedOn: addDays(c3Start, 4),
+        checkedByUserId: sid("user:coord"),
+        method: "phone",
+        referenceNumber: "SYN-REF-C3-0001",
+        abaCovered: "yes",
+        priorAuthRequired: "yes",
+        planFunding: "unknown",
+        ageLimitYears: null,
+        visitOrHourLimits: null,
+        notes: "TRICARE Autism Care Demonstration (synthetic call)",
+      },
+    ],
     authorization: {
       id: sid("c3:auth"),
       payorKey: "tricare_east",
@@ -1358,6 +1423,23 @@ export function buildDataset(asOf: Day): SynDataset {
     ],
     diagnoses: [{ ...c1.diagnoses[0]!, id: sid("o1:dx") }],
     attachments: [],
+    benefitsChecks: [
+      {
+        id: sid("o1:vob"),
+        clientPayorId: sid("o1:payor"),
+        checkedOn: addDays(c1Start, 1),
+        checkedByUserId: sid("user:other-bcba"),
+        method: "portal",
+        referenceNumber: null,
+        abaCovered: "yes",
+        priorAuthRequired: "yes",
+        // Not answered on the portal: the plan type stays unconfirmed.
+        planFunding: "unknown",
+        ageLimitYears: null,
+        visitOrHourLimits: null,
+        notes: null,
+      },
+    ],
     authorization: {
       ...c1.authorization,
       id: sid("o1:auth"),

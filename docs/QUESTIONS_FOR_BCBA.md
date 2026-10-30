@@ -63,3 +63,7 @@ Each question lists the default the build uses today. Defaults are the safer cho
 
 30. **Which state is "BCBS via Lucet"?** The seed has one rule for it, taken from a single approval letter, and nothing that names the BCBS plan or state. Lucet manages behavioral health for several BCBS companies, and each BCBS company is separate per state. *Default:* scoped to Georgia (the launch market) as a commercial payor; choosing it for a plan issued in another state shows a warning, never a block. Which BCBS plan(s) does it cover for this practice?
 31. **Plan type unknown.** Whether a commercial plan is fully insured or self-funded (ERISA) decides whether Georgia's autism mandate applies, and nobody can tell from the card alone. *Default:* every rule still applies and one warning asks the BCBA to confirm the plan type with the benefits check (VOB). Should a reauth packet ever be blocked on it? (Currently: never.)
+
+## Benefits checks
+
+32. **How fresh must a benefits check be?** Coverage and prior authorization rules can change at a plan year, an employer change, or a new card. *Default:* the pre-submission audit warns (never blocks) when no benefits check for the authorization's payor is dated on or after the current authorization's start, when the latest check says ABA is not covered, or when it leaves prior authorization unanswered. Should the window be shorter (e.g., within 30 days of submitting), and should a secondary insurance need its own current check?

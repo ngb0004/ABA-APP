@@ -69,7 +69,22 @@ export async function loadClientData(tx: Tx, clientId: string, authorizationId?:
     where: { clientId: client.id },
     orderBy: { createdAt: "desc" },
   });
-  return { client, org, auth, sessions, administrations, goals, letters, intake: client.intakes[0] ?? null };
+  // For the pre-submission audit only (never sent to the AI): when coverage was last confirmed.
+  const benefitsChecks = await tx.benefitsCheck.findMany({
+    where: { clientId: client.id },
+    orderBy: [{ checkedOn: "desc" }, { createdAt: "desc" }],
+  });
+  return {
+    client,
+    org,
+    auth,
+    sessions,
+    administrations,
+    goals,
+    letters,
+    benefitsChecks,
+    intake: client.intakes[0] ?? null,
+  };
 }
 export type ClientData = Awaited<ReturnType<typeof loadClientData>>;
 export type PlanBundle = Awaited<ReturnType<typeof loadPlanBundle>>;

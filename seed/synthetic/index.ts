@@ -33,6 +33,7 @@ const ORG_TABLES = [
   "authorization_unit",
   "authorization",
   "attachment",
+  "benefits_check",
   "client_payor",
   "diagnosis",
   "client",
@@ -186,6 +187,16 @@ async function seedClient(
   if (c.attachments.length)
     await tx.attachment.createMany({
       data: c.attachments.map((a) => ({ ...a, orgId, clientId: c.id, documentDate: d(a.documentDate) })),
+    });
+  if (c.benefitsChecks.length)
+    await tx.benefitsCheck.createMany({
+      data: c.benefitsChecks.map((b) => ({
+        ...b,
+        orgId,
+        clientId: c.id,
+        payorId: payorIds[c.payors.find((p) => p.id === b.clientPayorId)!.payorKey]!,
+        checkedOn: d(b.checkedOn),
+      })),
     });
   const a = c.authorization;
   await tx.authorization.create({

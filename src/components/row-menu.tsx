@@ -5,22 +5,28 @@ import { useEffect, useRef, useState } from "react";
 import { send } from "./actions";
 import { RecordForm } from "./record-form";
 
+type FormProps = Omit<Parameters<typeof RecordForm>[0], "onDone">;
+
 /**
  * A compact "⋯" menu for a table row: an optional Edit (opens the given form
- * below the row's content) and an optional destructive action. Replaces rows
- * of Edit / Remove buttons.
+ * below the row's content), optional extra form actions (e.g. "Record benefits
+ * check"), and an optional destructive action. Replaces rows of buttons.
  */
 export function RowMenu(props: {
   /** What the row is, for the screen-reader label ("Actions for insurance"). */
   name: string;
   /** The edit form (opens in a dialog and closes once saved). */
-  edit?: Omit<Parameters<typeof RecordForm>[0], "onDone">;
+  edit?: FormProps;
+  /** More forms, each a menu item that opens its form in a dialog titled with its label. */
+  actions?: { label: string; form: FormProps }[];
   remove?: { url: string; label?: string; confirm: string };
   testId?: string;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
-  const [editing, setEditing] = useState(false);
+  /** The dialog showing: "edit", an index into props.actions, or none. */
+  const [dialog, setDialog] = useState<"edit" | number | null>(null);
+  const editing = dialog !== null;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
@@ -41,10 +47,14 @@ export function RowMenu(props: {
 
   useEffect(() => {
     if (!editing) return;
-    const esc = (e: KeyboardEvent) => e.key === "Escape" && setEditing(false);
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && setDialog(null);
     document.addEventListener("keydown", esc);
     return () => document.removeEventListener("keydown", esc);
   }, [editing]);
+
+  const action = typeof dialog === "number" ? props.actions?.[dialog] : undefined;
+  const form = dialog === "edit" ? props.edit : action?.form;
+  const title = action ? `${action.label}: ${props.name}` : `Edit ${props.name}`;
 
   async function remove() {
     setOpen(false);
@@ -78,12 +88,25 @@ export function RowMenu(props: {
               role="menuitem"
               onClick={() => {
                 setOpen(false);
-                setEditing(true);
+                setDialog("edit");
               }}
             >
               Edit
             </button>
           )}
+          {(props.actions ?? []).map((a, i) => (
+            <button
+              key={a.label}
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                setDialog(i);
+              }}
+            >
+              {a.label}
+            </button>
+          ))}
           {props.remove && (
             <button type="button" role="menuitem" className="danger" onClick={remove}>
               {props.remove.label ?? "Remove"}
@@ -92,18 +115,15 @@ export function RowMenu(props: {
         </div>
       )}
       {editing && (
-        <div
-          className="modal-backdrop"
-          onMouseDown={(e) => e.target === e.currentTarget && setEditing(false)}
-        >
-          <div className="modal" role="dialog" aria-modal="true" aria-label={`Edit ${props.name}`}>
+        <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && setDialog(null)}>
+          <div className="modal" role="dialog" aria-modal="true" aria-label={title}>
             <div className="modal-head">
-              <h3>Edit {props.name}</h3>
-              <button type="button" className="icon-btn" aria-label="Close" onClick={() => setEditing(false)}>
+              <h3>{title}</h3>
+              <button type="button" className="icon-btn" aria-label="Close" onClick={() => setDialog(null)}>
                 ×
               </button>
             </div>
-            <RecordForm {...props.edit!} onDone={() => setEditing(false)} />
+            <RecordForm {...form!} onDone={() => setDialog(null)} />
           </div>
         </div>
       )}

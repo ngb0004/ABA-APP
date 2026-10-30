@@ -6,6 +6,14 @@ import { FormToggle, RecordForm, type FieldSpec } from "@/components/record-form
 import { RowMenu } from "@/components/row-menu";
 import { toDay } from "@/lib/dates";
 import { isDemo } from "@/lib/demo";
+import {
+  BENEFITS_CHECK_METHODS,
+  METHOD_LABELS,
+  PLAN_FUNDING,
+  PLAN_FUNDING_LABELS,
+  YES_NO_UNKNOWN,
+  type BenefitsCheckMethod,
+} from "@/lib/payors/benefits";
 import { PLAN_TYPES, PLAN_TYPE_LABELS, US_STATES, type PlanType } from "@/lib/payors/types";
 import { can } from "@/lib/permissions";
 import {
@@ -15,7 +23,7 @@ import {
   SESSION_ROLES,
   clientRecords,
 } from "@/lib/services/records";
-import { orNotFound, requirePageCtx, uuidParam } from "@/lib/server/page-session";
+import { asOfToday, orNotFound, requirePageCtx, uuidParam } from "@/lib/server/page-session";
 
 export const metadata: Metadata = { title: "Records" };
 
@@ -35,6 +43,7 @@ export default async function RecordsPage({ params }: { params: Promise<{ id: st
   const demo = isDemo();
   const payorOptions = payors.map((p) => ({ value: p.id, label: p.name }));
   const base = `/api/clients/${id}`;
+  const today = asOfToday();
   const addr = c.serviceAddress as { line1?: string; city?: string; state?: string; zip?: string };
 
   const payorFields: FieldSpec[] = [
@@ -63,6 +72,40 @@ export default async function RecordsPage({ params }: { params: Promise<{ id: st
       help: "Leave blank if it is the client's service state",
     },
     { name: "secondaryDocsSigned", label: "Secondary insurance documents signed", type: "checkbox" },
+  ];
+  const yesNoUnknown = YES_NO_UNKNOWN.map((v) => ({ value: v, label: label(v) }));
+  const checkFields: FieldSpec[] = [
+    { name: "checkedOn", label: "Date checked", type: "date" },
+    {
+      name: "method",
+      label: "How",
+      type: "select",
+      options: BENEFITS_CHECK_METHODS.map((m) => ({ value: m, label: label(METHOD_LABELS[m]) })),
+    },
+    {
+      name: "referenceNumber",
+      label: "Reference number",
+      optional: true,
+      placeholder: "SYN-…",
+      help: "The call or portal reference. Synthetic only: starts with SYN-",
+    },
+    { name: "abaCovered", label: "ABA covered", type: "select", options: yesNoUnknown },
+    {
+      name: "priorAuthRequired",
+      label: "Prior authorization required",
+      type: "select",
+      options: yesNoUnknown,
+    },
+    {
+      name: "planFunding",
+      label: "Plan funding",
+      type: "select",
+      options: PLAN_FUNDING.map((f) => ({ value: f, label: PLAN_FUNDING_LABELS[f] })),
+      help: "Commercial plans: fully insured plans follow state autism mandates; self-funded employer plans do not",
+    },
+    { name: "ageLimitYears", label: "Age limit (years)", type: "number", optional: true },
+    { name: "visitOrHourLimits", label: "Visit or hour limits", optional: true },
+    { name: "notes", label: "Notes", optional: true },
   ];
   const dxFields: FieldSpec[] = [
     { name: "icd10Code", label: "ICD-10 code", placeholder: "F84.0" },
@@ -169,6 +212,13 @@ export default async function RecordsPage({ params }: { params: Promise<{ id: st
 
       <div className="panel" data-testid="records-insurance">
         <h2 style={{ marginTop: 0 }}>Insurance</h2>
+        {c.payors.length > 0 && (
+          <p className="muted">
+            <Link href={`/clients/${id}/requirements`} data-testid="requirements-link-records">
+              What each payor requires for this client
+            </Link>
+          </p>
+        )}
         <table>
           <tbody>
             {c.payors.map((p) => (
@@ -180,11 +230,37 @@ export default async function RecordsPage({ params }: { params: Promise<{ id: st
                     {PLAN_TYPE_LABELS[p.planType as PlanType] ?? p.planType}
                     {p.planState ? ` · issued in ${p.planState}` : ""}
                   </div>
+                  <div className="muted" data-testid="benefits-checked">
+                    {p.benefitsChecks[0]
+                      ? `Benefits last checked ${toDay(p.benefitsChecks[0].checkedOn)} (${
+                          METHOD_LABELS[p.benefitsChecks[0].method as BenefitsCheckMethod] ??
+                          p.benefitsChecks[0].method
+                        })`
+                      : "Benefits not checked yet"}
+                  </div>
                 </td>
                 <td>
                   {canIns && (
                     <RowMenu
                       name="insurance"
+                      actions={[
+                        {
+                          label: "Record benefits check",
+                          form: {
+                            url: `${base}/payors/${p.id}/benefits-checks`,
+                            fields: checkFields,
+                            submitLabel: "Save benefits check",
+                            testId: "benefits-check-form",
+                            initial: {
+                              checkedOn: today,
+                              method: "phone",
+                              abaCovered: "unknown",
+                              priorAuthRequired: "unknown",
+                              planFunding: "unknown",
+                            },
+                          },
+                        },
+                      ]}
                       edit={{
                         url: `${base}/payors/${p.id}`,
                         method: "PUT",

@@ -38,6 +38,9 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
         <Link className="btn secondary" href={`/clients/${id}/records`} data-testid="records-link">
           Records
         </Link>
+        <Link className="btn secondary" href={`/clients/${id}/requirements`} data-testid="requirements-link">
+          Payor requirements
+        </Link>
       </div>
 
       {d.alerts.length > 0 && (

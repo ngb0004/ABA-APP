@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { withOrg } from "@/lib/db";
+import { toDay } from "@/lib/dates";
 import { seedAll } from "../../seed/synthetic/index";
 import { dataset } from "../helpers/synthetic-eval";
 
@@ -7,6 +8,7 @@ const TABLES = [
   "client",
   "diagnosis",
   "client_payor",
+  "benefits_check",
   "attachment",
   "authorization",
   "authorization_unit",
@@ -71,6 +73,27 @@ describe("synthetic seed", () => {
       lineOfBusiness: "medicaid_managed_care",
     });
     expect(byPayor.tricare_east!.payor).toMatchObject({ states: [], lineOfBusiness: "tricare" });
+  });
+
+  it("records one benefits check on each client's primary insurance, within the current authorization", async () => {
+    for (const o of dataset.orgs) {
+      const rows = await withOrg({ orgId: o.id, userId: null, role: null }, (tx) =>
+        tx.client.findMany({
+          include: { payors: { include: { benefitsChecks: true } }, authorizations: true },
+        }),
+      );
+      for (const c of rows) {
+        const primary = c.payors.find((p) => p.priority === "primary")!;
+        expect(primary.benefitsChecks).toHaveLength(1);
+        const check = primary.benefitsChecks[0]!;
+        expect(check.payorId).toBe(primary.payorId);
+        const auth = c.authorizations[0]!;
+        expect(check.checkedOn >= auth.startDate && check.checkedOn <= auth.endDate).toBe(true);
+        expect(toDay(check.checkedOn) <= dataset.asOf).toBe(true);
+        for (const p of c.payors.filter((x) => x.priority !== "primary"))
+          expect(p.benefitsChecks).toEqual([]);
+      }
+    }
   });
 
   it("gives each client 26 weeks of goal data and Client 3 a caregiver-training shortfall", () => {

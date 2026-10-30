@@ -27,6 +27,7 @@ export const AUDITED_MODELS = new Set([
   "Client",
   "Diagnosis",
   "ClientPayor",
+  "BenefitsCheck",
   "Attachment",
   "Authorization",
   "AuthorizationUnit",
