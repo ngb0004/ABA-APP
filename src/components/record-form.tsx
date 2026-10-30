@@ -233,7 +233,9 @@ export function RecordForm(props: {
                   ))}
                   <button
                     type="button"
-                    className="secondary"
+                    className="icon-btn"
+                    aria-label={`Remove ${f.label.toLowerCase()} row ${i + 1}`}
+                    title="Remove"
                     onClick={() =>
                       setValues(
                         set(
@@ -244,7 +246,7 @@ export function RecordForm(props: {
                       )
                     }
                   >
-                    Remove
+                    ×
                   </button>
                 </div>
               ))}

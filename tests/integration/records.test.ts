@@ -256,6 +256,10 @@ describe("practice settings and team", () => {
     const bcbas = team.filter((x) => x.role === "BCBA");
     if (bcbas.length === 1)
       await expect(changeMemberRole(bcba, mine.id, "RBT")).rejects.toMatchObject({ status: 409 });
+    await expect(changeMemberRole(bcba, mine.id, "BCBA")).rejects.toMatchObject({ status: 409 });
+    // A parent account is never promoted to a staff role.
+    const parent = team.find((x) => x.role === "PARENT");
+    await expect(changeMemberRole(bcba, parent!.id, "BCBA")).rejects.toMatchObject({ status: 409 });
     await removeMember(bcba, m.id);
     expect((await practiceSettings(bcba)).members.some((x) => x.id === m.id)).toBe(false);
     // Another practice's members are invisible.

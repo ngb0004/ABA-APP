@@ -118,4 +118,19 @@ test("goal data entry by an RBT, and practice settings and team by a BCBA", asyn
   await m.getByLabel("Temporary password").fill("temporary-pass-1234");
   await m.getByTestId("member-form-submit").click();
   await expect(page.getByTestId("team")).toContainText("echo.newhire@sample-practice.test");
+
+  // Roles change through one dropdown per person, not a row of buttons.
+  const row = page.locator('[data-member="echo.newhire@sample-practice.test"]');
+  await expect(row.getByRole("button", { name: /^Make / })).toHaveCount(0);
+  page.once("dialog", (d) => void d.accept());
+  await row.getByLabel("Role for Echo Newhire").selectOption("BCaBA");
+  await expect(row.getByLabel("Role for Echo Newhire")).toHaveValue("BCaBA");
+  await page.reload();
+  await expect(row.getByLabel("Role for Echo Newhire")).toHaveValue("BCaBA");
+  // Parent accounts are never offered a staff role.
+  await expect(page.locator('[data-member="parent@sample-practice.test"] select')).toHaveCount(0);
+  page.once("dialog", (d) => void d.accept());
+  await row.getByRole("button", { name: "Actions for Echo Newhire" }).click();
+  await row.getByRole("menuitem", { name: "Remove from practice" }).click();
+  await expect(page.getByTestId("team")).not.toContainText("echo.newhire@sample-practice.test");
 });

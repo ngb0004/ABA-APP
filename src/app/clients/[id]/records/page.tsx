@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ActionButton } from "@/components/actions";
 import { clientFields } from "@/components/client-fields";
 import { label, labeled } from "@/components/labels";
 import { FormToggle, RecordForm, type FieldSpec } from "@/components/record-form";
+import { RowMenu } from "@/components/row-menu";
 import { toDay } from "@/lib/dates";
 import { isDemo } from "@/lib/demo";
 import { can } from "@/lib/permissions";
@@ -158,31 +158,27 @@ export default async function RecordsPage({ params }: { params: Promise<{ id: st
                 </td>
                 <td>
                   {canIns && (
-                    <div className="row">
-                      <FormToggle label="Edit" secondary>
-                        <RecordForm
-                          url={`${base}/payors/${p.id}`}
-                          method="PUT"
-                          fields={payorFields}
-                          submitLabel="Save"
-                          initial={{
-                            payorId: p.payorId,
-                            priority: p.priority,
-                            memberId: p.memberId,
-                            planName: p.planName ?? "",
-                            secondaryDocsSigned: p.secondaryDocsSigned,
-                          }}
-                        />
-                      </FormToggle>
-                      <ActionButton
-                        url={`${base}/payors/${p.id}`}
-                        method="DELETE"
-                        secondary
-                        confirm="Remove this insurance?"
-                      >
-                        Remove
-                      </ActionButton>
-                    </div>
+                    <RowMenu
+                      name="insurance"
+                      edit={{
+                        url: `${base}/payors/${p.id}`,
+                        method: "PUT",
+                        fields: payorFields,
+                        submitLabel: "Save",
+                        initial: {
+                          payorId: p.payorId,
+                          priority: p.priority,
+                          memberId: p.memberId,
+                          planName: p.planName ?? "",
+                          secondaryDocsSigned: p.secondaryDocsSigned,
+                        },
+                      }}
+                      remove={{
+                        url: `${base}/payors/${p.id}`,
+                        confirm: "Remove this insurance?",
+                        label: "Remove",
+                      }}
+                    />
                   )}
                 </td>
               </tr>
@@ -217,33 +213,29 @@ export default async function RecordsPage({ params }: { params: Promise<{ id: st
                 </td>
                 <td>
                   {canClient && (
-                    <div className="row">
-                      <FormToggle label="Edit" secondary>
-                        <RecordForm
-                          url={`${base}/diagnoses/${d.id}`}
-                          method="PUT"
-                          fields={dxFields}
-                          submitLabel="Save"
-                          initial={{
-                            icd10Code: d.icd10Code,
-                            dsm5Code: d.dsm5Code,
-                            dsm5Label: d.dsm5Label,
-                            severity: d.severity ?? "",
-                            evaluationDate: d.evaluationDate ? toDay(d.evaluationDate) : "",
-                            isPrimary: d.isPrimary,
-                            deficitAreas: d.deficitAreas,
-                          }}
-                        />
-                      </FormToggle>
-                      <ActionButton
-                        url={`${base}/diagnoses/${d.id}`}
-                        method="DELETE"
-                        secondary
-                        confirm="Remove this diagnosis?"
-                      >
-                        Remove
-                      </ActionButton>
-                    </div>
+                    <RowMenu
+                      name="diagnosis"
+                      edit={{
+                        url: `${base}/diagnoses/${d.id}`,
+                        method: "PUT",
+                        fields: dxFields,
+                        submitLabel: "Save",
+                        initial: {
+                          icd10Code: d.icd10Code,
+                          dsm5Code: d.dsm5Code,
+                          dsm5Label: d.dsm5Label,
+                          severity: d.severity ?? "",
+                          evaluationDate: d.evaluationDate ? toDay(d.evaluationDate) : "",
+                          isPrimary: d.isPrimary,
+                          deficitAreas: d.deficitAreas,
+                        },
+                      }}
+                      remove={{
+                        url: `${base}/diagnoses/${d.id}`,
+                        confirm: "Remove this diagnosis?",
+                        label: "Remove",
+                      }}
+                    />
                   )}
                 </td>
               </tr>
@@ -267,45 +259,43 @@ export default async function RecordsPage({ params }: { params: Promise<{ id: st
       <div className="panel" data-testid="records-authorizations">
         <h2 style={{ marginTop: 0 }}>Authorizations</h2>
         {c.authorizations.map((a) => (
-          <div key={a.id} style={{ marginBottom: 12 }}>
-            <strong>{a.authNumber}</strong> · {a.payor.name} · {label(a.kind)} · {toDay(a.startDate)} to{" "}
-            {toDay(a.endDate)}
-            <div className="muted">
-              {a.units.map((u) => `${u.cptCode}: ${u.approvedUnits} per ${u.unitBasis}`).join(" · ") ||
-                "No units"}
+          <div key={a.id} className="list-row">
+            <div>
+              <strong>{a.authNumber}</strong> · {a.payor.name} · {label(a.kind)} · {toDay(a.startDate)} to{" "}
+              {toDay(a.endDate)}
+              <div className="muted">
+                {a.units.map((u) => `${u.cptCode}: ${u.approvedUnits} per ${u.unitBasis}`).join(" · ") ||
+                  "No units"}
+              </div>
             </div>
             {canIns && (
-              <div className="row">
-                <FormToggle label="Edit" secondary>
-                  <RecordForm
-                    url={`${base}/authorizations/${a.id}`}
-                    method="PUT"
-                    fields={authFields}
-                    submitLabel="Save"
-                    initial={{
-                      payorId: a.payorId,
-                      authNumber: a.authNumber,
-                      kind: a.kind,
-                      startDate: toDay(a.startDate),
-                      endDate: toDay(a.endDate),
-                      recommendedHoursPerWeek: a.recommendedHoursPerWeek ?? "",
-                      units: a.units.map((u) => ({
-                        cptCode: u.cptCode,
-                        approvedUnits: u.approvedUnits,
-                        unitBasis: u.unitBasis,
-                      })),
-                    }}
-                  />
-                </FormToggle>
-                <ActionButton
-                  url={`${base}/authorizations/${a.id}`}
-                  method="DELETE"
-                  secondary
-                  confirm="Delete this authorization?"
-                >
-                  Delete
-                </ActionButton>
-              </div>
+              <RowMenu
+                name="authorization"
+                edit={{
+                  url: `${base}/authorizations/${a.id}`,
+                  method: "PUT",
+                  fields: authFields,
+                  submitLabel: "Save",
+                  initial: {
+                    payorId: a.payorId,
+                    authNumber: a.authNumber,
+                    kind: a.kind,
+                    startDate: toDay(a.startDate),
+                    endDate: toDay(a.endDate),
+                    recommendedHoursPerWeek: a.recommendedHoursPerWeek ?? "",
+                    units: a.units.map((u) => ({
+                      cptCode: u.cptCode,
+                      approvedUnits: u.approvedUnits,
+                      unitBasis: u.unitBasis,
+                    })),
+                  },
+                }}
+                remove={{
+                  url: `${base}/authorizations/${a.id}`,
+                  confirm: "Delete this authorization?",
+                  label: "Delete",
+                }}
+              />
             )}
           </div>
         ))}
@@ -339,30 +329,26 @@ export default async function RecordsPage({ params }: { params: Promise<{ id: st
                 </td>
                 <td>
                   {canDocs && (
-                    <div className="row">
-                      <FormToggle label="Edit" secondary>
-                        <RecordForm
-                          url={`${base}/attachments/${a.id}`}
-                          method="PUT"
-                          fields={attFields}
-                          submitLabel="Save"
-                          initial={{
-                            kind: a.kind,
-                            title: a.title,
-                            documentDate: a.documentDate ? toDay(a.documentDate) : "",
-                            caregiverSigned: a.caregiverSigned,
-                          }}
-                        />
-                      </FormToggle>
-                      <ActionButton
-                        url={`${base}/attachments/${a.id}`}
-                        method="DELETE"
-                        secondary
-                        confirm="Remove this attachment?"
-                      >
-                        Remove
-                      </ActionButton>
-                    </div>
+                    <RowMenu
+                      name="attachment"
+                      edit={{
+                        url: `${base}/attachments/${a.id}`,
+                        method: "PUT",
+                        fields: attFields,
+                        submitLabel: "Save",
+                        initial: {
+                          kind: a.kind,
+                          title: a.title,
+                          documentDate: a.documentDate ? toDay(a.documentDate) : "",
+                          caregiverSigned: a.caregiverSigned,
+                        },
+                      }}
+                      remove={{
+                        url: `${base}/attachments/${a.id}`,
+                        confirm: "Remove this attachment?",
+                        label: "Remove",
+                      }}
+                    />
                   )}
                 </td>
               </tr>
@@ -429,14 +415,14 @@ export default async function RecordsPage({ params }: { params: Promise<{ id: st
                     <td>{s.inPerson ? "in person" : "remote"}</td>
                     <td>
                       {canData && (
-                        <ActionButton
-                          url={`${base}/sessions/${s.id}`}
-                          method="DELETE"
-                          secondary
-                          confirm="Delete this session?"
-                        >
-                          Delete
-                        </ActionButton>
+                        <RowMenu
+                          name={`session on ${toDay(s.date)}`}
+                          remove={{
+                            url: `${base}/sessions/${s.id}`,
+                            confirm: "Delete this session?",
+                            label: "Delete",
+                          }}
+                        />
                       )}
                     </td>
                   </tr>

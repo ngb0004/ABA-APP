@@ -1,3 +1,4 @@
+import { SamplePicker } from "@/components/row-menu";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { sectionDone } from "@/lib/plan/sections";
@@ -85,21 +86,12 @@ export default async function PacketPage({ params }: { params: Promise<{ id: str
           </p>
         )}
         {can(ctx.role, "letter:upload") && (
-          <div className="row" style={{ marginTop: 8 }}>
-            <span className="muted">
-              Or load a fictional sample letter{initial ? " (the samples are reauthorization letters)" : ""}:
-            </span>
-            {DEMO_SAMPLES.letters.map((name) => (
-              <ActionButton
-                key={name}
-                url={`/api/plans/${id}/letters?sample=${name}`}
-                secondary
-                testId={`sample-${name}`}
-              >
-                {name}
-              </ActionButton>
-            ))}
-          </div>
+          <SamplePicker
+            label={`Or load a fictional sample letter${initial ? " (reauthorization letters)" : ""}`}
+            urlPrefix={`/api/plans/${id}/letters?sample=`}
+            samples={DEMO_SAMPLES.letters}
+            testId="sample-letters"
+          />
         )}
         {b.letters.map((l) => (
           <LetterReview

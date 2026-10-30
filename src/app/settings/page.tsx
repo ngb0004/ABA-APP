@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { ActionButton } from "@/components/actions";
+import { RoleSelect, RowMenu } from "@/components/row-menu";
 import { label, labeled } from "@/components/labels";
 import { FormToggle, RecordForm, type FieldSpec } from "@/components/record-form";
 import { MEMBER_ROLES, practiceSettings } from "@/lib/services/records";
@@ -91,35 +91,28 @@ export default async function SettingsPage() {
                   <td data-label="Name">{m.name}</td>
                   <td data-label="Email">{m.email}</td>
                   <td data-label="Role">
-                    {label(m.role)}
-                    {m.userId !== ctx.userId && (
-                      <div className="row">
-                        {MEMBER_ROLES.filter((r) => r !== m.role).map((r) => (
-                          <ActionButton
-                            key={r}
-                            url={`/api/settings/members/${m.id}`}
-                            method="PATCH"
-                            body={{ role: r }}
-                            secondary
-                            confirm={`Change ${m.name}'s role to ${label(r)}? They will be signed out.`}
-                          >
-                            Make {label(r)}
-                          </ActionButton>
-                        ))}
-                      </div>
+                    {m.userId !== ctx.userId && m.role !== "PARENT" ? (
+                      <RoleSelect
+                        url={`/api/settings/members/${m.id}`}
+                        name={m.name}
+                        role={m.role}
+                        options={MEMBER_ROLES.map((r) => ({ value: r, label: label(r) }))}
+                      />
+                    ) : (
+                      label(m.role)
                     )}
                   </td>
                   <td data-label="Authenticator">{m.mfaEnabled ? "set up" : "not yet"}</td>
                   <td data-label="">
                     {m.userId !== ctx.userId && (
-                      <ActionButton
-                        url={`/api/settings/members/${m.id}`}
-                        method="DELETE"
-                        secondary
-                        confirm={`Remove ${m.name} from the practice?`}
-                      >
-                        Remove
-                      </ActionButton>
+                      <RowMenu
+                        name={m.name}
+                        remove={{
+                          url: `/api/settings/members/${m.id}`,
+                          label: "Remove from practice",
+                          confirm: `Remove ${m.name} from the practice?`,
+                        }}
+                      />
                     )}
                   </td>
                 </tr>

@@ -48,26 +48,32 @@ export default async function GoalsPage({ params }: { params: Promise<{ id: stri
           {!v.latestVerified ? (
             <p className="muted">Import and verify a VB-MAPP to get suggestions.</p>
           ) : (
-            <ul>
+            <div>
               {v.suggestions.map((s, i) => (
-                <li key={i}>
-                  Level {s.level} {s.domain}: {s.domainScore} of {s.domainMax}; next milestone{" "}
-                  {s.nextMilestone}
+                <div key={i} className="list-row">
+                  <div>
+                    <strong>
+                      Level {s.level} {s.domain}
+                    </strong>
+                    <div className="muted">
+                      {s.domainScore} of {s.domainMax} · next milestone {s.nextMilestone}
+                      {s.template ? ` · suggests ${s.template.domainName} tier ${s.template.tier}` : ""}
+                    </div>
+                  </div>
                   {s.template && can(ctx.role, "goal:write") && (
-                    <>
-                      {" "}
-                      <ActionButton
-                        url={`/api/clients/${id}/goals`}
-                        body={{ templateId: s.template.id }}
-                        secondary
-                      >
-                        Add {s.template.domainName} tier {s.template.tier}
-                      </ActionButton>
-                    </>
+                    <ActionButton
+                      url={`/api/clients/${id}/goals`}
+                      body={{ templateId: s.template.id }}
+                      secondary
+                      small
+                      ariaLabel={`Add ${s.template.domainName} tier ${s.template.tier}`}
+                    >
+                      + Add goal
+                    </ActionButton>
                   )}
-                </li>
+                </div>
               ))}
-            </ul>
+            </div>
           )}
         </div>
       </div>

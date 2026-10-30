@@ -1,6 +1,7 @@
+import { SamplePicker } from "@/components/row-menu";
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ActionButton, Html, UploadForm } from "@/components/actions";
+import { Html, UploadForm } from "@/components/actions";
 import { DEMO_SAMPLES, isDemo } from "@/lib/demo";
 import { withOrg } from "@/lib/db";
 import { toDay } from "@/lib/dates";
@@ -58,21 +59,14 @@ export default async function VbmappPage({ params }: { params: Promise<{ id: str
               below are accepted.
             </p>
           )}
-          <div className="row" style={{ marginTop: 8 }}>
-            <span className="muted">Or load a fictional sample workbook:</span>
-            {DEMO_SAMPLES.vbmapp.map((name) => (
-              <ActionButton
-                key={name}
-                url={`/api/clients/${id}/vbmapp?sample=${name}`}
-                redirectKey="importId"
-                redirectPrefix="/vbmapp/imports/"
-                secondary
-                testId={`sample-${name}`}
-              >
-                {name}
-              </ActionButton>
-            ))}
-          </div>
+          <SamplePicker
+            label="Or load a fictional sample workbook"
+            urlPrefix={`/api/clients/${id}/vbmapp?sample=`}
+            samples={DEMO_SAMPLES.vbmapp}
+            redirectKey="importId"
+            redirectPrefix="/vbmapp/imports/"
+            testId="sample-workbooks"
+          />
           {pending.length > 0 && (
             <p>
               Pending review:{" "}

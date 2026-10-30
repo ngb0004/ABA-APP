@@ -24,6 +24,10 @@ export function ActionButton(props: {
   body?: unknown;
   children: ReactNode;
   secondary?: boolean;
+  /** Compact size for buttons inside lists. */
+  small?: boolean;
+  /** Screen-reader name when the visible text is short. */
+  ariaLabel?: string;
   disabled?: boolean;
   confirm?: string;
   redirectKey?: string;
@@ -39,7 +43,10 @@ export function ActionButton(props: {
     <span>
       <button
         data-testid={props.testId}
-        className={props.secondary ? "secondary" : undefined}
+        className={
+          [props.secondary && "secondary", props.small && "small"].filter(Boolean).join(" ") || undefined
+        }
+        aria-label={props.ariaLabel}
         disabled={busy || props.disabled}
         onClick={async () => {
           if (props.confirm && !window.confirm(props.confirm)) return;

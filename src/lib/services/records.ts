@@ -814,6 +814,9 @@ export async function changeMemberRole(ctx: OrgCtx, membershipId: string, role: 
   return withOrg(ctx, async (tx) => {
     const m = await tx.membership.findFirst({ where: { id: membershipId, orgId: ctx.orgId } });
     if (!m) throw new HttpError(404, "Not found");
+    if (m.userId === ctx.userId) throw new HttpError(409, "You cannot change your own role");
+    // Parent accounts are linked to their own child's documents, never staff.
+    if (m.role === "PARENT") throw new HttpError(409, "A parent account cannot be given a staff role");
     if (m.role === "BCBA" && r !== "BCBA") await assertKeepsABcba(tx, ctx.orgId, m.id);
     await tx.membership.update({ where: { id: m.id }, data: { role: r } });
     // The person's open sessions carry the old role: sign them out.
