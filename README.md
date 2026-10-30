@@ -1,4 +1,4 @@
-# ABA Plan Assistant (v1.0, synthetic data only)
+# Yoma: ABA treatment plans and reauthorizations (v1.0, synthetic data only)
 
 A web app for BCBAs that turns VB-MAPP scores, parent intake answers, and payor rules into ABA treatment plans and reauthorization packets. The AI drafts sections; the BCBA edits and approves each one. Built from the brief in `docs/` (see `CLAUDE.md` for the non-negotiable rules).
 
