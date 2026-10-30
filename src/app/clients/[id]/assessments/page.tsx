@@ -16,6 +16,7 @@ import { toDay } from "@/lib/dates";
 import { can, requirePermission } from "@/lib/permissions";
 import { listAssessments } from "@/lib/services/assessments";
 import { asOfToday, orNotFound, requirePageCtx, uuidParam } from "@/lib/server/page-session";
+import { ClientInactiveBanner } from "@/components/inactive-banner";
 
 export const metadata: Metadata = { title: "Assessments" };
 
@@ -52,6 +53,7 @@ export default async function AssessmentsPage({ params }: { params: Promise<{ id
         </Link>
       </p>
       <h1>Assessments</h1>
+      <ClientInactiveBanner ctx={ctx} clientId={id} />
       <p className="page-sub">
         Every assessment for this client, newest first. Repeats of the same assessment are grouped so progress
         shows side by side. Only scores are stored, never report text.

@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ActionButton } from "@/components/actions";
+import { ClientStatusMenu } from "@/components/client-status-menu";
+import { InactiveBanner } from "@/components/inactive-banner";
 import { label } from "@/components/labels";
 import { RuleSource, Status } from "@/components/status";
 import { toDay } from "@/lib/dates";
@@ -22,11 +24,20 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
   // Otherwise the next plan is a reauthorization.
   const initialFirst = !d.auth || (d.auth.kind === "initial" && c.plans.length === 0);
   const pct = (n: number | null) => (n === null ? "n/a" : `${Math.round(n * 100)}%`);
+  // "Today" for the inactive date: the pinned demo date, else today in the practice's time zone.
+  const today = process.env.APP_AS_OF ?? dayInZone(new Date(), timeZone);
   return (
     <>
-      <h1>
-        {c.firstName} {c.lastName} {c.isSynthetic && <span className="badge info">synthetic</span>}
-      </h1>
+      <div className="page-head">
+        <h1>
+          {c.firstName} {c.lastName} {c.isSynthetic && <span className="badge info">synthetic</span>}{" "}
+          {d.inactive && <span className="badge na">inactive</span>}
+        </h1>
+        {can(ctx.role, "client:status") && (
+          <ClientStatusMenu clientId={id} inactive={d.inactive} today={today} />
+        )}
+      </div>
+      <InactiveBanner client={c} />
       <div className="row" style={{ marginBottom: 12 }}>
         <Link className="btn secondary" href={`/clients/${id}/intake`}>
           Intake
@@ -335,9 +346,11 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
           <h2 style={{ marginTop: 0 }}>Next 60 days</h2>
           {!d.events.length && (
             <p className="muted">
-              {d.auth
-                ? "Nothing due in the next 60 days."
-                : "Add an authorization on Records to see due dates."}
+              {d.inactive
+                ? "Nothing is due: the client is inactive."
+                : d.auth
+                  ? "Nothing due in the next 60 days."
+                  : "Add an authorization on Records to see due dates."}
             </p>
           )}
           <ul>
@@ -379,7 +392,8 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
             </li>
           ))}
         </ul>
-        {can(ctx.role, "plan:create") && (
+        {d.inactive && <p className="muted">Reactivate the client to start a new plan.</p>}
+        {can(ctx.role, "plan:create") && !d.inactive && (
           <div className="row">
             <ActionButton
               url={`/api/clients/${id}/plans`}

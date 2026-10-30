@@ -10,7 +10,8 @@ export const metadata: Metadata = { title: { absolute: `Caseload · ${APP_NAME}`
 export default async function CaseloadPage() {
   const ctx = await requirePageCtx();
   const asOf = asOfToday();
-  const { events, clients } = await caseload(ctx, asOf);
+  // Active clients only: inactive (discontinued) clients raise no alerts and have nothing due.
+  const { events, clients, inactiveCount } = await caseload(ctx, asOf);
   const details = await Promise.all(clients.map((c) => clientDetail(ctx, c.id, asOf)));
   const alertCount = details.reduce((n, d) => n + d.alerts.length, 0);
   const urgent = details.filter((d) => d.alerts.some((a) => a.level === "danger")).length;
@@ -22,7 +23,20 @@ export default async function CaseloadPage() {
         <div className="stat dark">
           <div className="stat-label">Clients</div>
           <div className="stat-value">{clients.length}</div>
-          <div className="stat-note">on your caseload</div>
+          <div className="stat-note">
+            active on your caseload
+            {inactiveCount > 0 && (
+              <>
+                {" · "}
+                <Link
+                  href="/clients?status=inactive"
+                  style={{ color: "inherit", textDecoration: "underline" }}
+                >
+                  {inactiveCount} inactive
+                </Link>
+              </>
+            )}
+          </div>
         </div>
         <div className="stat gold">
           <div className="stat-label">Due soon</div>

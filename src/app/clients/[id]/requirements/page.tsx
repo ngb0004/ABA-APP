@@ -23,6 +23,7 @@ import {
 } from "@/lib/payors/types";
 import { clientRequirements } from "@/lib/services/requirements";
 import { asOfToday, orNotFound, requirePageCtx, uuidParam } from "@/lib/server/page-session";
+import { ClientInactiveBanner } from "@/components/inactive-banner";
 
 export const metadata: Metadata = { title: "Payor requirements" };
 
@@ -46,6 +47,7 @@ export default async function RequirementsPage({ params }: { params: Promise<{ i
         </Link>
       </p>
       <h1>Payor requirements</h1>
+      <ClientInactiveBanner ctx={ctx} clientId={id} />
       <p className="muted">
         What each of this client&apos;s insurers requires, for this client&apos;s payor, plan state, and plan
         type, and where each requirement stands today. Unverified rules are reminders: they only ever warn. To

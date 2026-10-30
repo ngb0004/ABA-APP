@@ -8,6 +8,7 @@ import { sectionDone } from "@/lib/plan/sections";
 import { can } from "@/lib/permissions";
 import { planView } from "@/lib/services/plans";
 import { asOfToday, orNotFound, requirePageCtx, uuidParam } from "@/lib/server/page-session";
+import { InactiveBanner } from "@/components/inactive-banner";
 
 export const metadata: Metadata = { title: "Treatment plan" };
 
@@ -26,6 +27,7 @@ export default async function PlanPage({ params }: { params: Promise<{ id: strin
         </Link>
       </p>
       <h1>{b.plan.type === "reauth" ? "Reauthorization" : "Initial"} treatment plan</h1>
+      <InactiveBanner client={b.client} />
       <div className="panel plan-progress">
         <div className="row" style={{ justifyContent: "space-between" }}>
           <strong>

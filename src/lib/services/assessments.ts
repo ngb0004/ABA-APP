@@ -21,6 +21,7 @@ import { dayToDate, toDay } from "../dates";
 import { HttpError } from "../log";
 import { requirePermission } from "../permissions";
 import { afterAssessmentConfirmed, dropFromPlanSelections } from "./plans";
+import { assertClientActive } from "./client-status";
 
 const scoreRows = (orgId: string, assessmentId: string, v: NormalizedAssessment) =>
   v.scores.map((s) => ({
@@ -67,6 +68,7 @@ export async function createAssessment(
   requirePermission(ctx.role, "assessment:write");
   const v = validateAssessment(catalog, input, asOf);
   return withOrg(ctx, async (tx) => {
+    await assertClientActive(tx, clientId);
     await clientOf(tx, clientId);
     const row = await tx.assessment.create({
       data: {
@@ -100,6 +102,7 @@ export async function updateAssessment(
   requirePermission(ctx.role, "assessment:write");
   const v = validateAssessment(catalog, input, asOf);
   return withOrg(ctx, async (tx) => {
+    await assertClientActive(tx, clientId);
     const a = await draftOf(tx, clientId, id);
     if (a.typeKey !== v.typeKey || a.module !== v.module)
       throw new HttpError(422, "The assessment type cannot change; delete this draft and add a new one");
@@ -122,6 +125,7 @@ export async function confirmAssessment(ctx: OrgCtx, clientId: string, id: strin
   if (!ctx.userId) throw new HttpError(403, "Sign in to confirm an assessment");
   const userId = ctx.userId;
   return withOrg(ctx, async (tx) => {
+    await assertClientActive(tx, clientId);
     await draftOf(tx, clientId, id);
     if (!(await tx.assessmentScore.count({ where: { assessmentId: id } })))
       throw new HttpError(422, "Enter at least one score before confirming");
@@ -138,6 +142,7 @@ export async function confirmAssessment(ctx: OrgCtx, clientId: string, id: strin
 export async function deleteAssessment(ctx: OrgCtx, clientId: string, id: string) {
   requirePermission(ctx.role, "assessment:write");
   return withOrg(ctx, async (tx) => {
+    await assertClientActive(tx, clientId);
     const a = await draftOf(tx, clientId, id);
     await dropFromPlanSelections(tx, clientId, id);
     await tx.assessmentScore.deleteMany({ where: { assessmentId: id } });

@@ -11,6 +11,7 @@ import { HttpError } from "../log";
 import { requirePermission } from "../permissions";
 import { carryForward, totalsFromScores, type GridScore } from "../vbmapp/carry-forward";
 import { parseVbmappWorkbook, type ParsedWorkbook } from "../vbmapp/parse";
+import { assertClientActive } from "./client-status";
 
 export async function uploadVbmapp(ctx: OrgCtx, clientId: string, filename: string, data: Buffer) {
   requirePermission(ctx.role, "vbmapp:import");
@@ -23,6 +24,7 @@ export async function uploadVbmapp(ctx: OrgCtx, clientId: string, filename: stri
     throw new HttpError(400, (e as Error).message);
   }
   return withOrg(ctx, async (tx) => {
+    await assertClientActive(tx, clientId);
     await tx.client.findUniqueOrThrow({ where: { id: clientId } });
     const imp = await tx.vbmappImport.create({
       data: {
@@ -82,6 +84,7 @@ export async function confirmImport(ctx: OrgCtx, importId: string, opts: { strip
   return withOrg(ctx, async (tx) => {
     const imp = await tx.vbmappImport.findUniqueOrThrow({ where: { id: importId } });
     if (imp.status !== "pending") throw new HttpError(409, "Import already reviewed");
+    await assertClientActive(tx, imp.clientId);
     if (imp.phiDetected && !opts.stripPhi)
       throw new HttpError(
         422,

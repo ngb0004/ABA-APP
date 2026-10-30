@@ -41,6 +41,7 @@ import {
 import type { RuleResult } from "../payors/types";
 import { renderMilestonesGridSvg } from "../vbmapp/grid-svg";
 import { evaluateClientRules, loadApplicableRules } from "./payors";
+import { assertClientActive, assertGoalClientActive, assertPlanClientActive } from "./client-status";
 
 export type ItemState = { status: "answered" | "none"; note?: string };
 export type RequiredItem = {
@@ -110,6 +111,7 @@ async function primaryRules(tx: Tx, b: PlanBundle) {
 export async function createPlan(ctx: OrgCtx, clientId: string, type: "initial" | "reauth") {
   requirePermission(ctx.role, "plan:create");
   return withOrg(ctx, async (tx) => {
+    await assertClientActive(tx, clientId);
     const client = await tx.client.findUniqueOrThrow({
       where: { id: clientId },
       include: { payors: true, authorizations: { orderBy: { endDate: "desc" }, take: 1 } },
@@ -280,6 +282,7 @@ export async function draftSection(ctx: OrgCtx, planId: string, key: string, asO
   // Read everything in a short transaction; the model call (which can take most of a minute) runs
   // outside any transaction, and the result is written in a second one.
   const prep = await withOrg(ctx, async (tx) => {
+    await assertPlanClientActive(tx, planId);
     const b = await loadPlanBundle(tx, planId);
     const section = b.plan.sections.find((s) => s.key === key);
     if (!section) throw new HttpError(404, "Unknown section");
@@ -375,6 +378,7 @@ function assertOpen(state: string, doing: string) {
 export async function editSection(ctx: OrgCtx, planId: string, key: string, content: string, asOf: Day) {
   requirePermission(ctx.role, "section:edit");
   return withOrg(ctx, async (tx) => {
+    await assertPlanClientActive(tx, planId);
     const b = await loadPlanBundle(tx, planId);
     const section = b.plan.sections.find((s) => s.key === key);
     if (!section) throw new HttpError(404, "Unknown section");
@@ -417,6 +421,7 @@ export async function setSectionItem(
   // only through their own actions, never through the checklist.
   if (itemKey.startsWith("_")) throw new HttpError(422, "That item cannot be changed here");
   return withOrg(ctx, async (tx) => {
+    await assertPlanClientActive(tx, planId);
     const section = await tx.planSection.findUniqueOrThrow({ where: { planId_key: { planId, key } } });
     assertOpen(section.state, "changing items");
     const items = { ...((section.items ?? {}) as Record<string, ItemState>) };
@@ -432,6 +437,7 @@ export async function setSectionItem(
 export async function approveSection(ctx: OrgCtx, planId: string, key: string, asOf: Day) {
   requirePermission(ctx.role, "section:approve");
   return withOrg(ctx, async (tx) => {
+    await assertPlanClientActive(tx, planId);
     const b = await loadPlanBundle(tx, planId);
     const section = b.plan.sections.find((s) => s.key === key);
     if (!section) throw new HttpError(404, "Unknown section");
@@ -493,6 +499,7 @@ export async function markSectionNotApplicable(ctx: OrgCtx, planId: string, key:
   const why = reason.trim();
   if (!why) throw new HttpError(422, "Say why this section does not apply");
   return withOrg(ctx, async (tx) => {
+    await assertPlanClientActive(tx, planId);
     const section = await tx.planSection.findUniqueOrThrow({ where: { planId_key: { planId, key } } });
     if (section.state === "not_applicable") return section;
     if (section.state === "approved")
@@ -531,6 +538,7 @@ export async function markSectionNotApplicable(ctx: OrgCtx, planId: string, key:
 export async function reopenSection(ctx: OrgCtx, planId: string, key: string) {
   requirePermission(ctx.role, "section:approve");
   return withOrg(ctx, async (tx) => {
+    await assertPlanClientActive(tx, planId);
     const section = await tx.planSection.findUniqueOrThrow({ where: { planId_key: { planId, key } } });
     const items = { ...((section.items ?? {}) as Record<string, ItemState>) };
     delete items[NOT_APPLICABLE_ITEM];
@@ -570,6 +578,7 @@ export async function reopenSection(ctx: OrgCtx, planId: string, key: string) {
 export async function setPlanAssessments(ctx: OrgCtx, planId: string, ids: string[]) {
   requirePermission(ctx.role, "section:edit");
   return withOrg(ctx, async (tx) => {
+    await assertPlanClientActive(tx, planId);
     const plan = await tx.plan.findUnique({ where: { id: planId }, include: { sections: true } });
     if (!plan) throw new HttpError(404, "Not found");
     if (plan.status === "finalized")
@@ -701,6 +710,7 @@ export async function dropFromPlanSelections(tx: Tx, clientId: string, assessmen
 export async function approveGoal(ctx: OrgCtx, goalId: string) {
   requirePermission(ctx.role, "goal:approve");
   return withOrg(ctx, async (tx) => {
+    await assertGoalClientActive(tx, goalId);
     const g = await tx.goal.findUniqueOrThrow({ where: { id: goalId } });
     const ph = unresolvedPlaceholders(g.objective, g.rationale, g.sd, g.targetBehavior);
     if (ph.length) throw new HttpError(422, `Goal has unresolved placeholders: ${ph.join(", ")}`);
@@ -733,6 +743,7 @@ export async function updateGoal(
   if (data.progressStatus === "discontinued")
     throw new HttpError(422, "Use Discontinue in the goal's menu: it records the date and your reason.");
   return withOrg(ctx, async (tx) => {
+    await assertGoalClientActive(tx, goalId);
     if (data.progressStatus !== undefined) {
       const cur = await tx.goal.findUniqueOrThrow({ where: { id: goalId } });
       if (cur.progressStatus === "discontinued")
@@ -789,6 +800,7 @@ export async function updateGoal(
 export async function lockGoalBaseline(ctx: OrgCtx, goalId: string) {
   requirePermission(ctx.role, "goal:approve");
   return withOrg(ctx, async (tx) => {
+    await assertGoalClientActive(tx, goalId);
     const g = await tx.goal.findUniqueOrThrow({
       where: { id: goalId },
       include: { dataPoints: { orderBy: { date: "asc" } } },
@@ -899,6 +911,7 @@ export function goalRemovalBlocker(goal: RemovableGoal, rc: GoalRemovalContext):
 export async function removeGoal(ctx: OrgCtx, goalId: string) {
   requirePermission(ctx.role, "goal:approve");
   return withOrg(ctx, async (tx) => {
+    await assertGoalClientActive(tx, goalId);
     const { clientId } = await tx.goal.findUniqueOrThrow({
       where: { id: goalId },
       select: { clientId: true },
@@ -1039,6 +1052,7 @@ export async function discontinueGoal(
   if (!isRealDay(input.date)) throw new HttpError(422, "Use a real date (YYYY-MM-DD)");
   if (input.date > asOf) throw new HttpError(422, "The date discontinued cannot be after today");
   return withOrg(ctx, async (tx) => {
+    await assertGoalClientActive(tx, goalId);
     const g = await tx.goal.findUniqueOrThrow({ where: { id: goalId } });
     if (g.progressStatus === "discontinued") throw new HttpError(409, "This goal is already discontinued");
     if (g.introducedAt && input.date < toDay(g.introducedAt))
@@ -1065,6 +1079,7 @@ export async function discontinueGoal(
 export async function resumeGoal(ctx: OrgCtx, goalId: string) {
   requirePermission(ctx.role, "goal:write");
   return withOrg(ctx, async (tx) => {
+    await assertGoalClientActive(tx, goalId);
     const g = await tx.goal.findUniqueOrThrow({ where: { id: goalId } });
     const r = await tx.goal.updateMany({
       where: { id: goalId, progressStatus: "discontinued" },

@@ -26,6 +26,7 @@ import {
   clientRecords,
 } from "@/lib/services/records";
 import { asOfToday, orNotFound, requirePageCtx, uuidParam } from "@/lib/server/page-session";
+import { ClientInactiveBanner } from "@/components/inactive-banner";
 
 export const metadata: Metadata = { title: "Records" };
 
@@ -168,6 +169,7 @@ export default async function RecordsPage({ params }: { params: Promise<{ id: st
         </Link>
       </p>
       <h1>Records</h1>
+      <ClientInactiveBanner ctx={ctx} clientId={id} />
       <p className="alert warn">
         v1.0 holds fictional clients only. Member and authorization numbers must start with SYN-, staff are
         entered as codes, and attachments are recorded by title and date (no files).

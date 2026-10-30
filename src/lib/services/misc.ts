@@ -6,6 +6,7 @@ import { masteryDefaults, tokenizeMastery } from "../goals/tokenize";
 import { validateDraft, validateSubmission, FIELD_BY_ID, type IntakeAnswers } from "../intake/schema";
 import { HttpError } from "../log";
 import { can, requirePermission } from "../permissions";
+import { assertClientActive } from "./client-status";
 
 export async function saveIntake(
   ctx: OrgCtx,
@@ -57,6 +58,7 @@ const DEFICIT_FOR: Record<string, string> = {
 export async function addGoalFromTemplate(ctx: OrgCtx, clientId: string, templateId: string) {
   requirePermission(ctx.role, "goal:write");
   return withOrg(ctx, async (tx) => {
+    await assertClientActive(tx, clientId);
     const t = await tx.goalTemplate.findUniqueOrThrow({ where: { id: templateId } });
     const client = await tx.client.findUniqueOrThrow({
       where: { id: clientId },

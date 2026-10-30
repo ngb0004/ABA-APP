@@ -172,6 +172,14 @@ async function seedClient(
       guardians: c.guardians,
       hasIep: c.hasIep,
       events: c.events,
+      ...(c.inactive
+        ? {
+            status: "inactive",
+            inactiveSince: d(c.inactive.since),
+            inactiveReason: c.inactive.reason,
+            inactiveNote: c.inactive.note,
+          }
+        : {}),
     },
   });
   await tx.diagnosis.createMany({

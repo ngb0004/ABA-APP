@@ -13,6 +13,7 @@ import { pseudonymNames, pseudonymize } from "../intake/derive";
 import { assertDemoUploadAllowed } from "../demo";
 import { HttpError } from "../log";
 import { requirePermission } from "../permissions";
+import { assertClientActive } from "./client-status";
 
 export const LETTER_CLASSES = ["approval", "denial", "reduction", "request_for_info", "p2p_offer"] as const;
 const MAX_BYTES = 5 * 1024 * 1024;
@@ -99,6 +100,7 @@ export async function uploadLetter(ctx: OrgCtx, clientId: string, filename: stri
   assertDemoUploadAllowed(data);
   const text = await extractLetterText(filename, data);
   return withOrg(ctx, async (tx) => {
+    await assertClientActive(tx, clientId);
     const client = await tx.client.findUniqueOrThrow({
       where: { id: clientId },
       include: { payors: true, authorizations: { orderBy: { endDate: "desc" }, take: 1 } },
@@ -157,6 +159,7 @@ export async function confirmLetter(
   requirePermission(ctx.role, "letter:confirm");
   return withOrg(ctx, async (tx) => {
     const l = await tx.payorLetter.findUniqueOrThrow({ where: { id: letterId } });
+    await assertClientActive(tx, l.clientId);
     const extracted = {
       ...(l.extracted as Record<string, unknown>),
       ...(edits?.requirements ? { requirements: edits.requirements } : {}),

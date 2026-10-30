@@ -14,6 +14,7 @@ import { planView } from "@/lib/services/plans";
 import { practiceTimeZone } from "@/lib/services/clients";
 import { formatDateTime } from "@/lib/time-format";
 import { asOfToday, orNotFound, requirePageCtx, uuidParam } from "@/lib/server/page-session";
+import { InactiveBanner } from "@/components/inactive-banner";
 
 export const metadata: Metadata = { title: "Packet and export" };
 
@@ -57,6 +58,7 @@ export default async function PacketPage({ params }: { params: Promise<{ id: str
         {initial ? "Initial request packet" : "Reauthorization packet"}: {b.client.firstName}{" "}
         {b.client.lastName}
       </h1>
+      <InactiveBanner client={b.client} />
       <p>
         Hand-off status:{" "}
         <span className="badge info" data-testid="packet-status">

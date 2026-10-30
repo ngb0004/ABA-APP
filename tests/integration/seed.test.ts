@@ -45,12 +45,24 @@ describe("synthetic seed", () => {
     await seedAll(dataset.asOf);
     const after = await Promise.all(dataset.orgs.map((o) => counts(o.id)));
     expect(after).toEqual(before);
-    expect(before[0]!.client).toBe(3);
+    expect(before[0]!.client).toBe(4);
     expect(before[0]!.goal_template).toBe(54);
-    expect(before[0]!.vbmapp_administration).toBe(4); // Client 2 has two
+    expect(before[0]!.vbmapp_administration).toBe(5); // Client 2 has two
     // Client 1: ABLLS-R; Client 2: AFLS; Client 3: Vineland-3 twice, SRS-2, PDDBI, PSI-4.
     expect(before[0]!.assessment).toBe(7);
     expect(before[1]!.assessment).toBe(0);
+  });
+
+  it("seeds one inactive client (Golf, transferred) and keeps the rest active", async () => {
+    const rows = await withOrg({ orgId: dataset.orgs[0]!.id, userId: null, role: null }, (tx) =>
+      tx.client.findMany({
+        select: { firstName: true, status: true, inactiveReason: true, inactiveSince: true },
+      }),
+    );
+    const golf = rows.find((c) => c.firstName === "Golf")!;
+    expect(golf).toMatchObject({ status: "inactive", inactiveReason: "transferred" });
+    expect(toDay(golf.inactiveSince!) <= dataset.asOf).toBe(true);
+    expect(rows.filter((c) => c.firstName !== "Golf").every((c) => c.status === "active")).toBe(true);
   });
 
   it("marks every client synthetic with SYN- member IDs and fictional names", async () => {

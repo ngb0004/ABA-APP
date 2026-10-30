@@ -26,6 +26,7 @@ import { assertDemoUploadAllowed } from "../demo";
 import { HttpError } from "../log";
 import { requirePermission } from "../permissions";
 import { afterAssessmentConfirmed } from "./plans";
+import { assertClientActive } from "./client-status";
 
 const ChosenType = z.object({
   typeKey: z.string().trim().min(1, "Choose the assessment").max(48),
@@ -82,6 +83,7 @@ export async function uploadAssessmentImport(
     asOf,
   });
   return withOrg(ctx, async (tx) => {
+    await assertClientActive(tx, clientId);
     if (!(await tx.client.findUnique({ where: { id: clientId }, select: { id: true } })))
       throw new HttpError(404, "Not found");
     const phiDetected = proposal.phi.name || proposal.phi.dob || proposal.phi.memberId;
@@ -189,6 +191,7 @@ export async function confirmAssessmentImport(
     const imp = await tx.assessmentImport.findUnique({ where: { id: importId } });
     if (!imp) throw new HttpError(404, "Not found");
     if (imp.status !== "pending") throw new HttpError(409, "This import was already reviewed");
+    await assertClientActive(tx, imp.clientId);
     if (imp.phiDetected && !body.stripPhi)
       throw new HttpError(
         422,

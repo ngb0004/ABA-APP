@@ -28,6 +28,7 @@ import { PLAN_TYPES, US_STATES, type PlanType } from "../payors/types";
 import { isDemo } from "../demo";
 import { PRACTICE_TIME_ZONE_IDS } from "../time-format";
 import { requirePermission } from "../permissions";
+import { assertClientActive, assertGoalClientActive } from "./client-status";
 
 // ---------------------------------------------------------------- shared schemas
 
@@ -758,6 +759,7 @@ export async function addSession(
     );
   assertStaffCodeMatchesRole(v.providerId, v.providerRole);
   return withOrg(ctx, async (tx) => {
+    await assertClientActive(tx, clientId);
     const auth = await tx.authorization.findFirst({
       where: { id: v.authorizationId, clientId },
       include: { units: true },
@@ -780,6 +782,7 @@ export async function addSession(
 export async function deleteSession(ctx: OrgCtx, clientId: string, id: string) {
   requirePermission(ctx.role, "data:enter");
   return withOrg(ctx, async (tx) => {
+    await assertClientActive(tx, clientId);
     if (!(await tx.serviceSession.findFirst({ where: { id, clientId } })))
       throw new HttpError(404, "Not found");
     await tx.serviceSession.delete({ where: { id } });
@@ -797,6 +800,7 @@ export async function addDataPoint(
   const v = DataPointSchema.parse(input);
   assertNotFuture(v.date, asOf, "The data point date");
   return withOrg(ctx, async (tx) => {
+    await assertGoalClientActive(tx, goalId);
     const g = await tx.goal.findUnique({ where: { id: goalId } });
     if (!g) throw new HttpError(404, "Not found");
     if (g.measure === "percent" && v.value > 100)
@@ -819,6 +823,7 @@ export async function addDataPoint(
 export async function deleteDataPoint(ctx: OrgCtx, goalId: string, id: string) {
   requirePermission(ctx.role, "data:enter");
   return withOrg(ctx, async (tx) => {
+    await assertGoalClientActive(tx, goalId);
     const p = await tx.goalDataPoint.findFirst({ where: { id, goalId } });
     if (!p) throw new HttpError(404, "Not found");
     // A locked baseline came from the first three points; those stay.

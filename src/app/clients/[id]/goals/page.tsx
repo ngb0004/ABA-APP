@@ -9,6 +9,7 @@ import { measureUnit } from "@/lib/plan/context";
 import { can } from "@/lib/permissions";
 import { goalsView } from "@/lib/services/goals";
 import { asOfToday, orNotFound, requirePageCtx, uuidParam } from "@/lib/server/page-session";
+import { ClientInactiveBanner } from "@/components/inactive-banner";
 
 export const metadata: Metadata = { title: "Goals" };
 
@@ -25,6 +26,7 @@ export default async function GoalsPage({ params }: { params: Promise<{ id: stri
         </Link>
       </p>
       <h1>Goals</h1>
+      <ClientInactiveBanner ctx={ctx} clientId={id} />
       <div className="grid2">
         <div className="panel">
           <h2 style={{ marginTop: 0 }}>Required goal categories</h2>

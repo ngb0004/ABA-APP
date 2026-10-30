@@ -10,6 +10,8 @@ import { ForbiddenError } from "./log";
 export const ACTIONS = [
   "client:read",
   "client:write",
+  /** Mark a client inactive (discontinued) or active again. */
+  "client:status",
   "client:read_restricted",
   "data:enter",
   "intake:write",

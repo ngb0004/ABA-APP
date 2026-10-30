@@ -101,7 +101,7 @@ export type SynGoal = {
 };
 export type SynClient = {
   id: string;
-  key: "client1" | "client2" | "client3" | "other1";
+  key: "client1" | "client2" | "client3" | "client4" | "other1";
   firstName: string;
   lastName: string;
   preferredName: string;
@@ -163,6 +163,12 @@ export type SynClient = {
   administrations: SynAdmin[];
   assessments: SynAssessment[];
   goals: SynGoal[];
+  /** Inactive (discontinued) clients: no alerts, nothing due, no new records. Omitted = active. */
+  inactive?: {
+    since: Day;
+    reason: "discharged_goals_met" | "transferred" | "insurance_ended" | "family_withdrew" | "other";
+    note: string | null;
+  };
 };
 export type SynOrg = {
   id: string;
@@ -349,8 +355,9 @@ export const DEMO_PASSWORD = "synthetic-demo-only";
  * 3: insurance plan types and plan states (and, in the same release, benefits checks).
  * 4: assessments other than VB-MAPP (Vineland-3, SRS-2, PDDBI, PSI-4, ABLLS-R, AFLS).
  * 5: stored assessment token numbers.
+ * 6: an inactive (discontinued) client, Golf Testchild.
  */
-export const SEED_VERSION = 5;
+export const SEED_VERSION = 6;
 
 export function buildDataset(asOf: Day): SynDataset {
   const orgId = sid("org:sample-practice");
@@ -1569,6 +1576,125 @@ export function buildDataset(asOf: Day): SynDataset {
     ),
   ];
 
+  // ----- Client 4: inactive (transferred to another provider), age 3, one past authorization and one
+  // confirmed VB-MAPP. Raises no alerts and has nothing due, although its authorization has ended.
+  const c4Start = addDays(asOf, -200);
+  const c4End = addDays(c4Start, 90);
+  const c4: SynClient = {
+    id: sid("client:4"),
+    key: "client4",
+    firstName: "Golf",
+    lastName: "Testchild",
+    preferredName: "Golf",
+    dob: addMonths(asOf, -44),
+    sex: "M",
+    serviceAddress: { line1: "4 Imaginary Court", city: "Peachtree City", state: "GA", zip: "30269" },
+    guardians: [{ name: "Quinn Testparent", relationship: "Mother", legalCustody: true }],
+    hasIep: false,
+    events: [],
+    diagnoses: [
+      {
+        id: sid("c4:dx"),
+        dsm5Code: "299.00",
+        dsm5Label: "Autism spectrum disorder, requiring support (Level 1)",
+        icd10Code: "F84.0",
+        isPrimary: true,
+        severity: "Level 1",
+        evaluationDate: addDays(c4Start, -40),
+        deficitAreas: ["communication", "social_interaction"],
+      },
+    ],
+    payors: [
+      {
+        id: sid("c4:payor"),
+        payorKey: "aetna",
+        priority: "primary",
+        memberId: "SYN-AET-000401",
+        planName: "Aetna Open Access (synthetic)",
+        planType: "commercial_fully_insured",
+        planState: "GA",
+      },
+    ],
+    attachments: [
+      {
+        id: sid("c4:att:dx"),
+        kind: "diagnostic_evaluation",
+        title: "Diagnostic evaluation",
+        documentDate: addDays(c4Start, -40),
+        caregiverSigned: true,
+      },
+    ],
+    benefitsChecks: [
+      {
+        id: sid("c4:vob"),
+        clientPayorId: sid("c4:payor"),
+        checkedOn: addDays(c4Start, 1),
+        checkedByUserId: sid("user:coord"),
+        method: "portal",
+        referenceNumber: null,
+        abaCovered: "yes",
+        priorAuthRequired: "yes",
+        planFunding: "fully_insured",
+        ageLimitYears: null,
+        visitOrHourLimits: null,
+        notes: null,
+      },
+    ],
+    authorization: {
+      id: sid("c4:auth"),
+      payorKey: "aetna",
+      authNumber: "SYN-AUTH-4004",
+      kind: "initial",
+      startDate: c4Start,
+      endDate: c4End,
+      recommendedHoursPerWeek: 15,
+      units: [
+        { cptCode: "97151", approvedUnits: 24, unitBasis: "auth" },
+        { cptCode: "97153", approvedUnits: 60, unitBasis: "week" },
+      ],
+    },
+    sessions: sessionsFor("c4", c4Start, c4End, asOf, (d, dow, week) =>
+      week === 0 && dow === 2
+        ? [
+            {
+              cptCode: "97151",
+              startMinute: 540,
+              units: 8,
+              providerRole: "BCBA",
+              providerId: "BCBA-1",
+              inPerson: true,
+            },
+          ]
+        : week >= 1 && dow >= 1 && dow <= 3
+          ? [
+              {
+                cptCode: "97153",
+                startMinute: 540,
+                units: 12,
+                providerRole: "RBT",
+                providerId: "RBT-1",
+                inPerson: true,
+              },
+            ]
+          : [],
+    ),
+    intake: intakeBase({
+      primary_concerns: { value: "Limited requesting; plays alone; upset by changes in routine." },
+    }),
+    administrations: [
+      {
+        id: sid("c4:vb:1"),
+        adminNumber: 1,
+        testDate: addDays(c4Start, 2),
+        testerInitials: "AS",
+        scores: scoresFrom({ 1: { ...all(L1, 2), Mand: 3, Echoic: 2.5 } }, 1),
+      },
+    ],
+    assessments: [],
+    goals: [],
+    inactive: { since: addDays(c4End, -5), reason: "transferred", note: null },
+  };
+
   // ----- Other org: one client, used only to prove isolation
   const other: SynClient = {
     ...c1,
@@ -1635,7 +1761,7 @@ export function buildDataset(asOf: Day): SynDataset {
           reassessmentLeadDays: 45,
         },
         users,
-        clients: [c1, c2, c3],
+        clients: [c1, c2, c3, c4],
       },
       {
         id: otherOrgId,

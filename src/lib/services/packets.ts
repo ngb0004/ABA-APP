@@ -19,6 +19,7 @@ import { GOAL_STATUS_LABEL, measureUnit, type GoalStatus } from "../plan/context
 import { isLegacyPlan, sectionDone } from "../plan/sections";
 import { assertExportable, NOT_APPLICABLE_ITEM } from "./plans";
 import { loadPlanBundle } from "../plan/context";
+import { assertPlanClientActive } from "./client-status";
 
 export type ChecklistItem = {
   key: string;
@@ -140,6 +141,7 @@ export async function packetView(ctx: OrgCtx, planId: string, asOf: Day) {
 export async function setChecklistDone(ctx: OrgCtx, planId: string, key: string, value: boolean) {
   requirePermission(ctx.role, "packet:manage");
   return withOrg(ctx, async (tx) => {
+    await assertPlanClientActive(tx, planId);
     const p = await tx.packet.upsert({ where: { planId }, create: { orgId: ctx.orgId, planId }, update: {} });
     const done = {
       ...(((p.checklist as { done?: Record<string, boolean> }) ?? {}).done ?? {}),
@@ -273,6 +275,7 @@ export async function exportPacketPdf(
 ): Promise<{ pdf: Buffer; sha256: string }> {
   requirePermission(ctx.role, "export:pdf");
   return withOrg(ctx, async (tx) => {
+    await assertPlanClientActive(tx, planId);
     const { bundle, results } = await assertExportable(tx, planId, asOf);
     const html = packetHtml(bundle, results, asOf);
     const { chromium } = await import("playwright");
@@ -315,6 +318,7 @@ export async function exportPacketPdf(
 export async function markSubmitted(ctx: OrgCtx, planId: string) {
   requirePermission(ctx.role, "packet:manage");
   return withOrg(ctx, async (tx) => {
+    await assertPlanClientActive(tx, planId);
     const p = await tx.packet.findUnique({ where: { planId } });
     if (!p || p.status !== "ready") throw new HttpError(409, "Export the packet before marking it submitted");
     await tx.packet.update({ where: { id: p.id }, data: { status: "submitted", submittedAt: new Date() } });

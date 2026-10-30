@@ -1,14 +1,23 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { inactiveReasonLabel, statusFromParam } from "@/lib/client-status";
+import { toDay } from "@/lib/dates";
 import { can } from "@/lib/permissions";
 import { listClients } from "@/lib/services/clients";
 import { requirePageCtx } from "@/lib/server/page-session";
 
 export const metadata: Metadata = { title: "Clients" };
 
-export default async function ClientsPage() {
+export default async function ClientsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ status?: string | string[] }>;
+}) {
   const ctx = await requirePageCtx();
-  const clients = await listClients(ctx);
+  // Inactive (discontinued) clients are a separate folder: their own tab, out of the caseload.
+  const status = statusFromParam((await searchParams).status);
+  const { clients, counts } = await listClients(ctx, status);
+  const inactive = status === "inactive";
   return (
     <>
       <h1>Clients</h1>
@@ -19,14 +28,34 @@ export default async function ClientsPage() {
           </Link>
         </p>
       )}
+      <nav className="tabs" aria-label="Client status">
+        <Link href="/clients" aria-current={inactive ? undefined : "page"} data-testid="tab-active">
+          Active ({counts.active})
+        </Link>
+        <Link
+          href="/clients?status=inactive"
+          aria-current={inactive ? "page" : undefined}
+          data-testid="tab-inactive"
+        >
+          Inactive ({counts.inactive})
+        </Link>
+      </nav>
+      {inactive && (
+        <p className="muted">
+          Discontinued clients. They raise no alerts or due dates, and their records stay here, readable and
+          unchanged. Open one to reactivate it.
+        </p>
+      )}
       <div className="panel table-wrap">
-        <table>
+        <table data-testid="clients-table">
           <thead>
             <tr>
               <th>Client</th>
               <th>Payor</th>
               <th>Authorization</th>
               <th>Ends</th>
+              {inactive && <th>Inactive since</th>}
+              {inactive && <th>Reason</th>}
             </tr>
           </thead>
           <tbody>
@@ -44,9 +73,18 @@ export default async function ClientsPage() {
                     .join(", ")}
                 </td>
                 <td>{c.authorizations[0]?.authNumber ?? "None"}</td>
-                <td>{c.authorizations[0] ? c.authorizations[0].endDate.toISOString().slice(0, 10) : ""}</td>
+                <td>{c.authorizations[0] ? toDay(c.authorizations[0].endDate) : ""}</td>
+                {inactive && <td>{c.inactiveSince ? toDay(c.inactiveSince) : ""}</td>}
+                {inactive && <td>{inactiveReasonLabel(c.inactiveReason)}</td>}
               </tr>
             ))}
+            {!clients.length && (
+              <tr>
+                <td colSpan={inactive ? 6 : 4} className="muted">
+                  {inactive ? "No inactive clients." : "No active clients."}
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>

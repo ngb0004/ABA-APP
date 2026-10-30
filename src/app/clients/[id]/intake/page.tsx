@@ -6,6 +6,7 @@ import { applicableFields } from "@/lib/intake/schema";
 import { can } from "@/lib/permissions";
 import { clientDetail } from "@/lib/services/clients";
 import { asOfToday, orNotFound, requirePageCtx, uuidParam } from "@/lib/server/page-session";
+import { ClientInactiveBanner } from "@/components/inactive-banner";
 
 export const metadata: Metadata = { title: "Parent intake" };
 
@@ -31,6 +32,7 @@ export default async function IntakePage({ params }: { params: Promise<{ id: str
         </Link>
       </p>
       <h1>Parent intake</h1>
+      <ClientInactiveBanner ctx={ctx} clientId={id} />
       <p className="muted">
         Status: {d.intake?.status ?? "not started"}. Entered by the BCBA from the completed form. Every field
         must be answered or marked none / not applicable before submission. Age-conditional fields appear at

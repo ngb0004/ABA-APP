@@ -12,6 +12,7 @@ import { requirePermission } from "@/lib/permissions";
 import { renderMilestonesGridSvg } from "@/lib/vbmapp/grid-svg";
 import type { Flag } from "@/lib/vbmapp/parse";
 import { orNotFound, requirePageCtx, uuidParam } from "@/lib/server/page-session";
+import { ClientInactiveBanner } from "@/components/inactive-banner";
 
 export const metadata: Metadata = { title: "VB-MAPP" };
 
@@ -48,6 +49,7 @@ export default async function VbmappPage({ params }: { params: Promise<{ id: str
         </Link>
       </p>
       <h1>VB-MAPP Milestones</h1>
+      <ClientInactiveBanner ctx={ctx} clientId={id} />
       {can(ctx.role, "vbmapp:import") && (
         <div className="panel">
           <UploadForm

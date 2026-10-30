@@ -5,6 +5,7 @@ import {
   DEFAULT_CALENDAR_SETTINGS,
   type CalendarSettings,
 } from "../calendar";
+import type { ClientStatus } from "../client-status";
 import type { OrgCtx, Tx } from "../db";
 import { withOrg } from "../db";
 import { ageYears, toDay, type Day } from "../dates";
@@ -52,21 +53,27 @@ export async function practiceTimeZone(ctx: OrgCtx): Promise<string> {
 export const displayName = (c: { preferredName: string | null; firstName: string }) =>
   c.preferredName || c.firstName;
 
-export async function listClients(ctx: OrgCtx) {
+/**
+ * The clients page: one tab per status (inactive clients are the separate folder), with both counts.
+ */
+export async function listClients(ctx: OrgCtx, status: ClientStatus = "active") {
   requirePermission(ctx.role, "client:read");
   return withOrg(ctx, async (tx) => {
     const clients = await tx.client.findMany({
+      where: { status },
       include: {
         payors: { include: { payor: true } },
         authorizations: { orderBy: { endDate: "desc" }, take: 1 },
       },
-      orderBy: { lastName: "asc" },
+      orderBy: status === "inactive" ? [{ inactiveSince: "desc" }, { lastName: "asc" }] : { lastName: "asc" },
     });
     for (const c of clients) {
       registerSensitiveName(c.firstName);
       registerSensitiveName(c.lastName);
     }
-    return clients;
+    const grouped = await tx.client.groupBy({ by: ["status"], _count: { _all: true } });
+    const count = (s: ClientStatus) => grouped.find((g) => g.status === s)?._count._all ?? 0;
+    return { clients, counts: { active: count("active"), inactive: count("inactive") } };
   });
 }
 
@@ -133,18 +140,20 @@ export async function clientDetail(ctx: OrgCtx, clientId: string, asOf: Day) {
       : [];
     const { results: ruleResults, scope: payorScope } = await evaluateClientRules(tx, clientId, asOf);
 
+    // An inactive (discontinued) client raises no alerts and has nothing due: the page says why instead.
+    const inactive = client.status === "inactive";
     const alerts: ClientAlert[] = [];
-    if (auth) {
+    if (auth && !inactive) {
       const a = authEndAlert(toDay(auth.endDate), asOf, settings);
       if (a) alerts.push({ level: a.level <= 14 ? "danger" : "warn", message: a.message });
     }
-    for (const u of utilization)
+    for (const u of inactive ? [] : utilization)
       if (u.flag)
         alerts.push({
           level: "warn",
           message: `${u.cptCode}: ${u.flag === "under" ? "under-delivery" : "over-delivery"} (${Math.round((u.pctToDate ?? 0) * 100)}% of approved to date)`,
         });
-    for (const r of ruleResults) {
+    for (const r of inactive ? [] : ruleResults) {
       if (r.rawStatus !== "fail") continue;
       if (
         [
@@ -167,9 +176,9 @@ export async function clientDetail(ctx: OrgCtx, clientId: string, asOf: Day) {
         });
       }
     }
-    for (const f of payorScope) alerts.push({ level: "warn", message: f.message });
+    if (!inactive) for (const f of payorScope) alerts.push({ level: "warn", message: f.message });
     const fit = availabilityFit(rawAnswers, auth?.recommendedHoursPerWeek);
-    if (fit.fits === false)
+    if (fit.fits === false && !inactive)
       alerts.push({
         level: "warn",
         message: `Availability (${fit.available} h/week) does not fit recommended hours (${fit.recommended} h/week)`,
@@ -177,26 +186,28 @@ export async function clientDetail(ctx: OrgCtx, clientId: string, asOf: Day) {
 
     const primaryPayor = client.payors.find((p) => p.priority === "primary");
     const rules = primaryPayor ? await loadApplicableRules(tx, primaryPayor) : [];
-    const events = auth
-      ? caseloadCalendar(
-          [
-            {
-              clientId,
-              authNumber: auth.authNumber,
-              startDate: toDay(auth.startDate),
-              endDate: toDay(auth.endDate),
-              kind: auth.kind as "initial" | "reauth",
-              rules,
-            },
-          ],
-          asOf,
-          60,
-          settings,
-        )
-      : [];
+    const events =
+      auth && !inactive
+        ? caseloadCalendar(
+            [
+              {
+                clientId,
+                authNumber: auth.authNumber,
+                startDate: toDay(auth.startDate),
+                endDate: toDay(auth.endDate),
+                kind: auth.kind as "initial" | "reauth",
+                rules,
+              },
+            ],
+            asOf,
+            60,
+            settings,
+          )
+        : [];
 
     return {
       client,
+      inactive,
       age: ageYears(toDay(client.dob), asOf),
       auth,
       sessions,
@@ -218,12 +229,15 @@ export async function clientDetail(ctx: OrgCtx, clientId: string, asOf: Day) {
 
 const canSeeRestricted = (role: Role | null) => role === "BCBA";
 
+/** The caseload dashboard: active clients' due dates (and, via clientDetail, their alerts). */
 export async function caseload(ctx: OrgCtx, asOf: Day, days = 60) {
   requirePermission(ctx.role, "client:read");
   return withOrg(ctx, async (tx) => {
     const org = await tx.org.findUniqueOrThrow({ where: { id: ctx.orgId } });
     const settings = orgSettings(org.settings);
+    // Active clients only: an inactive (discontinued) client has nothing due and raises no alerts.
     const clients = await tx.client.findMany({
+      where: { status: "active" },
       include: { payors: true, authorizations: { orderBy: { endDate: "desc" }, take: 1 } },
     });
     const auths = [];
@@ -247,6 +261,7 @@ export async function caseload(ctx: OrgCtx, asOf: Day, days = 60) {
         clientName: names.get(e.clientId) ?? "",
       })),
       clients,
+      inactiveCount: await tx.client.count({ where: { status: "inactive" } }),
     };
   });
 }

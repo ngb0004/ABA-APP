@@ -110,22 +110,30 @@ model AuditEvent {
 // ---------------------------------------------------------------- clients
 
 model Client {
-  id             String   @id @default(uuid()) @db.Uuid
-  orgId          String   @map("org_id") @db.Uuid
+  id             String    @id @default(uuid()) @db.Uuid
+  orgId          String    @map("org_id") @db.Uuid
   /// v1.0 accepts synthetic data only. A CHECK constraint enforces true.
-  isSynthetic    Boolean  @default(true) @map("is_synthetic")
+  isSynthetic    Boolean   @default(true) @map("is_synthetic")
   firstName      String
   lastName       String
   preferredName  String?
-  dob            DateTime @db.Date
+  dob            DateTime  @db.Date
   sex            String?
-  serviceAddress Json     @default("{}")
+  serviceAddress Json      @default("{}")
   /// [{name, relationship, legalCustody: boolean, canSign: boolean}]
-  guardians      Json     @default("[]")
-  hasIep         Boolean  @default(false)
+  guardians      Json      @default("[]")
+  hasIep         Boolean   @default(false)
   /// Payor event triggers that have occurred, e.g. ["bcba_transfer"].
-  events         String[] @default([])
-  createdAt      DateTime @default(now())
+  events         String[]  @default([])
+  /// active | inactive. Inactive = discontinued: no alerts or due dates, no new records, nothing deleted.
+  status         String    @default("active")
+  /// Set while inactive: the day services ended.
+  inactiveSince  DateTime? @db.Date
+  /// Set while inactive: discharged_goals_met | transferred | insurance_ended | family_withdrew | other
+  inactiveReason String?
+  /// Optional BCBA note while inactive (no names, dates of birth, or member IDs).
+  inactiveNote   String?
+  createdAt      DateTime  @default(now())
 
   org               Org                    @relation(fields: [orgId], references: [id])
   diagnoses         Diagnosis[]
