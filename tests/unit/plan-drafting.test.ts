@@ -117,18 +117,18 @@ describe("VB-MAPP facts", () => {
   const f = vbmappFacts(levels, domains);
 
   it("calls a fully met level mastered, not uniform", () => {
-    expect(f.level.get("1")).toEqual(["every Level 1 milestone is met: Level 1 is mastered"]);
-    expect(f.domain.get("1:Mand")).toContain("every Mand milestone at Level 1 is met");
+    expect(f.level.get("1")).toEqual(["every Level One milestone is met: Level One is mastered"]);
+    expect(f.domain.get("1:Mand")).toContain("every Mand milestone at Level One is met");
   });
 
   it("ranks domains in a level the client has worked through", () => {
-    expect(f.domain.get("2:Mand")).toEqual(["highest domain in Level 2"]);
-    expect(f.domain.get("2:Tact")).toEqual(["lowest domain in Level 2"]);
+    expect(f.domain.get("2:Mand")).toEqual(["highest domain in Level Two"]);
+    expect(f.domain.get("2:Tact")).toEqual(["lowest domain in Level Two"]);
     expect(f.domain.get("2:Play")).toEqual([]);
   });
 
   it("never ranks domains in the emerging level", () => {
-    expect(f.level.get("3")![0]).toMatch(/only beginning Level 3/);
+    expect(f.level.get("3")![0]).toMatch(/only beginning Level Three/);
     for (const d of ["3:Mand", "3:Tact"]) {
       expect(f.domain.get(d)!.join(" ")).not.toMatch(/lowest|highest/);
       expect(f.domain.get(d)!.join(" ")).toMatch(/do not rank/);
@@ -148,7 +148,7 @@ describe("VB-MAPP facts", () => {
         ],
       ]),
     );
-    expect(only.domain.get("1:Tact")).toEqual(["lowest domain in Level 1"]);
+    expect(only.domain.get("1:Tact")).toEqual(["lowest domain in Level One"]);
     expect(only.level.get("1")).toEqual([]);
   });
 

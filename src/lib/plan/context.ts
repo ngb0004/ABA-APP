@@ -647,6 +647,8 @@ export function availabilityFacts(answers: IntakeAnswers): string[] {
  * strengths or weaknesses.
  */
 export function vbmappFacts(levels: Record<string, number>, byLevel: Map<string, [string, number][]>) {
+  // Facts reach the model, whose output may not contain digits: name levels in words.
+  const word = (l: string) => ({ "1": "One", "2": "Two", "3": "Three" })[l] ?? l;
   const level = new Map<string, string[]>();
   const domain = new Map<string, string[]>();
   const reached = Object.keys(levels)
@@ -660,10 +662,10 @@ export function vbmappFacts(levels: Record<string, number>, byLevel: Map<string,
     if (!(levels[lvl] ?? 0)) continue;
     const mastered = doms.length > 0 && doms.every(([, v]) => v >= MILESTONES_PER_DOMAIN);
     const lf: string[] = [];
-    if (mastered) lf.push(`every Level ${lvl} milestone is met: Level ${lvl} is mastered`);
+    if (mastered) lf.push(`every Level ${word(lvl)} milestone is met: Level ${word(lvl)} is mastered`);
     if (lvl === emerging)
       lf.push(
-        `highest level reached: the client is only beginning Level ${lvl}, so low scores here mark where new learning starts, not weaknesses`,
+        `highest level reached: the client is only beginning Level ${word(lvl)}, so low scores here mark where new learning starts, not weaknesses`,
       );
     level.set(lvl, lf);
     const values = doms.map(([, v]) => v);
@@ -671,14 +673,14 @@ export function vbmappFacts(levels: Record<string, number>, byLevel: Map<string,
     const high = Math.max(...values);
     for (const [dom, v] of doms) {
       const f: string[] = [];
-      if (v >= MILESTONES_PER_DOMAIN) f.push(`every ${dom} milestone at Level ${lvl} is met`);
+      if (v >= MILESTONES_PER_DOMAIN) f.push(`every ${dom} milestone at Level ${word(lvl)} is met`);
       if (lvl === emerging)
-        f.push(`Level ${lvl} is only emerging: do not rank this domain as a strength or a weakness`);
+        f.push(`Level ${word(lvl)} is only emerging: do not rank this domain as a strength or a weakness`);
       else if (low === high) {
-        if (!mastered) f.push(`same score as every other Level ${lvl} domain`);
+        if (!mastered) f.push(`same score as every other Level ${word(lvl)} domain`);
       } else {
-        if (v === low) f.push(`lowest domain in Level ${lvl}`);
-        if (v === high) f.push(`highest domain in Level ${lvl}`);
+        if (v === low) f.push(`lowest domain in Level ${word(lvl)}`);
+        if (v === high) f.push(`highest domain in Level ${word(lvl)}`);
       }
       domain.set(`${lvl}:${dom}`, f);
     }

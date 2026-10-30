@@ -3,7 +3,8 @@ import Link from "next/link";
 import { caseload, clientDetail } from "@/lib/services/clients";
 import { asOfToday, requirePageCtx } from "@/lib/server/page-session";
 
-export const metadata: Metadata = { title: "Caseload" };
+// The root page shares the layout's segment, so the title template does not apply: spell it out.
+export const metadata: Metadata = { title: { absolute: "Caseload · ABA Plan Assistant" } };
 
 export default async function CaseloadPage() {
   const ctx = await requirePageCtx();

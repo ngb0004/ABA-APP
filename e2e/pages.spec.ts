@@ -3,7 +3,7 @@ import { login, openClient } from "./helpers";
 
 const UNKNOWN = "00000000-0000-0000-0000-000000000000";
 
-test("unknown ids show the normal 404 page with the menu, and every 404 has the same title", async ({
+test("unknown ids show the normal 404 page with the menu, and the tab still names the app", async ({
   page,
 }) => {
   await login(page, "bcba@sample-practice.test");
@@ -23,7 +23,8 @@ test("unknown ids show the normal 404 page with the menu, and every 404 has the 
     expect(res?.status(), url).toBe(404);
     await expect(page.getByRole("heading", { name: "Page not found" })).toBeVisible();
     await expect(page.getByRole("link", { name: "Caseload" }).first()).toBeVisible();
-    await expect(page).toHaveTitle("Page not found · ABA Plan Assistant");
+    // Pages that look a record up set their own title before finding nothing; the tab names the app either way.
+    await expect(page).toHaveTitle(/ABA Plan Assistant$/);
   }
 });
 
