@@ -350,3 +350,101 @@ describe("review fixes", () => {
     expect(rows).toEqual([expect.objectContaining({ id: b.id, isPrimary: true })]);
   });
 });
+
+describe("QA fixes: dates, authorizations, provider roles", () => {
+  const dx = {
+    dsm5Code: "299.00",
+    dsm5Label: "Autism spectrum disorder",
+    icd10Code: "F84.0",
+    isPrimary: true,
+    deficitAreas: ["communication"],
+  };
+
+  it("rejects evaluation and document dates after today", async () => {
+    await expect(
+      saveDiagnosis(bcba, cid, null, { ...dx, evaluationDate: "2030-01-01" }, AS_OF),
+    ).rejects.toMatchObject({ status: 422, message: expect.stringMatching(/future/) });
+    await expect(
+      saveAttachment(
+        bcba,
+        cid,
+        null,
+        { kind: "diagnostic_evaluation", title: "Evaluation", documentDate: "2026-10-30" },
+        AS_OF,
+      ),
+    ).rejects.toMatchObject({ status: 422 });
+    // Today itself is fine.
+    const a = await saveAttachment(
+      bcba,
+      cid,
+      null,
+      { kind: "other", title: "Same-day note", documentDate: AS_OF },
+      AS_OF,
+    );
+    expect(a.id).toBeTruthy();
+  });
+
+  it("authorizations need at least one code and a payor the client has insurance with", async () => {
+    const auth = {
+      payorId: cignaId,
+      authNumber: "SYN-AUTH-QA01",
+      kind: "initial",
+      startDate: "2026-09-01",
+      endDate: "2027-02-28",
+      units: [{ cptCode: "97153", approvedUnits: 40, unitBasis: "week" }],
+    };
+    await expect(saveAuthorization(bcba, cid, null, { ...auth, units: [] })).rejects.toThrow(
+      /at least one approved CPT code/,
+    );
+    const otherPayor = await withOrg(bcba, (tx) =>
+      tx.payor.findFirstOrThrow({ where: { key: { not: "cigna_evernorth" } } }),
+    );
+    await expect(
+      saveAuthorization(bcba, cid, null, { ...auth, payorId: otherPayor.id }),
+    ).rejects.toMatchObject({ status: 422, message: expect.stringMatching(/no insurance with that payor/) });
+  });
+
+  it("sessions: no future dates, the role must be able to deliver the code, staff code matches the role", async () => {
+    const { id: authorizationId } = await saveAuthorization(bcba, cid, null, {
+      payorId: cignaId,
+      authNumber: "SYN-AUTH-QA02",
+      kind: "initial",
+      startDate: "2026-09-01",
+      endDate: "2027-02-28",
+      units: [
+        { cptCode: "97153", approvedUnits: 40, unitBasis: "week" },
+        { cptCode: "97156", approvedUnits: 12, unitBasis: "auth" },
+      ],
+    });
+    const s = {
+      authorizationId,
+      cptCode: "97153",
+      date: "2026-10-01",
+      startMinute: 540,
+      units: 4,
+      providerRole: "RBT",
+      providerId: "RBT-Q",
+    };
+    await expect(addSession(bcba, cid, { ...s, date: "2026-11-15" }, AS_OF)).rejects.toThrow(/future/);
+    await expect(addSession(bcba, cid, { ...s, cptCode: "97156" }, AS_OF)).rejects.toThrow(/BCBA or BCaBA/);
+    await expect(addSession(bcba, cid, { ...s, providerId: "BCBA-Q" }, AS_OF)).rejects.toThrow(
+      /looks like a BCBA code/,
+    );
+    await expect(
+      addSession(bcba, cid, { ...s, cptCode: "97156", providerRole: "BCaBA", providerId: "BCBA-Q" }, AS_OF),
+    ).rejects.toMatchObject({ status: 422 });
+    // Lenient: BCBAs may deliver 97153, and codes without a role prefix are accepted.
+    await addSession(bcba, cid, { ...s, providerRole: "BCBA", providerId: "BCBA-Q" }, AS_OF);
+    await addSession(bcba, cid, { ...s, cptCode: "97156", providerRole: "BCaBA", providerId: "S-12" }, AS_OF);
+    await addSession(bcba, cid, s, AS_OF);
+  });
+
+  it("rejects goal data points after today", async () => {
+    const goal = await withOrg(bcba, (tx) =>
+      tx.goal.findFirstOrThrow({ where: { clientId: clientId("client1"), baselineLockedAt: { not: null } } }),
+    );
+    await expect(
+      addDataPoint(ctxAs("RBT"), goal.id, { date: "2027-05-01", value: 40 }, AS_OF),
+    ).rejects.toMatchObject({ status: 422, message: expect.stringMatching(/future/) });
+  });
+});

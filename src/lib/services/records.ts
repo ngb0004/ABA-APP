@@ -78,6 +78,27 @@ export const ATTACHMENT_KINDS = [
   "other",
 ] as const;
 export const SESSION_ROLES = ["BCBA", "BCaBA", "RBT"] as const;
+/**
+ * Who may deliver each code, from the CPT code descriptors (not payor rules): assessment,
+ * protocol modification, family guidance, and group adaptive treatment are BCBA/BCaBA work;
+ * technician-level codes (97153, 97154, 0362T, 0373T) may be delivered by an RBT. 97152 is a
+ * technician-administered assessment under BCBA direction, so any session role may record it.
+ */
+export const CPT_PROVIDER_ROLES: Record<
+  (typeof CPT_CODES)[number],
+  readonly (typeof SESSION_ROLES)[number][]
+> = {
+  "97151": ["BCBA", "BCaBA"],
+  "97152": ["BCBA", "BCaBA", "RBT"],
+  "97153": ["BCBA", "BCaBA", "RBT"],
+  "97154": ["BCBA", "BCaBA", "RBT"],
+  "97155": ["BCBA", "BCaBA"],
+  "97156": ["BCBA", "BCaBA"],
+  "97157": ["BCBA", "BCaBA"],
+  "97158": ["BCBA", "BCaBA"],
+  "0362T": ["BCBA", "BCaBA", "RBT"],
+  "0373T": ["BCBA", "BCaBA", "RBT"],
+};
 export const MEMBER_ROLES = ["BCBA", "BCaBA", "RBT", "AUTH_COORDINATOR"] as const;
 
 const Guardian = z.object({
@@ -197,6 +218,7 @@ export const AuthorizationSchema = z
           unitBasis: z.enum(["week", "month", "auth"]),
         }),
       )
+      .min(1, "Add at least one approved CPT code")
       .max(12),
   })
   .refine((a) => a.endDate > a.startDate, {
@@ -270,6 +292,21 @@ export const NewMemberSchema = z.object({
 // ---------------------------------------------------------------- helpers
 
 const day = (d: string | null | undefined) => (d ? dayToDate(d) : null);
+
+/** Records describe what already happened: a date after "today" is a typo, and it skews audits and baselines. */
+function assertNotFuture(d: string | null | undefined, asOf: string, what: string) {
+  if (d && d > asOf) throw new HttpError(422, `${what} cannot be in the future (today is ${asOf})`);
+}
+
+/** Staff codes are opaque, but one that names a different role (e.g. "BCBA-Q" on an RBT row) is a mix-up. */
+function assertStaffCodeMatchesRole(providerId: string, role: string) {
+  const prefix = /^(BCBA|BCABA|RBT)(-|$)/i.exec(providerId)?.[1]?.toUpperCase();
+  if (prefix && prefix !== role.toUpperCase())
+    throw new HttpError(
+      422,
+      `The staff code ${providerId} looks like a ${prefix === "BCABA" ? "BCaBA" : prefix} code, but the provider role is ${role}`,
+    );
+}
 
 async function assertOrgPayor(tx: Tx, payorId: string) {
   // RLS already hides other orgs' payors; a miss is a 422, not a 500.
@@ -416,9 +453,16 @@ export async function deleteClientPayor(ctx: OrgCtx, clientId: string, id: strin
 
 // ---------------------------------------------------------------- diagnoses
 
-export async function saveDiagnosis(ctx: OrgCtx, clientId: string, id: string | null, input: unknown) {
+export async function saveDiagnosis(
+  ctx: OrgCtx,
+  clientId: string,
+  id: string | null,
+  input: unknown,
+  asOf: string = toDay(new Date()),
+) {
   requirePermission(ctx.role, "client:write");
   const v = DiagnosisSchema.parse(input);
+  assertNotFuture(v.evaluationDate, asOf, "The evaluation date");
   return withOrg(ctx, async (tx) => {
     await clientOf(tx, clientId);
     if (id && !(await tx.diagnosis.findFirst({ where: { id, clientId } })))
@@ -474,6 +518,12 @@ export async function saveAuthorization(ctx: OrgCtx, clientId: string, id: strin
   return withOrg(ctx, async (tx) => {
     await clientOf(tx, clientId);
     await assertOrgPayor(tx, v.payorId);
+    // An authorization comes from one of the client's insurers.
+    if (!(await tx.clientPayor.count({ where: { clientId, payorId: v.payorId } })))
+      throw new HttpError(
+        422,
+        "This client has no insurance with that payor. Add the payor under Insurance first, or choose one of the client's payors.",
+      );
     if (id && !(await tx.authorization.findFirst({ where: { id, clientId } })))
       throw new HttpError(404, "Not found");
     const data = {
@@ -509,10 +559,9 @@ export async function saveAuthorization(ctx: OrgCtx, clientId: string, id: strin
       authId = (
         await tx.authorization.create({ data: { orgId: ctx.orgId, clientId, ...data }, select: { id: true } })
       ).id;
-    if (v.units.length)
-      await tx.authorizationUnit.createMany({
-        data: v.units.map((u) => ({ orgId: ctx.orgId, authorizationId: authId, ...u })),
-      });
+    await tx.authorizationUnit.createMany({
+      data: v.units.map((u) => ({ orgId: ctx.orgId, authorizationId: authId, ...u })),
+    });
     await note(tx, id ? "authorization:update" : "authorization:create", "Authorization", authId, {
       codes: v.units.map((u) => u.cptCode),
     });
@@ -538,9 +587,16 @@ export async function deleteAuthorization(ctx: OrgCtx, clientId: string, id: str
 
 // ---------------------------------------------------------------- attachments (metadata only)
 
-export async function saveAttachment(ctx: OrgCtx, clientId: string, id: string | null, input: unknown) {
+export async function saveAttachment(
+  ctx: OrgCtx,
+  clientId: string,
+  id: string | null,
+  input: unknown,
+  asOf: string = toDay(new Date()),
+) {
   requirePermission(ctx.role, "document:manage");
   const v = AttachmentSchema.parse(input);
+  assertNotFuture(v.documentDate, asOf, "The document date");
   return withOrg(ctx, async (tx) => {
     await clientOf(tx, clientId);
     if (id && !(await tx.attachment.findFirst({ where: { id, clientId } })))
@@ -565,9 +621,22 @@ export async function deleteAttachment(ctx: OrgCtx, clientId: string, id: string
 
 // ---------------------------------------------------------------- sessions and goal data
 
-export async function addSession(ctx: OrgCtx, clientId: string, input: unknown) {
+export async function addSession(
+  ctx: OrgCtx,
+  clientId: string,
+  input: unknown,
+  asOf: string = toDay(new Date()),
+) {
   requirePermission(ctx.role, "data:enter");
   const v = SessionSchema.parse(input);
+  assertNotFuture(v.date, asOf, "The session date");
+  const roles = CPT_PROVIDER_ROLES[v.cptCode];
+  if (!roles.includes(v.providerRole))
+    throw new HttpError(
+      422,
+      `${v.cptCode} must be delivered by a ${roles.join(" or ")}, not by an ${v.providerRole}`,
+    );
+  assertStaffCodeMatchesRole(v.providerId, v.providerRole);
   return withOrg(ctx, async (tx) => {
     const auth = await tx.authorization.findFirst({
       where: { id: v.authorizationId, clientId },
@@ -598,9 +667,15 @@ export async function deleteSession(ctx: OrgCtx, clientId: string, id: string) {
   });
 }
 
-export async function addDataPoint(ctx: OrgCtx, goalId: string, input: unknown) {
+export async function addDataPoint(
+  ctx: OrgCtx,
+  goalId: string,
+  input: unknown,
+  asOf: string = toDay(new Date()),
+) {
   requirePermission(ctx.role, "data:enter");
   const v = DataPointSchema.parse(input);
+  assertNotFuture(v.date, asOf, "The data point date");
   return withOrg(ctx, async (tx) => {
     const g = await tx.goal.findUnique({ where: { id: goalId } });
     if (!g) throw new HttpError(404, "Not found");

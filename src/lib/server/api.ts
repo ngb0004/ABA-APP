@@ -3,6 +3,7 @@ import { ZodError } from "zod";
 import { ctxFromRequest } from "../auth/session";
 import type { OrgCtx } from "../db";
 import { HttpError, log } from "../log";
+import { formatIssues } from "./zod-messages";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -41,7 +42,7 @@ export function errorResponse(e: unknown) {
   if (e instanceof HttpError) return NextResponse.json({ error: e.message }, { status: e.status });
   if (e instanceof ZodError)
     return NextResponse.json(
-      { error: "Invalid request", issues: e.issues.map((i) => `${i.path.join(".")}: ${i.message}`) },
+      { error: "Please fix the following:", issues: formatIssues(e.issues) },
       { status: 400 },
     );
   if (e instanceof Error && e.name === "AiFirewallError")
