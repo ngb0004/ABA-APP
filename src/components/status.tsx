@@ -1,3 +1,5 @@
+import { TIER_LEGEND } from "./payor-display";
+
 export function Status({ s }: { s: string }) {
   const cls = s === "n/a" ? "na" : s;
   return <span className={`badge ${cls}`}>{s}</span>;
@@ -21,7 +23,13 @@ const TRUST_LABEL: Record<string, string> = {
 export function TrustBadge({ trust, verified }: { trust?: TrustLike; verified: boolean }) {
   const status = trust?.status ?? (verified ? "verified" : "unverified");
   return (
-    <span className={`badge ${status}`} data-testid="trust-badge">
+    <span
+      className={`badge ${status}`}
+      data-testid="trust-badge"
+      title={
+        trust?.tier ? `${trust.tier}: ${TIER_LEGEND.find(([t]) => t === trust.tier)?.[1] ?? ""}` : undefined
+      }
+    >
       {TRUST_LABEL[status] ?? status}
       {trust?.tier ? ` · ${trust.tier}` : ""}
     </span>
@@ -31,6 +39,7 @@ export function TrustBadge({ trust, verified }: { trust?: TrustLike; verified: b
 export function RuleSource({
   r,
   showReasons = true,
+  inheritedName,
 }: {
   r: {
     verified: boolean;
@@ -46,6 +55,8 @@ export function RuleSource({
     inheritedFrom: string | null;
   };
   showReasons?: boolean;
+  /** Display name of the payor the rule is inherited from (inheritedFrom is its internal key). */
+  inheritedName?: string | null;
 }) {
   return (
     <span className="muted">
@@ -59,10 +70,13 @@ export function RuleSource({
       {r.source.version ? ` (${r.source.version})` : ""}
       {r.source.section ? `, ${r.source.section}` : ""}
       {r.source.page ? `, p. ${r.source.page}` : ""}
-      {r.inheritedFrom ? `; inherited from ${r.inheritedFrom}` : ""} ·{" "}
+      {r.inheritedFrom ? `; inherited from ${inheritedName ?? r.inheritedFrom}` : ""} ·{" "}
       <TrustBadge trust={r.trust} verified={r.verified} />
       {r.trust?.verifiedUntil && r.trust.status === "verified" && (
-        <> · verified until {r.trust.verifiedUntil}</>
+        <span title="The document's next scheduled revision, or the time limit for this kind of evidence, whichever comes first">
+          {" "}
+          · verified until {r.trust.verifiedUntil} (then re-check)
+        </span>
       )}
       {showReasons && r.source.quote && (
         <span style={{ display: "block" }}>Source says: &ldquo;{r.source.quote}&rdquo;</span>

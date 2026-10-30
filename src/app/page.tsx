@@ -1,6 +1,9 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { caseload, clientDetail } from "@/lib/services/clients";
 import { asOfToday, requirePageCtx } from "@/lib/server/page-session";
+
+export const metadata: Metadata = { title: "Caseload" };
 
 export default async function CaseloadPage() {
   const ctx = await requirePageCtx();
@@ -57,6 +60,7 @@ export default async function CaseloadPage() {
               {d.alerts.map((a, i) => (
                 <div key={i} className={`alert ${a.level}`}>
                   {a.message}
+                  {a.source && <span className="alert-source"> · Source: {a.source}</span>}
                 </div>
               ))}
             </div>

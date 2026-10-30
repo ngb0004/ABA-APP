@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { ActionButton, Html } from "@/components/actions";
 import { FlatExplanation, GoalEditor, GoalRecordEditor } from "@/components/goal-editor";
@@ -7,12 +8,14 @@ import { toDay } from "@/lib/dates";
 import { measureUnit } from "@/lib/plan/context";
 import { can } from "@/lib/permissions";
 import { goalsView } from "@/lib/services/goals";
-import { asOfToday, requirePageCtx, uuidParam } from "@/lib/server/page-session";
+import { asOfToday, orNotFound, requirePageCtx, uuidParam } from "@/lib/server/page-session";
+
+export const metadata: Metadata = { title: "Goals" };
 
 export default async function GoalsPage({ params }: { params: Promise<{ id: string }> }) {
   const id = await uuidParam(params);
   const ctx = await requirePageCtx();
-  const v = await goalsView(ctx, id, asOfToday());
+  const v = await orNotFound(() => goalsView(ctx, id, asOfToday()));
   return (
     <>
       <p>
@@ -141,7 +144,7 @@ export default async function GoalsPage({ params }: { params: Promise<{ id: stri
             </details>
           )}
           <p className="muted">
-            Data: {g.dataCollection || "not set"} · Mastery: {g.masteryAccuracyPct}% across{" "}
+            Data collection method: {g.dataCollection || "not set"} · Mastery: {g.masteryAccuracyPct}% across{" "}
             {g.masteryConsecutiveSessions} sessions with {g.masteryInstructors} people
           </p>
           <p className="muted" data-testid={`baseline-${g.ordinal}`}>

@@ -240,9 +240,40 @@ export async function fetchCurrentDocument(
   } catch (e) {
     const err = e as { name?: string; cause?: { code?: string } };
     return fail(
-      err.name === "AbortError"
-        ? "Timed out"
-        : `Network error${err.cause?.code ? ` (${err.cause.code})` : ""}`,
+      err.name === "AbortError" ? describeNetworkError("TIMEOUT") : describeNetworkError(err.cause?.code),
     );
   }
+}
+
+const CERT_CODES = new Set([
+  "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+  "UNABLE_TO_GET_ISSUER_CERT",
+  "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+  "SELF_SIGNED_CERT_IN_CHAIN",
+  "DEPTH_ZERO_SELF_SIGNED_CERT",
+  "CERT_HAS_EXPIRED",
+  "CERT_NOT_YET_VALID",
+  "ERR_TLS_CERT_ALTNAME_INVALID",
+  "CERT_UNTRUSTED",
+]);
+const UNREACHABLE_CODES = new Set([
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "UND_ERR_SOCKET",
+]);
+const TIMEOUT_CODES = new Set(["TIMEOUT", "ETIMEDOUT", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT"]);
+
+/** Plain-language text for a network failure. The raw code stays in brackets for whoever investigates. */
+export function describeNetworkError(code?: string | null): string {
+  if (code === "TIMEOUT") return "Timed out: the site took too long to respond";
+  const suffix = code ? ` [${code}]` : "";
+  if (code && CERT_CODES.has(code))
+    return `Could not connect securely: the site's security certificate could not be checked${suffix}`;
+  if (code && UNREACHABLE_CODES.has(code)) return `Could not reach the site${suffix}`;
+  if (code && TIMEOUT_CODES.has(code)) return `Timed out: the site took too long to respond${suffix}`;
+  return `Could not connect to the site${suffix}`;
 }

@@ -1,30 +1,35 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { ActionButton, Html, UploadForm } from "@/components/actions";
-import { DEMO_SAMPLES } from "@/lib/demo";
+import { DEMO_SAMPLES, isDemo } from "@/lib/demo";
 import { withOrg } from "@/lib/db";
 import { toDay } from "@/lib/dates";
 import { can } from "@/lib/permissions";
 import { requirePermission } from "@/lib/permissions";
 import { renderMilestonesGridSvg } from "@/lib/vbmapp/grid-svg";
 import type { Flag } from "@/lib/vbmapp/parse";
-import { requirePageCtx, uuidParam } from "@/lib/server/page-session";
+import { orNotFound, requirePageCtx, uuidParam } from "@/lib/server/page-session";
+
+export const metadata: Metadata = { title: "VB-MAPP" };
 
 export default async function VbmappPage({ params }: { params: Promise<{ id: string }> }) {
   const id = await uuidParam(params);
   const ctx = await requirePageCtx();
   requirePermission(ctx.role, "client:read");
-  const { client, admins, pending } = await withOrg(ctx, async (tx) => ({
-    client: await tx.client.findUniqueOrThrow({ where: { id } }),
-    admins: await tx.vbmappAdministration.findMany({
-      where: { clientId: id },
-      include: { scores: true },
-      orderBy: { adminNumber: "asc" },
-    }),
-    pending: await tx.vbmappImport.findMany({
-      where: { clientId: id, status: "pending" },
-      orderBy: { createdAt: "desc" },
-    }),
-  }));
+  const { client, admins, pending } = await orNotFound(() =>
+    withOrg(ctx, async (tx) => ({
+      client: await tx.client.findUniqueOrThrow({ where: { id } }),
+      admins: await tx.vbmappAdministration.findMany({
+        where: { clientId: id },
+        include: { scores: true },
+        orderBy: { adminNumber: "asc" },
+      }),
+      pending: await tx.vbmappImport.findMany({
+        where: { clientId: id, status: "pending" },
+        orderBy: { createdAt: "desc" },
+      }),
+    })),
+  );
   const legend = admins.map((a) => ({
     adminNumber: a.adminNumber,
     label: `Admin ${a.adminNumber}${a.testDate ? ` (${toDay(a.testDate)})` : ""}`,
@@ -47,6 +52,12 @@ export default async function VbmappPage({ params }: { params: Promise<{ id: str
             redirectPrefix="/vbmapp/imports/"
             testId="vbmapp-upload"
           />
+          {isDemo() && (
+            <p className="muted">
+              Uploading your own files is turned off on the demo site. Only the fictional sample workbooks
+              below are accepted.
+            </p>
+          )}
           <div className="row" style={{ marginTop: 8 }}>
             <span className="muted">Or load a fictional sample workbook:</span>
             {DEMO_SAMPLES.vbmapp.map((name) => (

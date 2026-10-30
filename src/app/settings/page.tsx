@@ -1,8 +1,12 @@
+import type { Metadata } from "next";
 import { ActionButton } from "@/components/actions";
+import { label, labeled } from "@/components/labels";
 import { FormToggle, RecordForm, type FieldSpec } from "@/components/record-form";
 import { MEMBER_ROLES, practiceSettings } from "@/lib/services/records";
 import { orgSettings } from "@/lib/services/clients";
 import { requirePageCtx } from "@/lib/server/page-session";
+
+export const metadata: Metadata = { title: "Practice settings" };
 
 const settingsFields: FieldSpec[] = [
   { name: "name", label: "Practice name" },
@@ -33,7 +37,7 @@ const settingsFields: FieldSpec[] = [
 const memberFields: FieldSpec[] = [
   { name: "name", label: "Name" },
   { name: "email", label: "Email", type: "email" },
-  { name: "role", label: "Role", type: "select", options: MEMBER_ROLES },
+  { name: "role", label: "Role", type: "select", options: labeled(MEMBER_ROLES) },
   {
     name: "password",
     label: "Temporary password",
@@ -71,7 +75,7 @@ export default async function SettingsPage() {
       <div className="panel" data-testid="team">
         <h2 style={{ marginTop: 0 }}>Team</h2>
         <div className="table-wrap">
-          <table>
+          <table className="stack">
             <thead>
               <tr>
                 <th>Name</th>
@@ -84,10 +88,10 @@ export default async function SettingsPage() {
             <tbody>
               {members.map((m) => (
                 <tr key={m.id} data-member={m.email}>
-                  <td>{m.name}</td>
-                  <td>{m.email}</td>
-                  <td>
-                    {m.role}
+                  <td data-label="Name">{m.name}</td>
+                  <td data-label="Email">{m.email}</td>
+                  <td data-label="Role">
+                    {label(m.role)}
                     {m.userId !== ctx.userId && (
                       <div className="row">
                         {MEMBER_ROLES.filter((r) => r !== m.role).map((r) => (
@@ -97,16 +101,16 @@ export default async function SettingsPage() {
                             method="PATCH"
                             body={{ role: r }}
                             secondary
-                            confirm={`Change ${m.name}'s role to ${r}? They will be signed out.`}
+                            confirm={`Change ${m.name}'s role to ${label(r)}? They will be signed out.`}
                           >
-                            Make {r}
+                            Make {label(r)}
                           </ActionButton>
                         ))}
                       </div>
                     )}
                   </td>
-                  <td>{m.mfaEnabled ? "set up" : "not yet"}</td>
-                  <td>
+                  <td data-label="Authenticator">{m.mfaEnabled ? "set up" : "not yet"}</td>
+                  <td data-label="">
                     {m.userId !== ctx.userId && (
                       <ActionButton
                         url={`/api/settings/members/${m.id}`}

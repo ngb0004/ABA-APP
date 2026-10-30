@@ -1,6 +1,8 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { ActionButton } from "@/components/actions";
 import { clientFields } from "@/components/client-fields";
+import { label, labeled } from "@/components/labels";
 import { FormToggle, RecordForm, type FieldSpec } from "@/components/record-form";
 import { toDay } from "@/lib/dates";
 import { isDemo } from "@/lib/demo";
@@ -12,7 +14,9 @@ import {
   SESSION_ROLES,
   clientRecords,
 } from "@/lib/services/records";
-import { requirePageCtx, uuidParam } from "@/lib/server/page-session";
+import { orNotFound, requirePageCtx, uuidParam } from "@/lib/server/page-session";
+
+export const metadata: Metadata = { title: "Records" };
 
 const yesNo = (b: boolean) => (b ? "yes" : "no");
 const hhmm = (m: number) =>
@@ -21,7 +25,7 @@ const hhmm = (m: number) =>
 export default async function RecordsPage({ params }: { params: Promise<{ id: string }> }) {
   const id = await uuidParam(params);
   const ctx = await requirePageCtx();
-  const { client: c, sessions, payors } = await clientRecords(ctx, id);
+  const { client: c, sessions, payors } = await orNotFound(() => clientRecords(ctx, id));
   const canClient = can(ctx.role, "client:write");
   const canIns = can(ctx.role, "insurance:manage");
   const canDocs = can(ctx.role, "document:manage");
@@ -34,7 +38,7 @@ export default async function RecordsPage({ params }: { params: Promise<{ id: st
 
   const payorFields: FieldSpec[] = [
     { name: "payorId", label: "Payor", type: "select", options: payorOptions },
-    { name: "priority", label: "Priority", type: "select", options: ["primary", "secondary"] },
+    { name: "priority", label: "Priority", type: "select", options: labeled(["primary", "secondary"]) },
     { name: "memberId", label: "Member ID", placeholder: "SYN-…", help: "Synthetic only: starts with SYN-" },
     { name: "planName", label: "Plan name", optional: true },
     { name: "secondaryDocsSigned", label: "Secondary insurance documents signed", type: "checkbox" },
@@ -51,7 +55,7 @@ export default async function RecordsPage({ params }: { params: Promise<{ id: st
   const authFields: FieldSpec[] = [
     { name: "payorId", label: "Payor", type: "select", options: payorOptions },
     { name: "authNumber", label: "Authorization number", placeholder: "SYN-AUTH-…" },
-    { name: "kind", label: "Kind", type: "select", options: ["initial", "reauth"] },
+    { name: "kind", label: "Kind", type: "select", options: labeled(["initial", "reauth"]) },
     { name: "startDate", label: "Start", type: "date" },
     { name: "endDate", label: "End", type: "date" },
     { name: "recommendedHoursPerWeek", label: "Recommended hours per week", type: "number", optional: true },
@@ -63,12 +67,12 @@ export default async function RecordsPage({ params }: { params: Promise<{ id: st
       fields: [
         { name: "cptCode", label: "CPT code", type: "select", options: CPT_CODES },
         { name: "approvedUnits", label: "Units", type: "number" },
-        { name: "unitBasis", label: "Per", type: "select", options: ["week", "month", "auth"] },
+        { name: "unitBasis", label: "Per", type: "select", options: labeled(["week", "month", "auth"]) },
       ],
     },
   ];
   const attFields: FieldSpec[] = [
-    { name: "kind", label: "Kind", type: "select", options: ATTACHMENT_KINDS },
+    { name: "kind", label: "Kind", type: "select", options: labeled(ATTACHMENT_KINDS) },
     { name: "title", label: "Title" },
     { name: "documentDate", label: "Document date", type: "date", optional: true },
     { name: "caregiverSigned", label: "Caregiver signed", type: "checkbox" },
@@ -149,7 +153,7 @@ export default async function RecordsPage({ params }: { params: Promise<{ id: st
             {c.payors.map((p) => (
               <tr key={p.id}>
                 <td>
-                  {p.payor.name} ({p.priority}) · {p.memberId}
+                  {p.payor.name} ({label(p.priority).toLowerCase()}) · {p.memberId}
                   {p.planName ? ` · ${p.planName}` : ""}
                 </td>
                 <td>
@@ -264,7 +268,7 @@ export default async function RecordsPage({ params }: { params: Promise<{ id: st
         <h2 style={{ marginTop: 0 }}>Authorizations</h2>
         {c.authorizations.map((a) => (
           <div key={a.id} style={{ marginBottom: 12 }}>
-            <strong>{a.authNumber}</strong> · {a.payor.name} · {a.kind} · {toDay(a.startDate)} to{" "}
+            <strong>{a.authNumber}</strong> · {a.payor.name} · {label(a.kind)} · {toDay(a.startDate)} to{" "}
             {toDay(a.endDate)}
             <div className="muted">
               {a.units.map((u) => `${u.cptCode}: ${u.approvedUnits} per ${u.unitBasis}`).join(" · ") ||
@@ -328,7 +332,7 @@ export default async function RecordsPage({ params }: { params: Promise<{ id: st
                 <td>
                   {a.title}{" "}
                   <span className="muted">
-                    ({a.kind.replace(/_/g, " ")}
+                    ({label(a.kind)}
                     {a.documentDate ? `, ${toDay(a.documentDate)}` : ""}
                     {a.caregiverSigned ? ", caregiver signed" : ""})
                   </span>
@@ -397,47 +401,50 @@ export default async function RecordsPage({ params }: { params: Promise<{ id: st
           </FormToggle>
         )}
         {!c.authorizations.length && <p className="muted">Add an authorization before recording sessions.</p>}
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th>Code</th>
-                <th>Start</th>
-                <th>Units</th>
-                <th>Staff</th>
-                <th>Where</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {sessions.map((s) => (
-                <tr key={s.id}>
-                  <td>{toDay(s.date)}</td>
-                  <td>{s.cptCode}</td>
-                  <td>{hhmm(s.startMinute)}</td>
-                  <td>{s.units}</td>
-                  <td>
-                    {s.providerRole} {s.providerId ?? ""}
-                  </td>
-                  <td>{s.inPerson ? "in person" : "remote"}</td>
-                  <td>
-                    {canData && (
-                      <ActionButton
-                        url={`${base}/sessions/${s.id}`}
-                        method="DELETE"
-                        secondary
-                        confirm="Delete this session?"
-                      >
-                        Delete
-                      </ActionButton>
-                    )}
-                  </td>
+        {c.authorizations.length > 0 && !sessions.length && <p className="muted">No sessions yet.</p>}
+        {sessions.length > 0 && (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Code</th>
+                  <th>Start</th>
+                  <th>Units</th>
+                  <th>Staff</th>
+                  <th>Where</th>
+                  <th />
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {sessions.map((s) => (
+                  <tr key={s.id}>
+                    <td>{toDay(s.date)}</td>
+                    <td>{s.cptCode}</td>
+                    <td>{hhmm(s.startMinute)}</td>
+                    <td>{s.units}</td>
+                    <td>
+                      {s.providerRole} {s.providerId ?? ""}
+                    </td>
+                    <td>{s.inPerson ? "in person" : "remote"}</td>
+                    <td>
+                      {canData && (
+                        <ActionButton
+                          url={`${base}/sessions/${s.id}`}
+                          method="DELETE"
+                          secondary
+                          confirm="Delete this session?"
+                        >
+                          Delete
+                        </ActionButton>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
         {sessions.length === 60 && <p className="muted">Showing the 60 most recent sessions.</p>}
       </div>
     </>

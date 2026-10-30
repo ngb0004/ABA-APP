@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { RecordForm, type FieldSpec } from "@/components/record-form";
 import { isDemo } from "@/lib/demo";
 import { requirePermission } from "@/lib/permissions";
@@ -18,6 +19,8 @@ const demoFields: FieldSpec[] = [
   { name: "ageYears", label: "Age in years", type: "number" },
   { name: "hasIep", label: "Has an IEP or IFSP", type: "checkbox" },
 ];
+
+export const metadata: Metadata = { title: "New client" };
 
 export default async function NewClientPage() {
   const ctx = await requirePageCtx();

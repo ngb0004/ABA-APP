@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { Html } from "@/components/actions";
 import { AuditPanel } from "@/components/audit-panel";
@@ -5,12 +6,14 @@ import { SectionCard } from "@/components/section-editor";
 import { sectionDone } from "@/lib/plan/sections";
 import { can } from "@/lib/permissions";
 import { planView } from "@/lib/services/plans";
-import { asOfToday, requirePageCtx, uuidParam } from "@/lib/server/page-session";
+import { asOfToday, orNotFound, requirePageCtx, uuidParam } from "@/lib/server/page-session";
+
+export const metadata: Metadata = { title: "Treatment plan" };
 
 export default async function PlanPage({ params }: { params: Promise<{ id: string }> }) {
   const id = await uuidParam(params);
   const ctx = await requirePageCtx();
-  const v = await planView(ctx, id, asOfToday());
+  const v = await orNotFound(() => planView(ctx, id, asOfToday()));
   const b = v.bundle;
   const tokens = v.sourced.map((t) => ({ key: t.key, label: t.label, display: t.display }));
   const approved = v.sections.filter((s) => sectionDone(s.state)).length;
@@ -30,15 +33,17 @@ export default async function PlanPage({ params }: { params: Promise<{ id: strin
       </p>
       <div className="row" style={{ marginBottom: 12 }}>
         <Link className="btn" href={`/plans/${id}/packet`}>
-          Reauth packet and export
+          {b.plan.type === "reauth"
+            ? "Reauthorization packet and export"
+            : "Initial request packet and export"}
         </Link>
         <Link className="btn" href={`/clients/${b.client.id}/goals`}>
           Edit goals
         </Link>
       </div>
       <p className="alert info">
-        AI drafts reference figures only as sourced values. Every number below links to its source; hover for
-        provenance. Approve each section individually.
+        AI drafts reference figures only as sourced values. Every number below links to its source: hover to
+        see where it came from, or tap it to open the source. Approve each section individually.
       </p>
       {v.sections.map((s) => (
         <SectionCard
