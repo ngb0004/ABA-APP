@@ -197,7 +197,8 @@ export function RecordForm(props: {
           return setError(
             [
               String(r.data.error ?? "Could not save"),
-              ...((r.data.issues as string[] | undefined) ?? []),
+              // One line per problem; the server words them as plain sentences.
+              ...((r.data.issues as string[] | undefined) ?? []).map((i) => `- ${i}`),
             ].join("\n"),
           );
         props.onDone?.();
