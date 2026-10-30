@@ -18,6 +18,8 @@ import {
 import { effectivePlanState, evaluateRules, scopeFindings } from "../payors/evaluate";
 import type { PlanType, Rule, ScopeFinding } from "../payors/types";
 import { requirePermission } from "../permissions";
+import { dayInZone } from "../time-format";
+import { orgSettings } from "./clients";
 import { applicableRules, buildEvalContext, loadRules } from "./payors";
 
 export type Requirement = {
@@ -193,11 +195,13 @@ export async function clientRequirements(ctx: OrgCtx, clientId: string, asOf: Da
       orderBy: { createdAt: "desc" },
       select: { id: true, createdAt: true, classification: true, status: true, extracted: true },
     });
+    const org = await tx.org.findUnique({ where: { id: ctx.orgId }, select: { settings: true } });
+    const timeZone = orgSettings(org?.settings).timeZone;
     const letters: LetterRequirements[] = letterRows
       .filter((l) => l.status === "confirmed")
       .map((l) => ({
         id: l.id,
-        date: toDay(l.createdAt),
+        date: dayInZone(l.createdAt, timeZone),
         classification: l.classification,
         requirements:
           ((l.extracted as { requirements?: unknown }).requirements as string[] | undefined) ?? [],

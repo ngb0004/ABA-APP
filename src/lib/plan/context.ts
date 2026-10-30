@@ -539,6 +539,8 @@ export function buildSourcedContext(b: ClientData, asOf: Day): SourcedContext {
     for (const [field, key, label] of [
       ["introducedAt", "introduced", "date introduced"],
       ["projectedMasteryDate", "projected_mastery", "projected mastery date"],
+      // The reason is the BCBA's own text, shown from the record; only the date is a value.
+      ["discontinuedOn", "discontinued_on", "date discontinued"],
     ] as const) {
       const d = g[field];
       if (d)

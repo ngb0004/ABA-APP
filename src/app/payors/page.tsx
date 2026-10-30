@@ -17,6 +17,7 @@ import { loadRules } from "@/lib/services/payors";
 import { listOpenReports } from "@/lib/services/rule-reports";
 import { REPORT_REASON_LABELS } from "@/lib/payors/report-reasons";
 import { orgSettings } from "@/lib/services/clients";
+import { dayInZone, formatDateTime } from "@/lib/time-format";
 import { requirePageCtx } from "@/lib/server/page-session";
 
 export const metadata: Metadata = { title: "Payor rules" };
@@ -29,7 +30,7 @@ export default async function PayorsPage({
   const ctx = await requirePageCtx();
   requirePermission(ctx.role, "payor:read");
   const showAll = (await searchParams).states === "all";
-  const { payors, docs, statesServed } = await withOrg(ctx, async (tx) => {
+  const { payors, docs, statesServed, timeZone } = await withOrg(ctx, async (tx) => {
     const org = await tx.org.findUniqueOrThrow({ where: { id: ctx.orgId } });
     const list = await tx.payor.findMany({ orderBy: { name: "asc" } });
     const payors = await Promise.all(list.map(async (p) => ({ ...p, rules: await loadRules(tx, p.id) })));
@@ -50,7 +51,8 @@ export default async function PayorsPage({
         },
       },
     });
-    return { payors, docs, statesServed: orgSettings(org.settings).statesServed };
+    const settings = orgSettings(org.settings);
+    return { payors, docs, statesServed: settings.statesServed, timeZone: settings.timeZone };
   });
   const canCheck = can(ctx.role, "payor:verify");
   // Verifying rules is Yoma's curation job: only platform curators see those controls (the API re-checks).
@@ -59,7 +61,10 @@ export default async function PayorsPage({
   const demo = isDemo();
   // The version the payor shows, else when we got the copy; null when there is no copy at all.
   const currentLabel = (s: { versionLabel: string | null; fetchedAt: Date; origin: string } | undefined) =>
-    s ? (s.versionLabel ?? `${s.origin === "upload" ? "uploaded" : "fetched"} ${toDay(s.fetchedAt)}`) : null;
+    s
+      ? (s.versionLabel ??
+        `${s.origin === "upload" ? "uploaded" : "fetched"} ${dayInZone(s.fetchedAt, timeZone)}`)
+      : null;
   const official = docs
     .filter((d) => !d.secondary)
     .map((d) => ({ id: d.id, name: d.name, current: currentLabel(d.snapshots[0]) }));
@@ -119,7 +124,7 @@ export default async function PayorsPage({
                   {reports.map((r) => (
                     <tr key={r.id} data-report={r.id}>
                       <td className="muted" data-label="Reported">
-                        {toDay(r.createdAt)}
+                        {dayInZone(r.createdAt, timeZone)}
                         {r.practice && <div>{r.practice}</div>}
                       </td>
                       <td data-label="Rule">
@@ -243,7 +248,7 @@ export default async function PayorsPage({
                             <div className="muted" data-testid={`upload-note-${d.key}`}>
                               No public copy to watch.{" "}
                               {s?.origin === "upload"
-                                ? `Official copy on file from ${toDay(s.fetchedAt)}.${curator && !demo ? " Upload the new edition when the payor publishes one." : ""}`
+                                ? `Official copy on file from ${dayInZone(s.fetchedAt, timeZone)}.${curator && !demo ? " Upload the new edition when the payor publishes one." : ""}`
                                 : curator && !demo
                                   ? "Upload the official copy to verify rules against it."
                                   : "Yoma's reviewers check this document by hand."}
@@ -303,7 +308,7 @@ export default async function PayorsPage({
                         </td>
                         <td className="muted" data-label="Last checked">
                           {d.lastCheckedAt
-                            ? d.lastCheckedAt.toISOString().slice(0, 16).replace("T", " ")
+                            ? formatDateTime(d.lastCheckedAt, timeZone)
                             : d.locator
                               ? "never"
                               : "not checked automatically"}

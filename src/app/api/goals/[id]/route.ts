@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { GOAL_STATUSES } from "@/lib/plan/context";
 import { api, readJson } from "@/lib/server/api";
-import { updateGoal } from "@/lib/services/plans";
+import { removeGoal, updateGoal } from "@/lib/services/plans";
 
 // A real calendar date: "2026-02-30" does not survive the round trip.
 const Day = z
@@ -31,3 +31,6 @@ const Body = z
 export const PATCH = api<{ id: string }>(async (req, ctx, { id }) =>
   updateGoal(ctx, id, await readJson(req, Body)),
 );
+
+/** Only a goal added by mistake (no data, never approved or exported); otherwise 409: discontinue it instead. */
+export const DELETE = api<{ id: string }>(async (_req, ctx, { id }) => removeGoal(ctx, id));

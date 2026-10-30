@@ -5,7 +5,8 @@ import { label } from "@/components/labels";
 import { RuleSource, Status } from "@/components/status";
 import { toDay } from "@/lib/dates";
 import { can } from "@/lib/permissions";
-import { clientDetail } from "@/lib/services/clients";
+import { clientDetail, practiceTimeZone } from "@/lib/services/clients";
+import { dayInZone } from "@/lib/time-format";
 import { asOfToday, orNotFound, requirePageCtx, uuidParam } from "@/lib/server/page-session";
 
 // Client names stay out of tab titles: browser history and sync are outside the app's safeguards.
@@ -15,6 +16,7 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
   const id = await uuidParam(params);
   const ctx = await requirePageCtx();
   const d = await orNotFound(() => clientDetail(ctx, id, asOfToday()));
+  const timeZone = await practiceTimeZone(ctx);
   const c = d.client;
   // No authorization yet, or only an initial one and no plan written: the initial plan comes first.
   // Otherwise the next plan is a reauthorization.
@@ -372,7 +374,7 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
             <li key={p.id}>
               <Link href={`/plans/${p.id}`}>{p.type === "reauth" ? "Reauthorization" : "Initial"} plan</Link>{" "}
               <span className="muted">
-                created {toDay(p.createdAt)} · {p.status}
+                created {dayInZone(p.createdAt, timeZone)} · {p.status}
               </span>
             </li>
           ))}

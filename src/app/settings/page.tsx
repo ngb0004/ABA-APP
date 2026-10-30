@@ -6,6 +6,7 @@ import { MEMBER_ROLES, practiceSettings } from "@/lib/services/records";
 import { orgSettings } from "@/lib/services/clients";
 import { requirePageCtx } from "@/lib/server/page-session";
 import { STATE_NAMES, US_STATES } from "@/lib/payors/types";
+import { PRACTICE_TIME_ZONES } from "@/lib/time-format";
 
 export const metadata: Metadata = { title: "Practice settings" };
 
@@ -13,6 +14,12 @@ const settingsFields: FieldSpec[] = [
   { name: "name", label: "Practice name" },
   { name: "npi", label: "NPI", optional: true, placeholder: "SYN-NPI-…" },
   { name: "taxId", label: "Tax ID", optional: true },
+  {
+    name: "timeZone",
+    label: "Time zone (times across the app are shown in this zone)",
+    type: "select",
+    options: PRACTICE_TIME_ZONES.map((z) => ({ value: z.value, label: z.label })),
+  },
   {
     name: "reauthLeadDays",
     label: "Submit reauths this many days before the authorization ends",
@@ -78,6 +85,7 @@ export default async function SettingsPage() {
             reassessmentLeadDays: s.reassessmentLeadDays,
             offices: s.offices,
             statesServed: s.statesServed,
+            timeZone: s.timeZone,
           }}
         />
       </div>

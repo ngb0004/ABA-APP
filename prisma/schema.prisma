@@ -709,6 +709,12 @@ model Goal {
   settings                   Json      @default("[]")
   approvedById               String?   @db.Uuid
   approvedAt                 DateTime?
+  /// Set when the BCBA discontinues the goal; the goal, its data, and its graph are kept.
+  discontinuedOn             DateTime? @db.Date
+  /// BCBA-written reason (1-500 characters), shown with the goal in progress reporting. Never sent to the AI.
+  discontinuedReason         String?
+  /// When the goal record was added: decides whether it was ever in an approved section or exported packet.
+  createdAt                  DateTime  @default(now())
 
   client       Client            @relation(fields: [clientId], references: [id])
   plan         Plan?             @relation(fields: [planId], references: [id])

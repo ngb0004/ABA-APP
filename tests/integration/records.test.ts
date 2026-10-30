@@ -18,7 +18,7 @@ import {
   updateClient,
   updateSettings,
 } from "@/lib/services/records";
-import { clientDetail, orgSettings } from "@/lib/services/clients";
+import { clientDetail, orgSettings, practiceTimeZone } from "@/lib/services/clients";
 import { evaluateClientRules } from "@/lib/services/payors";
 import { AS_OF, dataset } from "../helpers/synthetic-eval";
 import { clientId, ctxAs, org } from "../helpers/ctx";
@@ -293,6 +293,37 @@ describe("practice settings and team", () => {
     );
     expect(audit).toBeGreaterThan(0);
     await updateSettings(bcba, { ...base, statesServed: ["GA"] });
+  });
+
+  it("saves the practice time zone (Eastern until chosen) and rejects unknown zones", async () => {
+    const before = (await practiceSettings(bcba)).org;
+    const s0 = orgSettings(before.settings);
+    const base = {
+      name: before.name,
+      npi: "SYN-NPI-1111111111",
+      taxId: null,
+      offices: s0.offices,
+      reauthLeadDays: s0.reauthLeadDays,
+      reassessmentLeadDays: s0.reassessmentLeadDays,
+    };
+    expect(orgSettings({}).timeZone).toBe("America/New_York");
+    expect(orgSettings({ timeZone: "Not/AZone" }).timeZone).toBe("America/New_York");
+    await updateSettings(bcba, { ...base, timeZone: "America/Chicago" });
+    expect(orgSettings((await practiceSettings(bcba)).org.settings).timeZone).toBe("America/Chicago");
+    expect(await practiceTimeZone(ctxAs("RBT"))).toBe("America/Chicago");
+    // A save that does not send the zone keeps it.
+    await updateSettings(bcba, base);
+    expect(await practiceTimeZone(bcba)).toBe("America/Chicago");
+    await expect(updateSettings(bcba, { ...base, timeZone: "Mars/Olympus" })).rejects.toThrow();
+    await expect(updateSettings(bcba, { ...base, timeZone: "Europe/London" })).rejects.toThrow();
+    const ev = await withOrg(bcba, (tx) =>
+      tx.auditEvent.findFirst({
+        where: { action: "org:settings_update", entityId: bcba.orgId },
+        orderBy: { createdAt: "desc" },
+      }),
+    );
+    expect(ev).not.toBeNull();
+    await updateSettings(bcba, { ...base, timeZone: "America/New_York" });
   });
 
   it("adds, re-roles, and removes members; always keeps a BCBA", async () => {

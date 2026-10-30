@@ -4,8 +4,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 PORT="${1:-3100}"
-export DATABASE_URL="postgresql://aba_app:aba_app_dev@localhost:5432/aba_e2e"
-export DIRECT_DATABASE_URL="postgresql://aba_owner:aba_owner_dev@localhost:5432/aba_e2e"
+DB="${E2E_DB:-aba_e2e}"
+export DATABASE_URL="postgresql://aba_app:aba_app_dev@localhost:5432/$DB"
+export DIRECT_DATABASE_URL="postgresql://aba_owner:aba_owner_dev@localhost:5432/$DB"
 export LLM_PROVIDER=mock LLM_MODEL=mock-model SESSION_SECRET=e2e-secret-not-for-production
 export NEXT_DIST_DIR=.next-e2e NODE_ENV=production
 bash scripts/db-up.sh

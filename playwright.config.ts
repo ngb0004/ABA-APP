@@ -1,6 +1,7 @@
 import { defineConfig } from "@playwright/test";
 
-const PORT = 3100;
+// E2E_PORT / E2E_DB let a second checkout run the suite alongside the first.
+const PORT = Number(process.env.E2E_PORT ?? 3100);
 export default defineConfig({
   testDir: "e2e",
   timeout: 90_000,

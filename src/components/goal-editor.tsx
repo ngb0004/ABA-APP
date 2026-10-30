@@ -3,38 +3,39 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { send } from "./actions";
+import { RowMenu } from "./row-menu";
 
-export function GoalEditor({
-  goal,
-}: {
-  goal: {
-    id: string;
-    objective: string;
-    rationale: string;
-    flatExplanation: string | null;
-    masteryAccuracyPct: number;
-    masteryConsecutiveSessions: number;
-    masteryInstructors: number;
-  };
-}) {
+type EditableGoal = {
+  id: string;
+  objective: string;
+  rationale: string;
+  masteryAccuracyPct: number;
+  masteryConsecutiveSessions: number;
+  masteryInstructors: number;
+};
+
+/** The goal's wording and mastery criteria, edited in the goal menu's dialog. */
+export function GoalEditor({ goal, onDone }: { goal: EditableGoal; onDone: () => void }) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
   const [g, setG] = useState(goal);
   const [error, setError] = useState<string | null>(null);
-  if (!open)
-    return (
-      <button className="secondary" onClick={() => setOpen(true)}>
-        Edit goal
-      </button>
-    );
+  const [busy, setBusy] = useState(false);
   return (
-    <div className="panel">
-      <label>
+    <div>
+      <label htmlFor={`objective-${goal.id}`}>
         Objective (use {"{{goal.N.mastery_pct}}"}-style tokens for figures; brackets like [X] must be filled)
       </label>
-      <textarea value={g.objective} onChange={(e) => setG({ ...g, objective: e.target.value })} />
-      <label>Medical necessity rationale</label>
-      <textarea value={g.rationale} onChange={(e) => setG({ ...g, rationale: e.target.value })} />
+      <textarea
+        id={`objective-${goal.id}`}
+        value={g.objective}
+        onChange={(e) => setG({ ...g, objective: e.target.value })}
+      />
+      <label htmlFor={`rationale-${goal.id}`}>Medical necessity rationale</label>
+      <textarea
+        id={`rationale-${goal.id}`}
+        value={g.rationale}
+        onChange={(e) => setG({ ...g, rationale: e.target.value })}
+      />
       <div className="row">
         <label>Mastery %</label>
         <input
@@ -64,23 +65,212 @@ export function GoalEditor({
       </div>
       <div className="row" style={{ marginTop: 8 }}>
         <button
+          disabled={busy}
           onClick={async () => {
-            const { id, flatExplanation, ...rest } = g;
-            void flatExplanation;
+            const { id, ...rest } = g;
+            setBusy(true);
             const r = await send(`/api/goals/${id}`, "PATCH", rest);
+            setBusy(false);
             if (!r.ok) return setError(String(r.data.error));
-            setOpen(false);
+            onDone();
             router.refresh();
           }}
         >
           Save (returns goal to draft)
         </button>
-        <button className="secondary" onClick={() => setOpen(false)}>
+        <button className="secondary" onClick={onDone}>
           Cancel
         </button>
       </div>
       {error && <div className="error">{error}</div>}
     </div>
+  );
+}
+
+const DISCONTINUE_REASON_MAX = 500;
+
+/**
+ * Discontinue a goal with history: the reason and date go on the record; its data and graph stay.
+ * "Today" is the server's (asOf), the same day the server checks the date against.
+ */
+function DiscontinueForm({ goalId, asOf, onDone }: { goalId: string; asOf: string; onDone: () => void }) {
+  const router = useRouter();
+  const [reason, setReason] = useState("");
+  const [date, setDate] = useState(asOf);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <form
+      data-testid={`discontinue-form-${goalId}`}
+      onSubmit={async (e) => {
+        e.preventDefault();
+        setBusy(true);
+        setError(null);
+        const r = await send(`/api/goals/${goalId}/discontinue`, "POST", { reason, date });
+        setBusy(false);
+        if (!r.ok)
+          return setError(
+            [
+              String(r.data.error ?? "Could not save"),
+              ...((r.data.issues as string[] | undefined) ?? []),
+            ].join("\n"),
+          );
+        onDone();
+        router.refresh();
+      }}
+    >
+      <p className="muted" style={{ marginTop: 0 }}>
+        The goal, its data, and its graph stay in the record and in progress reporting, marked discontinued.
+      </p>
+      <label htmlFor={`discontinue-reason-${goalId}`}>Reason (shown with the goal in progress reports)</label>
+      <textarea
+        id={`discontinue-reason-${goalId}`}
+        required
+        maxLength={DISCONTINUE_REASON_MAX}
+        style={{ minHeight: 70, fontFamily: "inherit" }}
+        value={reason}
+        onChange={(e) => setReason(e.target.value)}
+      />
+      <label htmlFor={`discontinue-date-${goalId}`}>Date discontinued</label>
+      <input
+        id={`discontinue-date-${goalId}`}
+        type="date"
+        required
+        max={asOf}
+        value={date}
+        onChange={(e) => setDate(e.target.value)}
+      />
+      <div className="row" style={{ marginTop: 8 }}>
+        <button type="submit" disabled={busy || !reason.trim() || !date}>
+          {busy ? "Saving…" : "Discontinue goal"}
+        </button>
+        <button type="button" className="secondary" onClick={onDone}>
+          Cancel
+        </button>
+      </div>
+      {error && (
+        <div className="error" role="alert" style={{ whiteSpace: "pre-line" }}>
+          {error}
+        </div>
+      )}
+    </form>
+  );
+}
+
+function ResumeConfirm({ goalId, onDone }: { goalId: string; onDone: () => void }) {
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <div>
+      <p style={{ marginTop: 0 }}>
+        The goal goes back to in progress. The date and reason discontinued are cleared; the audit log keeps
+        them.
+      </p>
+      <div className="row">
+        <button
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            const r = await send(`/api/goals/${goalId}/resume`, "POST", {});
+            setBusy(false);
+            if (!r.ok) return setError(String(r.data.error ?? "Could not resume the goal"));
+            onDone();
+            router.refresh();
+          }}
+        >
+          Resume goal
+        </button>
+        <button className="secondary" onClick={onDone}>
+          Cancel
+        </button>
+      </div>
+      {error && (
+        <div className="error" role="alert">
+          {error}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Why a goal cannot be removed, with the way forward the server gave. */
+function RemoveBlocked({ reason, onDone }: { reason: string; onDone: () => void }) {
+  return (
+    <div>
+      <p style={{ marginTop: 0 }}>{reason}</p>
+      <div className="row">
+        <button className="secondary" onClick={onDone}>
+          OK
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The one "⋯" menu on a goal card: Edit goal, Discontinue… or Resume, and Remove. Remove deletes
+ * only when the server's rule allows it (a goal added by mistake, with no data and never approved);
+ * otherwise "Remove…" explains why not.
+ */
+export function GoalMenu({
+  goal,
+  asOf,
+  canRemove,
+  removeBlocker,
+}: {
+  goal: EditableGoal & { ordinal: number; progressStatus: string };
+  /** The server's today (YYYY-MM-DD). */
+  asOf: string;
+  /** The user may remove goals. */
+  canRemove: boolean;
+  removeBlocker: string | null;
+}) {
+  const name = `Goal ${goal.ordinal}`;
+  const { ordinal, progressStatus, ...editable } = goal;
+  void ordinal;
+  const discontinued = progressStatus === "discontinued";
+  return (
+    <RowMenu
+      name={name}
+      testId={`goal-menu-${goal.ordinal}`}
+      actions={[
+        {
+          label: "Edit goal",
+          title: `Edit ${name}`,
+          content: (close) => <GoalEditor goal={editable} onDone={close} />,
+        },
+        discontinued
+          ? {
+              label: "Resume",
+              title: `Resume ${name}?`,
+              content: (close) => <ResumeConfirm goalId={goal.id} onDone={close} />,
+            }
+          : {
+              label: "Discontinue…",
+              title: `Discontinue ${name}`,
+              content: (close) => <DiscontinueForm goalId={goal.id} asOf={asOf} onDone={close} />,
+            },
+        ...(canRemove && removeBlocker
+          ? [
+              {
+                label: "Remove…",
+                title: `${name} can't be removed`,
+                content: (close: () => void) => <RemoveBlocked reason={removeBlocker} onDone={close} />,
+              },
+            ]
+          : []),
+      ]}
+      remove={
+        canRemove && !removeBlocker
+          ? {
+              url: `/api/goals/${goal.id}`,
+              label: "Remove",
+              confirm: "Remove this goal? It was added by mistake and has no data.",
+            }
+          : undefined
+      }
+    />
   );
 }
 
@@ -150,16 +340,20 @@ export function GoalRecordEditor({
     <div data-testid={`goal-record-${goal.ordinal}`}>
       <div className="row">
         <label>Status</label>
+        {/* Discontinuing needs a reason and date, so it lives in the goal's menu (as does Resume). */}
         <select
-          disabled={dis}
+          disabled={dis || goal.progressStatus === "discontinued"}
           value={g.progressStatus}
+          title={goal.progressStatus === "discontinued" ? "Use Resume in the goal's menu" : undefined}
           onChange={(e) => setG({ ...g, progressStatus: e.target.value })}
         >
-          {STATUSES.map(([v, l]) => (
-            <option key={v} value={v}>
-              {l}
-            </option>
-          ))}
+          {STATUSES.filter(([v]) => v !== "discontinued" || goal.progressStatus === "discontinued").map(
+            ([v, l]) => (
+              <option key={v} value={v}>
+                {l}
+              </option>
+            ),
+          )}
         </select>
         <label>Introduced</label>
         <input

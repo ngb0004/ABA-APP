@@ -26,6 +26,7 @@ import {
 } from "../payors/benefits";
 import { PLAN_TYPES, US_STATES, type PlanType } from "../payors/types";
 import { isDemo } from "../demo";
+import { PRACTICE_TIME_ZONE_IDS } from "../time-format";
 import { requirePermission } from "../permissions";
 
 // ---------------------------------------------------------------- shared schemas
@@ -329,6 +330,8 @@ export const SettingsSchema = z.object({
     .max(US_STATES.length)
     .optional()
     .transform((v) => (v ? [...new Set(v)].sort() : undefined)),
+  /** Times across the app are shown in this zone (12-hour clock). Optional so older clients keep it. */
+  timeZone: z.enum(PRACTICE_TIME_ZONE_IDS, "Choose a time zone").optional(),
 });
 
 export const NewMemberSchema = z.object({

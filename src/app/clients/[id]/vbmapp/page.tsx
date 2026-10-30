@@ -5,6 +5,8 @@ import { Html, UploadForm } from "@/components/actions";
 import { DEMO_SAMPLES, isDemo } from "@/lib/demo";
 import { withOrg } from "@/lib/db";
 import { toDay } from "@/lib/dates";
+import { orgSettings } from "@/lib/services/clients";
+import { formatDateTime } from "@/lib/time-format";
 import { can } from "@/lib/permissions";
 import { requirePermission } from "@/lib/permissions";
 import { renderMilestonesGridSvg } from "@/lib/vbmapp/grid-svg";
@@ -17,7 +19,7 @@ export default async function VbmappPage({ params }: { params: Promise<{ id: str
   const id = await uuidParam(params);
   const ctx = await requirePageCtx();
   requirePermission(ctx.role, "client:read");
-  const { client, admins, pending } = await orNotFound(() =>
+  const { client, admins, pending, timeZone } = await orNotFound(() =>
     withOrg(ctx, async (tx) => ({
       client: await tx.client.findUniqueOrThrow({ where: { id } }),
       admins: await tx.vbmappAdministration.findMany({
@@ -29,6 +31,9 @@ export default async function VbmappPage({ params }: { params: Promise<{ id: str
         where: { clientId: id, status: "pending" },
         orderBy: { createdAt: "desc" },
       }),
+      timeZone: orgSettings(
+        (await tx.org.findUnique({ where: { id: ctx.orgId }, select: { settings: true } }))?.settings,
+      ).timeZone,
     })),
   );
   const legend = admins.map((a) => ({
@@ -98,10 +103,7 @@ export default async function VbmappPage({ params }: { params: Promise<{ id: str
               recomputed total <strong>{totals.total}</strong> (L1 {totals.levels["1"]}, L2{" "}
               {totals.levels["2"]}, L3 {totals.levels["3"]})
               {a.reviewedAt && (
-                <span className="muted">
-                  {" "}
-                  · reviewed {a.reviewedAt.toISOString().slice(0, 16).replace("T", " ")}
-                </span>
+                <span className="muted"> · reviewed {formatDateTime(a.reviewedAt, timeZone)}</span>
               )}
             </p>
             {flags.length > 0 && (

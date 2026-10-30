@@ -46,6 +46,10 @@ test("the audit log hides automatic record reads unless asked, and names users",
   await page.goto("/audit");
   await expect(page.getByRole("cell", { name: /^Read: / })).toHaveCount(0);
   await expect(page.getByRole("cell", { name: /^Auth: login/ }).first()).toBeVisible();
+  // Times are 12-hour, with seconds, in the practice's zone (Eastern by default).
+  await expect(page.locator('td[data-label="When"]').first()).toHaveText(
+    /^[A-Z][a-z]{2} \d{1,2}, \d{4}, \d{1,2}:\d{2}:\d{2} [AP]M ET$/,
+  );
   await page.getByTestId("audit-show-auto").click();
   await expect(page.getByRole("cell", { name: /^Read: / }).first()).toBeVisible();
 });

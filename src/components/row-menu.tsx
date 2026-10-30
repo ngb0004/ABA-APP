@@ -21,7 +21,11 @@ export function RowMenu(props: {
    * More actions, each a menu item that opens a dialog titled with its label: a record form, or
    * custom content (given a function that closes the dialog).
    */
-  actions?: ({ label: string } & (
+  actions?: ({
+    label: string;
+    /** Dialog title, when it should differ from "label: name". */
+    title?: string;
+  } & (
     | { form: FormProps; content?: never; request?: never; href?: never }
     | { content: (close: () => void) => ReactNode; form?: never; request?: never; href?: never }
     /** A one-click request (e.g. "Confirm"), with an optional confirmation question. */
@@ -70,7 +74,7 @@ export function RowMenu(props: {
   const action = typeof dialog === "number" ? props.actions?.[dialog] : undefined;
   const form = dialog === "edit" ? props.edit : action?.form;
   const close = () => setDialog(null);
-  const title = action ? `${action.label}: ${props.name}` : `Edit ${props.name}`;
+  const title = action ? (action.title ?? `${action.label}: ${props.name}`) : `Edit ${props.name}`;
 
   async function request(r: { url: string; method?: "POST" | "DELETE"; confirm?: string }) {
     setOpen(false);

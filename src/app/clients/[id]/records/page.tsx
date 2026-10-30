@@ -6,6 +6,7 @@ import { planTypeLine } from "@/components/payor-display";
 import { FormToggle, RecordForm, type FieldSpec } from "@/components/record-form";
 import { RowMenu } from "@/components/row-menu";
 import { toDay } from "@/lib/dates";
+import { formatClock } from "@/lib/time-format";
 import { isDemo } from "@/lib/demo";
 import {
   BENEFITS_CHECK_METHODS,
@@ -29,8 +30,6 @@ import { asOfToday, orNotFound, requirePageCtx, uuidParam } from "@/lib/server/p
 export const metadata: Metadata = { title: "Records" };
 
 const yesNo = (b: boolean) => (b ? "yes" : "no");
-const hhmm = (m: number) =>
-  `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
 
 export default async function RecordsPage({ params }: { params: Promise<{ id: string }> }) {
   const id = await uuidParam(params);
@@ -510,7 +509,7 @@ export default async function RecordsPage({ params }: { params: Promise<{ id: st
                   <tr key={s.id}>
                     <td>{toDay(s.date)}</td>
                     <td>{s.cptCode}</td>
-                    <td>{hhmm(s.startMinute)}</td>
+                    <td>{formatClock(s.startMinute)}</td>
                     <td>{s.units}</td>
                     <td>
                       {s.providerRole} {s.providerId ?? ""}

@@ -31,10 +31,11 @@ describe("demo mode uploads", () => {
     const png = Buffer.concat([readFileSync("fixtures/assessments/srs2_scores.png"), Buffer.from([0])]);
     expect(() => assertDemoUploadAllowed(png)).toThrow(/only the bundled sample files/);
   });
-  it("every sample score file is listed with the assessment it holds, and the files are read-only", () => {
+  // (File permissions are not checked: git does not keep read-only bits, so a fresh clone differs.)
+  it("every sample score file is listed with the assessment it holds, and exists", () => {
     for (const n of DEMO_SAMPLES.assessments) {
       expect(ASSESSMENT_SAMPLE_TYPES[n]).toMatch(/^[a-z0-9_]+(:[a-z0-9_]+)?$/);
-      expect(statSync(`fixtures/assessments/${n}`).mode & 0o222).toBe(0);
+      expect(statSync(`fixtures/assessments/${n}`).isFile()).toBe(true);
     }
   });
   it("the demo refuses an uploaded score file that is not a sample", async () => {
