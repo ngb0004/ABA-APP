@@ -19,7 +19,14 @@ import { withOrg, type OrgCtx, type Tx } from "../db";
 import { toDay, type Day } from "../dates";
 import { renderTokens, validateBcbaText } from "../firewall";
 import { unresolvedPlaceholders } from "../goals/checks";
-import { GOAL_CHANGED_ELSEWHERE, type GoalPatch } from "../goals/goal-patch";
+import {
+  GOAL_APPROVED_FIELDS,
+  GOAL_CHANGED_BEFORE_APPROVAL,
+  GOAL_CHANGED_ELSEWHERE,
+  storedGoalValues,
+  type ApprovedGoalValues,
+  type GoalPatch,
+} from "../goals/goal-patch";
 import { goalNames } from "../goals/names";
 import { REMOVED_GOAL_PLACEHOLDER, goalTokenOrdinals, renumberGoalTokens } from "../goals/renumber";
 import { pseudonymNames } from "../intake/derive";
@@ -703,10 +710,28 @@ export async function dropFromPlanSelections(tx: Tx, clientId: string, assessmen
 
 // ---------------------------------------------------------------- goals
 
-export async function approveGoal(ctx: OrgCtx, goalId: string) {
+/** Lock the goal's row for this transaction, so saves and approvals of one goal never interleave. */
+async function lockGoalRow(tx: Tx, goalId: string) {
+  await tx.$queryRaw`SELECT 1 FROM goal WHERE id = ${goalId}::uuid FOR UPDATE`;
+}
+
+const sameValue = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+
+/**
+ * Approve a goal. `expected` is what the approver was shown (its wording, mastery criteria, and
+ * dates): if the goal now says anything else (an autosave from another tab or person landed
+ * meanwhile), nothing is approved (409), so text nobody reviewed is never approved.
+ */
+export async function approveGoal(ctx: OrgCtx, goalId: string, opts: { expected?: ApprovedGoalValues } = {}) {
   requirePermission(ctx.role, "goal:approve");
   return withOrg(ctx, async (tx) => {
+    await lockGoalRow(tx, goalId);
     const g = await tx.goal.findUniqueOrThrow({ where: { id: goalId } });
+    if (opts.expected) {
+      const now = storedGoalValues(g);
+      if (GOAL_APPROVED_FIELDS.some((k) => !sameValue(now[k], opts.expected![k])))
+        throw new HttpError(409, GOAL_CHANGED_BEFORE_APPROVAL);
+    }
     const ph = unresolvedPlaceholders(g.objective, g.rationale, g.sd, g.targetBehavior);
     if (ph.length) throw new HttpError(422, `Goal has unresolved placeholders: ${ph.join(", ")}`);
     const saved = await tx.goal.update({
@@ -730,18 +755,36 @@ export async function updateGoal(
   ctx: OrgCtx,
   goalId: string,
   data: GoalPatch,
-  opts: { expectedUpdatedAt?: string } = {},
+  opts: { base?: Record<string, unknown>; baseAlt?: Record<string, unknown> } = {},
 ): Promise<GoalSaveResult> {
   requirePermission(ctx.role, "goal:write");
   if (data.progressStatus === "discontinued")
     throw new HttpError(422, "Use Discontinue in the goal's menu: it records the date and your reason.");
   return withOrg(ctx, async (tx) => {
+    await lockGoalRow(tx, goalId);
     const cur = await tx.goal.findUniqueOrThrow({ where: { id: goalId } });
-    // Optimistic concurrency: an editor names the version it started from.
-    if (opts.expectedUpdatedAt !== undefined) {
-      const expected = new Date(opts.expectedUpdatedAt);
-      if (Number.isNaN(expected.getTime()) || expected.getTime() !== cur.updatedAt.getTime())
-        throw new HttpError(409, GOAL_CHANGED_ELSEWHERE);
+    // Per-field optimistic concurrency: an editor names the value each field held when it was
+    // edited. Only a field someone else changed meanwhile conflicts (a field already holding the
+    // new value does not); changes to other fields, or to the goal's position, plan, approval, or
+    // baseline, never do. Nothing is saved on a conflict; the editor gets the current values.
+    if (opts.base) {
+      const now = storedGoalValues(cur);
+      const sent = Object.keys(data) as (keyof typeof now)[];
+      const conflicts = sent.filter(
+        (k) =>
+          Object.hasOwn(opts.base!, k) &&
+          !sameValue(now[k], opts.base![k]) &&
+          !(opts.baseAlt && Object.hasOwn(opts.baseAlt, k) && sameValue(now[k], opts.baseAlt[k])) &&
+          !sameValue(now[k], data[k]),
+      );
+      if (conflicts.length)
+        throw new HttpError(409, GOAL_CHANGED_ELSEWHERE, undefined, {
+          conflict: {
+            fields: conflicts,
+            current: Object.fromEntries(sent.map((k) => [k, now[k]])),
+            updatedAt: cur.updatedAt.toISOString(),
+          },
+        });
     }
     if (data.progressStatus !== undefined && cur.progressStatus === "discontinued")
       throw new HttpError(422, "This goal is discontinued. Use Resume in the goal's menu first.");
@@ -831,7 +874,12 @@ export async function lockGoalBaseline(ctx: OrgCtx, goalId: string) {
     });
     if (r.count === 0) throw new HttpError(409, "This goal's baseline is already locked");
     await audit(tx, { action: "goal:lock_baseline", entityType: "Goal", entityId: goalId, meta: { date } });
-    return { value, date };
+    const { updatedAt } = await tx.goal.findUniqueOrThrow({
+      where: { id: goalId },
+      select: { updatedAt: true },
+    });
+    // The goal's new version, so the page's autosave moves to it.
+    return { value, date, updatedAt: updatedAt.toISOString() };
   });
 }
 

@@ -46,12 +46,27 @@ export const GOAL_PATCH_FIELDS = {
 export type GoalPatchField = keyof typeof GOAL_PATCH_FIELDS;
 export type GoalPatch = { [K in GoalPatchField]?: z.infer<(typeof GOAL_PATCH_FIELDS)[K]> };
 
+/** A field's stored value as an editor saw it (any stored value, valid or not). */
+const BaseValues = z
+  .record(z.string(), z.unknown())
+  .refine((m) => Object.keys(m).every((k) => Object.hasOwn(GOAL_PATCH_FIELDS, k)), "Unknown field");
+
 export const GoalPatchSchema = z
   .object(GOAL_PATCH_FIELDS)
   .partial()
   .extend({
-    /** The version (updatedAt) the editor started from; a save against an older version is refused. */
-    expectedUpdatedAt: z.iso.datetime({ offset: true }).optional(),
+    /**
+     * What each field sent held when the editor changed it. A field someone else changed
+     * meanwhile is refused (409) rather than overwritten; other fields and the goal's bookkeeping
+     * (position, plan, approval, baseline) never conflict.
+     */
+    base: BaseValues,
+    /** Also accepted as what a field holds (a save still in flight when the page was left). */
+    baseAlt: BaseValues.optional(),
+  })
+  .refine((v) => Object.keys(v).every((k) => k === "base" || k === "baseAlt" || Object.hasOwn(v.base, k)), {
+    message: "Each field saved needs the value it was based on",
+    path: ["base"],
   });
 
 export function isGoalPatchField(f: string): f is GoalPatchField {
@@ -64,6 +79,95 @@ export function goalFieldProblem(field: GoalPatchField, value: unknown): string 
   return r.success ? null : (r.error.issues[0]?.message ?? "Check this value");
 }
 
-/** Refused saves: the goal changed since the editor loaded it. */
+/** Refused saves: a field was changed somewhere else while it was being edited here. */
 export const GOAL_CHANGED_ELSEWHERE =
-  "This goal was changed somewhere else since you opened it, so this change was not saved. The latest version is shown.";
+  "Someone changed this somewhere else while you were editing it. Your text is kept: choose which version to keep.";
+
+/** Refused approvals: the goal says something other than what the approver was shown. */
+export const GOAL_CHANGED_BEFORE_APPROVAL =
+  "This goal changed since this page showed it, so it was not approved. The latest version is shown; review it and approve again.";
+
+/** What the editors call each field, in status messages. */
+export const GOAL_FIELD_LABEL: Record<GoalPatchField, string> = {
+  objective: "Objective",
+  rationale: "Medical necessity rationale",
+  flatExplanation: "Flat-progress explanation",
+  masteryAccuracyPct: "Mastery %",
+  masteryConsecutiveSessions: "Consecutive sessions",
+  masteryInstructors: "Instructors",
+  introducedAt: "Introduced",
+  projectedMasteryDate: "Projected mastery",
+  progressStatus: "Status",
+  barriers: "Barriers",
+  settings: "Settings",
+};
+
+/** Where on the goals page each field is edited. */
+export const GOAL_FIELD_HOME: Record<GoalPatchField, string> = {
+  objective: "Edit goal, in the goal's menu",
+  rationale: "Edit goal, in the goal's menu",
+  masteryAccuracyPct: "Edit goal, in the goal's menu",
+  masteryConsecutiveSessions: "Edit goal, in the goal's menu",
+  masteryInstructors: "Edit goal, in the goal's menu",
+  flatExplanation: "the flat-progress explanation",
+  introducedAt: "the goal's status and dates",
+  projectedMasteryDate: "the goal's status and dates",
+  progressStatus: "the goal's status and dates",
+  barriers: "the goal's status and dates",
+  settings: "the goal's status and dates",
+};
+
+/** The fields approving a goal approves: what it says, its mastery criteria, and its dates. */
+export const GOAL_APPROVED_FIELDS = [
+  "objective",
+  "rationale",
+  "masteryAccuracyPct",
+  "masteryConsecutiveSessions",
+  "masteryInstructors",
+  "introducedAt",
+  "projectedMasteryDate",
+] as const satisfies readonly GoalPatchField[];
+
+/** What the approver was shown: approval is refused if the goal now says anything else. */
+export const ApproveGoalSchema = z.object({
+  expected: z.object({
+    objective: z.string(),
+    rationale: z.string(),
+    masteryAccuracyPct: z.number(),
+    masteryConsecutiveSessions: z.number(),
+    masteryInstructors: z.number(),
+    introducedAt: z.string().nullable(),
+    projectedMasteryDate: z.string().nullable(),
+  }),
+});
+export type ApprovedGoalValues = z.infer<typeof ApproveGoalSchema>["expected"];
+
+/** A goal's stored values in the form the editors save them (dates as YYYY-MM-DD). */
+export function storedGoalValues(g: {
+  objective: string;
+  rationale: string;
+  flatExplanation: string | null;
+  masteryAccuracyPct: number;
+  masteryConsecutiveSessions: number;
+  masteryInstructors: number;
+  introducedAt: Date | null;
+  projectedMasteryDate: Date | null;
+  progressStatus: string;
+  barriers: string;
+  settings: unknown;
+}): Record<GoalPatchField, unknown> {
+  const day = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : null);
+  return {
+    objective: g.objective,
+    rationale: g.rationale,
+    flatExplanation: g.flatExplanation,
+    masteryAccuracyPct: g.masteryAccuracyPct,
+    masteryConsecutiveSessions: g.masteryConsecutiveSessions,
+    masteryInstructors: g.masteryInstructors,
+    introducedAt: day(g.introducedAt),
+    projectedMasteryDate: day(g.projectedMasteryDate),
+    progressStatus: g.progressStatus,
+    barriers: g.barriers,
+    settings: Array.isArray(g.settings) ? g.settings : [],
+  };
+}

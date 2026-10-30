@@ -56,4 +56,24 @@ describe("goal names (goals are never numbered for readers)", () => {
     expect(stableGoalName(a)).toBe("Manding goal: “independently mand for a preferred item”");
     expect(stableGoalName(g("x", "Tacting", "communication", "{{goal.1.mastery_pct}}"))).toBe("Tacting goal");
   });
+
+  it("gives every goal a unique name, marking goals that read the same as duplicates without numbers", () => {
+    const same = "[Client] will mand for [item 1] in {{goal.1.mastery_pct}} of trials.";
+    const names = goalNames([
+      g("a", "Manding", "communication", same),
+      g("b", "Manding", "communication", same),
+      g("c", "Manding", "communication", "[Client] will mand for [item 2] in 80% of trials."),
+      g("d", "Manding", "communication", "[Client] will independently mand for snacks at the table."),
+      g("e", "Tacting", "communication", ""),
+      g("f", "Tacting", "communication", ""),
+    ]);
+    expect(names.get("a")).toBe("Manding goal: “mand for in of trials” (duplicate A)");
+    expect(names.get("b")).toBe("Manding goal: “mand for in of trials” (duplicate B)");
+    expect(names.get("c")).toBe("Manding goal: “mand for in of trials” (duplicate C)");
+    expect(names.get("d")).toBe("Manding goal: “independently mand for snacks at the table”");
+    expect(names.get("e")).toBe("Tacting goal (duplicate A)");
+    expect(names.get("f")).toBe("Tacting goal (duplicate B)");
+    expect(new Set(names.values()).size).toBe(6);
+    for (const n of names.values()) expect(n).not.toMatch(/\d/);
+  });
 });

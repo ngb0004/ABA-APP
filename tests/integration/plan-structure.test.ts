@@ -192,7 +192,11 @@ describe("goal records", () => {
   it("locks a baseline computed from the goal's first three data points, permanently", async () => {
     const g = await newGoal();
     await expect(lockGoalBaseline(ctxAs("RBT"), g.id)).rejects.toMatchObject({ status: 403 });
-    expect(await lockGoalBaseline(bcba, g.id)).toEqual({ value: 20, date: "2026-08-07" });
+    expect(await lockGoalBaseline(bcba, g.id)).toMatchObject({
+      value: 20,
+      date: "2026-08-07",
+      updatedAt: expect.any(String),
+    });
     await expect(lockGoalBaseline(bcba, g.id)).rejects.toMatchObject({ status: 409 });
     // The database refuses any change to a locked baseline, whatever the caller.
     await expect(

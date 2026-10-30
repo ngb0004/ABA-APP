@@ -3,8 +3,9 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import type { AutosaveState } from "@/lib/goals/autosave";
+import { saveStatusText } from "@/lib/goals/save-status";
 import { send } from "./actions";
-import { flushGoal, forgetGoal, goalVersionChanged, useGoalAutosave } from "./goal-autosave";
+import { flushGoal, forgetGoal, goalShownValues, goalVersionChanged, useGoalAutosave } from "./goal-autosave";
 import { RowMenu } from "./row-menu";
 
 type EditableGoal = {
@@ -18,33 +19,87 @@ type EditableGoal = {
   masteryInstructors: number;
 };
 
-const NOT_SAVED =
-  "Some changes to this goal could not be saved yet (see the goal's editor). Nothing you typed was lost; fix them and try again.";
+/** The fields of each editor (they share one queue per goal; each shows only its own status). */
+const DIALOG_FIELDS = [
+  "objective",
+  "rationale",
+  "masteryAccuracyPct",
+  "masteryConsecutiveSessions",
+  "masteryInstructors",
+] as const;
+const RECORD_FIELDS = [
+  "introducedAt",
+  "projectedMasteryDate",
+  "progressStatus",
+  "barriers",
+  "settings",
+] as const;
+const FLAT_FIELDS = ["flatExplanation"] as const;
 
-/** "Saving…", "Saved", or why not, next to an autosaving editor. */
-export function SaveStatus({ state, testId }: { state: AutosaveState; testId?: string }) {
-  const text =
-    state.status === "saving" || state.status === "pending"
-      ? "Saving…"
-      : state.status === "saved"
-        ? state.returnedToDraft
-          ? "Saved. Changing an approved goal returns it to draft; approve it again."
-          : "Saved"
-        : state.status === "conflict" || (state.status === "error" && !state.failedFields.length)
-          ? state.error
-          : state.status === "error"
-            ? "Not saved"
-            : null;
-  const bad = state.status === "conflict" || state.status === "error";
+/**
+ * "Saving…", "Saved", or why not, next to an autosaving editor: for its own fields, and naming a
+ * field shown elsewhere (with where to fix it) that is not saved.
+ */
+export function SaveStatus({
+  state,
+  fields,
+  testId,
+}: {
+  state: AutosaveState;
+  fields: readonly string[];
+  testId?: string;
+}) {
+  const { text, bad } = saveStatusText(state, fields);
   return (
     <span role="status" aria-live="polite" className={bad ? "error" : "muted"} data-testid={testId}>
-      {text ?? ""}
+      {text}
     </span>
   );
 }
 
-/** The problem with one field: a value that would be refused, or the server's reason a save failed. */
-function FieldProblem({ field, state }: { field: string; state: AutosaveState }) {
+const shownValue = (v: unknown) =>
+  v === null || v === undefined || v === ""
+    ? "(empty)"
+    : Array.isArray(v)
+      ? v.join(", ") || "(empty)"
+      : String(v);
+
+/**
+ * The problem with one field: a value that would be refused, the server's reason a save failed,
+ * or a change made somewhere else while it was edited here (with the choice of which to keep).
+ */
+function FieldProblem({
+  field,
+  state,
+  resolve,
+}: {
+  field: string;
+  state: AutosaveState;
+  resolve?: (field: string, keep: "mine" | "theirs") => void;
+}) {
+  if (Object.hasOwn(state.conflicts, field))
+    return (
+      <div className="alert warn" role="alert" data-testid={`conflict-${field}`}>
+        <div>
+          This was changed somewhere else while you were editing it. Your text is kept above. The other
+          version:
+        </div>
+        <blockquote style={{ margin: "6px 0", whiteSpace: "pre-wrap" }}>
+          {shownValue(state.conflicts[field])}
+        </blockquote>
+        {state.problems[field] && <div className="error">{state.problems[field]}</div>}
+        {resolve && (
+          <div className="row" style={{ marginTop: 6 }}>
+            <button type="button" onClick={() => resolve(field, "mine")}>
+              Keep mine
+            </button>
+            <button type="button" className="secondary" onClick={() => resolve(field, "theirs")}>
+              Use the other version
+            </button>
+          </div>
+        )}
+      </div>
+    );
   const problem = state.problems[field] ?? (state.failedFields.includes(field) ? state.error : null);
   if (!problem) return null;
   return (
@@ -64,8 +119,9 @@ const parsedNumber = (s: string) => (s.trim() === "" ? Number.NaN : Number(s));
  */
 export function GoalEditor({ goal, onDone }: { goal: EditableGoal; onDone: () => void }) {
   const { id, updatedAt, ...fields } = goal;
-  const { values: g, set, state, flush } = useGoalAutosave(id, updatedAt, fields);
+  const { values: g, set, state, flush, resolve } = useGoalAutosave(id, updatedAt, fields);
   const blur = () => void flush();
+  const [stuck, setStuck] = useState(false);
   return (
     <div>
       <label htmlFor={`objective-${id}`}>
@@ -77,7 +133,7 @@ export function GoalEditor({ goal, onDone }: { goal: EditableGoal; onDone: () =>
         onChange={(e) => set("objective", e.target.value)}
         onBlur={blur}
       />
-      <FieldProblem field="objective" state={state} />
+      <FieldProblem field="objective" state={state} resolve={resolve} />
       <label htmlFor={`rationale-${id}`}>Medical necessity rationale</label>
       <textarea
         id={`rationale-${id}`}
@@ -85,7 +141,7 @@ export function GoalEditor({ goal, onDone }: { goal: EditableGoal; onDone: () =>
         onChange={(e) => set("rationale", e.target.value)}
         onBlur={blur}
       />
-      <FieldProblem field="rationale" state={state} />
+      <FieldProblem field="rationale" state={state} resolve={resolve} />
       <div className="row">
         <label htmlFor={`mastery-pct-${id}`}>Mastery %</label>
         <input
@@ -119,9 +175,9 @@ export function GoalEditor({ goal, onDone }: { goal: EditableGoal; onDone: () =>
           style={{ width: 80 }}
         />
       </div>
-      <FieldProblem field="masteryAccuracyPct" state={state} />
-      <FieldProblem field="masteryConsecutiveSessions" state={state} />
-      <FieldProblem field="masteryInstructors" state={state} />
+      <FieldProblem field="masteryAccuracyPct" state={state} resolve={resolve} />
+      <FieldProblem field="masteryConsecutiveSessions" state={state} resolve={resolve} />
+      <FieldProblem field="masteryInstructors" state={state} resolve={resolve} />
       <p className="muted" style={{ marginBottom: 0 }}>
         Changes save as you type. Changing an approved goal returns it to draft for approval.
       </p>
@@ -129,14 +185,21 @@ export function GoalEditor({ goal, onDone }: { goal: EditableGoal; onDone: () =>
         <button
           className="secondary"
           onClick={async () => {
-            await flush();
-            onDone();
+            // Something typed here is not saved (held back, failed, or in conflict): stay open.
+            if (await flush()) return onDone();
+            setStuck(true);
           }}
         >
           Done
         </button>
-        <SaveStatus state={state} testId={`goal-save-status-${id}`} />
+        <SaveStatus state={state} fields={DIALOG_FIELDS} testId={`goal-save-status-${id}`} />
       </div>
+      {stuck && saveStatusText(state, DIALOG_FIELDS).bad && (
+        <p className="error" role="alert" style={{ marginBottom: 0 }}>
+          Not everything here is saved yet. Fix the highlighted field (or choose a version) before closing;
+          closing now keeps your text unsaved.
+        </p>
+      )}
     </div>
   );
 }
@@ -161,9 +224,10 @@ function DiscontinueForm({ goalId, asOf, onDone }: { goalId: string; asOf: strin
         setBusy(true);
         setError(null);
         // Whatever was typed into the goal is saved first.
-        if (!(await flushGoal(goalId))) {
+        const notSaved = await flushGoal(goalId);
+        if (notSaved) {
           setBusy(false);
-          return setError(NOT_SAVED);
+          return setError(notSaved);
         }
         const r = await send(`/api/goals/${goalId}/discontinue`, "POST", { reason, date });
         setBusy(false);
@@ -233,9 +297,10 @@ function ResumeConfirm({ goalId, onDone }: { goalId: string; onDone: () => void 
           onClick={async () => {
             setBusy(true);
             setError(null);
-            if (!(await flushGoal(goalId))) {
+            const notSaved = await flushGoal(goalId);
+            if (notSaved) {
               setBusy(false);
-              return setError(NOT_SAVED);
+              return setError(notSaved);
             }
             const r = await send(`/api/goals/${goalId}/resume`, "POST", {});
             setBusy(false);
@@ -348,10 +413,13 @@ export function GoalActionButton({
   url,
   testId,
   secondary,
+  expected,
   children,
 }: {
   goalId: string;
   url: string;
+  /** For Approve: what the page shows of the goal (its wording, mastery criteria, and dates). */
+  expected?: Record<string, unknown>;
   testId?: string;
   secondary?: boolean;
   children: ReactNode;
@@ -368,13 +436,20 @@ export function GoalActionButton({
         onClick={async () => {
           setBusy(true);
           setError(null);
-          if (!(await flushGoal(goalId))) {
+          const notSaved = await flushGoal(goalId);
+          if (notSaved) {
             setBusy(false);
-            return setError(NOT_SAVED);
+            return setError(notSaved);
           }
-          const r = await send(url, "POST", {});
+          // Approve names what the approver was shown; a goal changed since is refused.
+          const r = await send(url, "POST", expected ? { expected: goalShownValues(goalId, expected) } : {});
           setBusy(false);
-          if (!r.ok) return setError(String(r.data.error ?? "Request failed"));
+          if (!r.ok) {
+            setError(String(r.data.error ?? "Request failed"));
+            // The goal changed since the page showed it: show the latest.
+            if (r.status === 409) router.refresh();
+            return;
+          }
           goalVersionChanged(goalId, r.data.updatedAt);
           router.refresh();
         }}
@@ -400,7 +475,9 @@ export function FlatExplanation({
   updatedAt: string;
   initial: string | null;
 }) {
-  const { values, set, state, flush } = useGoalAutosave(goalId, updatedAt, { flatExplanation: initial });
+  const { values, set, state, flush, resolve } = useGoalAutosave(goalId, updatedAt, {
+    flatExplanation: initial,
+  });
   return (
     <div>
       <label htmlFor={`flat-explanation-${goalId}`}>
@@ -416,8 +493,8 @@ export function FlatExplanation({
         }
         onBlur={() => void flush()}
       />
-      <FieldProblem field="flatExplanation" state={state} />
-      <SaveStatus state={state} testId={`flat-save-status-${goalId}`} />
+      <FieldProblem field="flatExplanation" state={state} resolve={resolve} />
+      <SaveStatus state={state} fields={FLAT_FIELDS} testId={`flat-save-status-${goalId}`} />
     </div>
   );
 }
@@ -457,7 +534,7 @@ export function GoalRecordEditor({
   canWrite: boolean;
 }) {
   const { id, ordinal, updatedAt, ...fields } = goal;
-  const { values: g, set, state, flush, revision } = useGoalAutosave(id, updatedAt, fields);
+  const { values: g, set, state, flush, revision, resolve } = useGoalAutosave(id, updatedAt, fields);
   // Raw text while typing, so commas and spaces survive; saved as a list.
   const [settingsText, setSettingsText] = useState(g.settings.join(", "));
   useEffect(() => {
@@ -512,9 +589,9 @@ export function GoalRecordEditor({
           onBlur={blur}
         />
       </div>
-      <FieldProblem field="progressStatus" state={state} />
-      <FieldProblem field="introducedAt" state={state} />
-      <FieldProblem field="projectedMasteryDate" state={state} />
+      <FieldProblem field="progressStatus" state={state} resolve={resolve} />
+      <FieldProblem field="introducedAt" state={state} resolve={resolve} />
+      <FieldProblem field="projectedMasteryDate" state={state} resolve={resolve} />
       <label htmlFor={`settings-${id}`}>Settings (comma separated)</label>
       <input
         id={`settings-${id}`}
@@ -527,7 +604,7 @@ export function GoalRecordEditor({
         }}
         onBlur={blur}
       />
-      <FieldProblem field="settings" state={state} />
+      <FieldProblem field="settings" state={state} resolve={resolve} />
       <label htmlFor={`barriers-${id}`}>Barriers to progress and actions taken</label>
       <textarea
         id={`barriers-${id}`}
@@ -538,8 +615,10 @@ export function GoalRecordEditor({
         onChange={(e) => set("barriers", e.target.value)}
         onBlur={blur}
       />
-      <FieldProblem field="barriers" state={state} />
-      {canWrite && <SaveStatus state={state} testId={`goal-record-status-${ordinal}`} />}
+      <FieldProblem field="barriers" state={state} resolve={resolve} />
+      {canWrite && (
+        <SaveStatus state={state} fields={RECORD_FIELDS} testId={`goal-record-status-${ordinal}`} />
+      )}
     </div>
   );
 }

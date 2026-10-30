@@ -1,7 +1,8 @@
 /**
  * What readers call a goal. Goals are not numbered in anything a reader sees (the BCBA's decision):
  * a goal is named by its domain ("Manding (Requesting) goal"), and when two goals share a domain,
- * by its category or, failing that, the first words of its objective. Never by a number.
+ * by its category or, failing that, the first words of its objective; goals that still read the
+ * same are marked "(duplicate A)", "(duplicate B)". Every goal's name is unique. Never a number.
  *
  * The internal value tokens ({{goal.3.baseline_pct}}) still use the goal's position; readers never
  * see them.
@@ -37,6 +38,13 @@ export function objectiveWords(objective: string): string[] {
     .filter((w, i) => !(i === 0 && /^will$/i.test(w)));
 }
 
+/** A, B, …, Z, AA, AB, …: tells duplicates apart without a number. */
+function letter(i: number): string {
+  let s = "";
+  for (let n = i + 1; n > 0; n = Math.floor((n - 1) / 26)) s = String.fromCharCode(65 + ((n - 1) % 26)) + s;
+  return s;
+}
+
 const MIN_WORDS = 5;
 const MAX_WORDS = 12;
 
@@ -69,10 +77,24 @@ export function goalNames(goals: readonly NameableGoal[]): Map<string, string> {
       let n = MIN_WORDS;
       const phrase = (w: string[], k: number) => w.slice(0, k).join(" ").toLowerCase();
       while (n < MAX_WORDS && new Set(words.map((w) => phrase(w, n))).size < list.length) n++;
-      list.forEach((g, i) => {
+      const named = list.map((g, i) => {
         const w = words[i]!;
         const text = w.slice(0, n).join(" ");
-        names.set(g.id, text ? `${base(g)}: “${text}${w.length > n ? "…" : ""}”` : base(g));
+        return text ? `${base(g)}: “${text}${w.length > n ? "…" : ""}”` : base(g);
+      });
+      // Goals whose wording still reads the same (two added from one template, or differing only
+      // in figures or bracketed fields) are marked as duplicates with a letter, in the order given:
+      // never a number, so nobody reads it as a goal number.
+      const seen = new Map<string, number>();
+      const total = new Map<string, number>();
+      for (const name of named) total.set(name.toLowerCase(), (total.get(name.toLowerCase()) ?? 0) + 1);
+      list.forEach((g, i) => {
+        const name = named[i]!;
+        const key = name.toLowerCase();
+        if (total.get(key)! < 2) return names.set(g.id, name);
+        const k = seen.get(key) ?? 0;
+        seen.set(key, k + 1);
+        names.set(g.id, `${name} (duplicate ${letter(k)})`);
       });
     }
   }

@@ -49,6 +49,8 @@ export class HttpError extends Error {
     message: string,
     /** Plain sentences, one per problem, shown under the message (never PHI). */
     public issues?: string[],
+    /** More for the client (e.g. a conflict's current values). Sent in the response, never logged. */
+    public data?: Record<string, unknown>,
   ) {
     super(message);
   }

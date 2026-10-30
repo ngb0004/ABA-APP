@@ -1,6 +1,12 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { withOrg } from "@/lib/db";
-import { GOAL_CHANGED_ELSEWHERE, GoalPatchSchema } from "@/lib/goals/goal-patch";
+import {
+  ApproveGoalSchema,
+  GOAL_CHANGED_BEFORE_APPROVAL,
+  GOAL_CHANGED_ELSEWHERE,
+  GoalPatchSchema,
+} from "@/lib/goals/goal-patch";
+import { HttpError } from "@/lib/log";
 import { addGoalFromTemplate } from "@/lib/services/misc";
 import { approveGoal, discontinueGoal, resumeGoal, updateGoal } from "@/lib/services/plans";
 import { createClient } from "@/lib/services/records";
@@ -38,7 +44,7 @@ const read = (id: string) => withOrg(bcba, (tx) => tx.goal.findUniqueOrThrow({ w
 const updates = (id: string) =>
   withOrg(bcba, (tx) => tx.auditEvent.findMany({ where: { action: "goal:update", entityId: id } }));
 
-describe("goal autosave: partial saves with a version check", () => {
+describe("goal autosave: partial saves checked field by field", () => {
   it("saves only the fields sent, returns the new version, and audits field names only", async () => {
     const g = await newGoal("Autosavepartial");
     const before = await read(g.id);
@@ -46,7 +52,7 @@ describe("goal autosave: partial saves with a version check", () => {
       bcba,
       g.id,
       { barriers: "Robin's schedule changed." },
-      { expectedUpdatedAt: before.updatedAt.toISOString() },
+      { base: { barriers: before.barriers } },
     );
     const after = await read(g.id);
     expect(after.barriers).toBe("Robin's schedule changed.");
@@ -54,7 +60,6 @@ describe("goal autosave: partial saves with a version check", () => {
     expect(after.rationale).toBe(before.rationale);
     expect(after.masteryAccuracyPct).toBe(before.masteryAccuracyPct);
     expect(r.updatedAt).toBe(after.updatedAt.toISOString());
-    expect(after.updatedAt.getTime()).toBeGreaterThanOrEqual(before.updatedAt.getTime());
     expect(r.updatedAt).not.toBe(before.updatedAt.toISOString());
     const rows = await updates(g.id);
     expect(rows).toHaveLength(1);
@@ -62,38 +67,99 @@ describe("goal autosave: partial saves with a version check", () => {
     expect(JSON.stringify(rows[0]!.meta)).not.toMatch(/Robin|schedule/);
   });
 
-  it("refuses (409) a save based on an older version and changes nothing", async () => {
+  it("refuses (409) a field someone else changed meanwhile, with the current values, and saves nothing", async () => {
     const g = await newGoal("Autosavestale");
-    const v0 = (await read(g.id)).updatedAt.toISOString();
-    const r1 = await updateGoal(bcba, g.id, { barriers: "First tab." }, { expectedUpdatedAt: v0 });
-    await expect(
-      updateGoal(bcba, g.id, { barriers: "Second tab." }, { expectedUpdatedAt: v0 }),
-    ).rejects.toMatchObject({ status: 409, message: GOAL_CHANGED_ELSEWHERE });
-    expect((await read(g.id)).barriers).toBe("First tab.");
-    // With the version from the last save, the next one goes through.
-    const r2 = await updateGoal(bcba, g.id, { barriers: "Second tab." }, { expectedUpdatedAt: r1.updatedAt });
-    expect((await read(g.id)).barriers).toBe("Second tab.");
-    expect(r2.updatedAt > r1.updatedAt).toBe(true);
-    // Discontinue and Resume change the version too, and say what it is now.
-    const d = await discontinueGoal(bcba, g.id, { reason: "Paused.", date: "2026-10-20" }, AS_OF);
-    await expect(
-      updateGoal(bcba, g.id, { barriers: "Stale." }, { expectedUpdatedAt: r2.updatedAt }),
-    ).rejects.toMatchObject({ status: 409 });
-    const u = await updateGoal(
+    await updateGoal(bcba, g.id, { barriers: "First tab." }, { base: { barriers: "" } });
+    const err = await updateGoal(
       bcba,
       g.id,
-      { barriers: "After discontinuing." },
-      { expectedUpdatedAt: d.updatedAt },
+      { barriers: "Second tab.", rationale: "Also second tab." },
+      { base: { barriers: "", rationale: g.rationale } },
+    ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(HttpError);
+    expect(err).toMatchObject({
+      status: 409,
+      message: GOAL_CHANGED_ELSEWHERE,
+      data: {
+        conflict: { fields: ["barriers"], current: { barriers: "First tab.", rationale: g.rationale } },
+      },
+    });
+    const after = await read(g.id);
+    expect(after.barriers).toBe("First tab.");
+    expect(after.rationale).toBe(g.rationale);
+    // Based on what it holds now, the save goes through.
+    await updateGoal(bcba, g.id, { barriers: "Second tab." }, { base: { barriers: "First tab." } });
+    expect((await read(g.id)).barriers).toBe("Second tab.");
+    // A field already holding the new value is not a conflict.
+    await updateGoal(bcba, g.id, { barriers: "Second tab." }, { base: { barriers: "old" } });
+    // A save still in flight when the page was left: its value is accepted as the base too.
+    await updateGoal(
+      bcba,
+      g.id,
+      { barriers: "Typed after." },
+      { base: { barriers: "First tab." }, baseAlt: { barriers: "Second tab." } },
     );
+    expect((await read(g.id)).barriers).toBe("Typed after.");
+  });
+
+  it("never treats the goal's bookkeeping (discontinue, approve, lock, position) as a conflict", async () => {
+    const g = await newGoal("Autosavebookkeeping");
+    // An editor opened before all of these, still holding the original barriers.
+    const base = { barriers: "" };
+    await discontinueGoal(bcba, g.id, { reason: "Paused.", date: "2026-10-20" }, AS_OF);
+    await withOrg(bcba, (tx) => tx.goal.update({ where: { id: g.id }, data: { ordinal: { increment: 0 } } }));
+    await updateGoal(bcba, g.id, { barriers: "After discontinuing." }, { base });
     const res = await resumeGoal(bcba, g.id);
-    expect(res.updatedAt > u.updatedAt).toBe(true);
+    expect(typeof res.updatedAt).toBe("string");
+    await updateGoal(bcba, g.id, { settings: ["home"] }, { base: { settings: [] } });
     const after = await read(g.id);
     // What was typed survived both.
     expect(after.barriers).toBe("After discontinuing.");
     expect(after.progressStatus).toBe("in_progress");
-    await expect(
-      updateGoal(bcba, g.id, { barriers: "x" }, { expectedUpdatedAt: "not a date" }),
-    ).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("approves only what the approver was shown", async () => {
+    const g = await newGoal("Autosaveapprove");
+    await withOrg(bcba, (tx) =>
+      tx.goal.update({
+        where: { id: g.id },
+        data: {
+          objective: "[Client] will mand for items.",
+          rationale: "Requesting matters.",
+          sd: "",
+          targetBehavior: "",
+        },
+      }),
+    );
+    const cur = await read(g.id);
+    const shown = {
+      objective: cur.objective,
+      rationale: cur.rationale,
+      masteryAccuracyPct: cur.masteryAccuracyPct,
+      masteryConsecutiveSessions: cur.masteryConsecutiveSessions,
+      masteryInstructors: cur.masteryInstructors,
+      introducedAt: cur.introducedAt ? cur.introducedAt.toISOString().slice(0, 10) : null,
+      projectedMasteryDate: cur.projectedMasteryDate
+        ? cur.projectedMasteryDate.toISOString().slice(0, 10)
+        : null,
+    };
+    // Someone else's half-typed rationale autosaves after the approver's page loaded.
+    await updateGoal(
+      bcba,
+      g.id,
+      { rationale: "Requesting matt" },
+      { base: { rationale: "Requesting matters." } },
+    );
+    await expect(approveGoal(bcba, g.id, { expected: shown })).rejects.toMatchObject({
+      status: 409,
+      message: GOAL_CHANGED_BEFORE_APPROVAL,
+    });
+    expect((await read(g.id)).status).not.toBe("approved");
+    // Shown the latest, it is approved.
+    const a = await approveGoal(bcba, g.id, { expected: { ...shown, rationale: "Requesting matt" } });
+    expect(typeof a.updatedAt).toBe("string");
+    expect((await read(g.id)).status).toBe("approved");
+    expect(ApproveGoalSchema.safeParse({}).success).toBe(false);
   });
 
   it("sends an approved goal back to draft only when what it says really changes", async () => {
@@ -122,21 +188,23 @@ describe("goal autosave: partial saves with a version check", () => {
     const after = await read(g.id);
     expect(after.status).toBe("draft");
     expect(after.approvedAt).toBeNull();
-    expect((await updates(g.id)).at(-1)!.meta).toMatchObject({
-      fields: ["objective"],
-      returnedToDraft: true,
-    });
+    // Audit rows are not ordered within a millisecond: exactly one save returned the goal to draft.
+    const drafted = (await updates(g.id)).filter(
+      (u) => (u.meta as { returnedToDraft?: boolean }).returnedToDraft,
+    );
+    expect(drafted.map((u) => u.meta)).toEqual([{ fields: ["objective"], returnedToDraft: true }]);
   });
 
   it("checks values the same way as the editor before saving", () => {
-    expect(GoalPatchSchema.safeParse({ objective: "   " }).success).toBe(false);
-    expect(GoalPatchSchema.safeParse({ masteryAccuracyPct: 101 }).success).toBe(false);
-    expect(GoalPatchSchema.safeParse({ introducedAt: "2026-02-30" }).success).toBe(false);
-    expect(GoalPatchSchema.safeParse({ settings: ["x".repeat(41)] }).success).toBe(false);
-    expect(GoalPatchSchema.safeParse({ expectedUpdatedAt: "yesterday" }).success).toBe(false);
-    expect(
-      GoalPatchSchema.safeParse({ barriers: "", expectedUpdatedAt: "2026-10-30T12:00:00.000Z" }).success,
-    ).toBe(true);
-    expect(GoalPatchSchema.parse({ rationale: "Because." })).toEqual({ rationale: "Because." });
+    const base = { objective: "x", masteryAccuracyPct: 80, introducedAt: null, settings: [], rationale: "y" };
+    expect(GoalPatchSchema.safeParse({ objective: "   ", base }).success).toBe(false);
+    expect(GoalPatchSchema.safeParse({ masteryAccuracyPct: 101, base }).success).toBe(false);
+    expect(GoalPatchSchema.safeParse({ introducedAt: "2026-02-30", base }).success).toBe(false);
+    expect(GoalPatchSchema.safeParse({ settings: ["x".repeat(41)], base }).success).toBe(false);
+    // Every field sent names what it was based on; unknown fields are refused.
+    expect(GoalPatchSchema.safeParse({ barriers: "" }).success).toBe(false);
+    expect(GoalPatchSchema.safeParse({ barriers: "", base: { rationale: "y" } }).success).toBe(false);
+    expect(GoalPatchSchema.safeParse({ barriers: "", base: { barriers: "", nope: 1 } }).success).toBe(false);
+    expect(GoalPatchSchema.parse({ rationale: "Because.", base })).toEqual({ rationale: "Because.", base });
   });
 });

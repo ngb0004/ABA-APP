@@ -486,3 +486,42 @@ test("a goal saves as it is typed, and Discontinue keeps what was just typed", a
   await page.reload();
   await expect(page.getByTestId("goal-barriers-1")).toHaveValue("Typed just before resuming.");
 });
+
+test("a change made in another tab never wipes what is typed: the BCBA chooses which version to keep", async ({
+  page,
+  context,
+}) => {
+  await login(page, "bcba@sample-practice.test");
+  const client = await api(page, "POST", "/api/clients", {
+    firstName: "Golf",
+    lastName: "Testchild",
+    dob: "2021-05-06",
+    serviceAddress: { line1: "7 Fiction Way", city: "Example City", state: "GA", zip: "30000" },
+    guardians: [{ name: "Lee Testchild", relationship: "mother", legalCustody: true, canSign: true }],
+    fictional: true,
+  });
+  await page.goto(`/clients/${client.id}/goals`);
+  await page.getByText(/Browse 18 domains/).click();
+  await page.getByRole("button", { name: "Add", exact: true }).nth(0).click();
+  await expect(page.getByTestId("goal-barriers-1")).toBeVisible();
+  // A second tab, opened now, saves its barriers first.
+  const other = await context.newPage();
+  await other.goto(`/clients/${client.id}/goals`);
+  await other.getByTestId("goal-barriers-1").fill("From the other tab.");
+  await expect(other.getByTestId("goal-record-status-1")).toHaveText("Saved");
+  // This tab still has the old copy; what is typed here is kept, beside the other version.
+  await page.getByTestId("goal-barriers-1").fill("Typed in this tab.");
+  const conflict = page.getByTestId("conflict-barriers");
+  await expect(conflict).toContainText("From the other tab.");
+  await expect(page.getByTestId("goal-barriers-1")).toHaveValue("Typed in this tab.");
+  await expect(page.getByTestId("goal-record-status-1")).toContainText("choose which version to keep");
+  // A change to another field of the goal is not a conflict.
+  await page.getByLabel("Settings (comma separated)").fill("home, clinic");
+  await conflict.getByRole("button", { name: "Keep mine" }).click();
+  await expect(conflict).toHaveCount(0);
+  await expect(page.getByTestId("goal-record-status-1")).toHaveText("Saved");
+  await page.reload();
+  await expect(page.getByTestId("goal-barriers-1")).toHaveValue("Typed in this tab.");
+  await expect(page.getByLabel("Settings (comma separated)")).toHaveValue("home, clinic");
+  await other.close();
+});

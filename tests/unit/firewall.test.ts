@@ -66,6 +66,16 @@ describe("numeric firewall: AI output", () => {
     expect(kinds("Progress on Goal One was steady.")).toContain("number_word");
     expect(kinds("Progress on goal #A was steady.")).toContain("number_word");
     expect(kinds("Progress on goal number A was steady.")).toContain("number_word");
+    // Roman numerals, and "No" with or without a period.
+    expect(kinds("Progress on Goal II was steady.")).toContain("number_word");
+    expect(kinds("Progress on Goal IV was steady.")).toContain("number_word");
+    expect(kinds("Progress on goals IV and V was steady.")).toContain("number_word");
+    expect(kinds("Progress on goal No II was steady.")).toContain("number_word");
+    expect(kinds("Progress on goal No. A was steady.")).toContain("number_word");
+    expect(validateAiText("Goal II is met.", ctx).ok).toBe(false);
+    // Ordinary words after "goal" pass.
+    expect(validateAiText("The goal is met; the goal no longer applies.", ctx).ok).toBe(true);
+    expect(validateAiText("The goal involves civil, vivid play in each goal included.", ctx).ok).toBe(true);
     // Goals named by their skill pass.
     expect(
       validateAiText("Progress on the manding goal was steady; one goal was discontinued.", ctx).ok,

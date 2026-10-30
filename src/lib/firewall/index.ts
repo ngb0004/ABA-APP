@@ -114,11 +114,18 @@ const NUMBER_WORDS = [
   "fifth",
 ];
 const NUMBER_WORD_RE = new RegExp(`\\b(${NUMBER_WORDS.join("|")})\\b`, "i");
+/** A Roman numeral up to XXXIX ("II", "iv", "XII"). */
+const ROMAN = "(?:x{1,3}(?:ix|iv|v?i{0,3})|ix|iv|v?i{1,3}|v)";
 /**
- * A goal referred to by number. Goals are not numbered in the plan, and "one" is not a number word
- * above, so "Goal One", "goal #", and "goal number" are caught here (digits already fail).
+ * A goal (or goals) referred to by number. Goals are not numbered in the plan, and "one" is not a
+ * number word above, so "Goal One", "goal #", "goal No.", "goal number", and Roman numerals
+ * ("Goal II", "goals IV and V", "goal No II") are caught here (digits already fail). "No" without
+ * a period counts only before a numeral, so "the goal no longer applies" passes.
  */
-const GOAL_BY_NUMBER_RE = /\bgoal\s*(?:#|no\.|number\b|one\b)/i;
+const GOAL_BY_NUMBER_RE = new RegExp(
+  `\\bgoals?\\s*(?:#|no\\.|number\\b|(?:no\\s+)?(?:one|${ROMAN})\\b)`,
+  "i",
+);
 // "first"/"second" also appear in ordinary prose ("first, ..."), but an ordinal can
 // state a rank or date, so they are rejected; the prompt tells the model to avoid them.
 

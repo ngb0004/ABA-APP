@@ -82,7 +82,20 @@ export function RowMenu(props: {
   const action = typeof dialog === "number" ? props.actions?.[dialog] : undefined;
   const form = dialog === "edit" ? props.edit : action?.form;
   const close = () => setDialog(null);
-  const title = action ? (action.title ?? `${action.label}: ${props.name}`) : `Edit ${props.name}`;
+  const titleFor = (d: "edit" | number) => {
+    const a = typeof d === "number" ? props.actions?.[d] : undefined;
+    return a ? (a.title ?? `${a.label}: ${props.name}`) : `Edit ${props.name}`;
+  };
+  /**
+   * The dialog's title, fixed when it opens: a name made from text being edited (a goal's name
+   * comes from its objective, which autosaves) must not change under the person typing.
+   */
+  const [openTitle, setOpenTitle] = useState("");
+  const openDialog = (d: "edit" | number) => {
+    setOpenTitle(titleFor(d));
+    setDialog(d);
+  };
+  const title = openTitle || (dialog !== null ? titleFor(dialog) : "");
 
   async function request(r: { url: string; method?: "POST" | "DELETE"; confirm?: string }) {
     setOpen(false);
@@ -135,7 +148,7 @@ export function RowMenu(props: {
               role="menuitem"
               onClick={() => {
                 setOpen(false);
-                setDialog("edit");
+                openDialog("edit");
               }}
             >
               Edit
@@ -150,7 +163,7 @@ export function RowMenu(props: {
                 if (a.request) return void request(a.request);
                 setOpen(false);
                 if (a.href) return router.push(a.href);
-                setDialog(i);
+                openDialog(i);
               }}
             >
               {a.label}

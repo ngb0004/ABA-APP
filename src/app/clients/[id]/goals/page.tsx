@@ -269,6 +269,16 @@ export default async function GoalsPage({ params }: { params: Promise<{ id: stri
                 goalId={g.id}
                 url={`/api/goals/${g.id}/approve`}
                 testId={`approve-goal-${g.ordinal}`}
+                // What this page shows; the server refuses if the goal now says anything else.
+                expected={{
+                  objective: g.objective,
+                  rationale: g.rationale,
+                  masteryAccuracyPct: g.masteryAccuracyPct,
+                  masteryConsecutiveSessions: g.masteryConsecutiveSessions,
+                  masteryInstructors: g.masteryInstructors,
+                  introducedAt: g.introducedAt ? toDay(g.introducedAt) : null,
+                  projectedMasteryDate: g.projectedMasteryDate ? toDay(g.projectedMasteryDate) : null,
+                }}
               >
                 Approve goal
               </GoalActionButton>
