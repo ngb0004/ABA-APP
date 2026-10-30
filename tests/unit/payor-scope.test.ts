@@ -3,7 +3,7 @@ import { loadPayorSeed, resolvePayorRules, ruleFingerprint } from "@/lib/payors/
 import { effectivePlanState, evaluateRule, evaluateRules, scopeFindings } from "@/lib/payors/evaluate";
 import { SeedSchema, type Rule } from "@/lib/payors/types";
 import type { EvalContext } from "@/lib/payors/context";
-import { ALL_STATES, groupByState } from "@/lib/payors/groups";
+import { ALL_STATES, groupByState, homeGroups } from "@/lib/payors/groups";
 import { client, evalContextFor, fullPlan } from "../helpers/synthetic-eval";
 
 const seed = loadPayorSeed();
@@ -186,5 +186,17 @@ describe("payor groups by state", () => {
     expect(groups.map((g) => g.key)).toEqual(["GA", "SC", ALL_STATES, "AL", "TX"]);
     expect(groups.find((g) => g.key === "SC")!.payors).toEqual([]);
     expect(hiddenStates).toEqual([]);
+  });
+  it("a payor in several groups is shown in full in its first group only", () => {
+    const { groups } = groupByState(ps, ["GA"], true);
+    const home = homeGroups(groups);
+    expect(ps.map((p) => [p.key, home.get(p)!.key])).toEqual([
+      ["ga_medicaid", "GA"],
+      ["tx_medicaid", "TX"],
+      ["two_state", "GA"],
+      ["tricare_east", ALL_STATES],
+    ]);
+    // Alabama lists it, and points back to Georgia.
+    expect(groups.find((g) => g.key === "AL")!.payors.map((p) => home.get(p)!.key)).toEqual(["GA"]);
   });
 });

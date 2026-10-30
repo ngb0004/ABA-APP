@@ -1,6 +1,6 @@
 /** Display helpers for the payor rules screens. Pure functions, so they are unit tested. */
 import type { RequirementStatus } from "@/lib/payors/categories";
-import type { RuleType } from "@/lib/payors/types";
+import { PLAN_TYPE_LABELS, type PlanType, type RuleType } from "@/lib/payors/types";
 
 /** Revoke only on OK. window.prompt returns null on Cancel, which must not revoke. */
 export function revokeNoteFromPrompt(
@@ -37,6 +37,12 @@ export function paramEntries(params: Record<string, unknown> | null | undefined)
 }
 
 /** "1 rule", "2 rules". */
+/** The plan line under an insurance on Records: says what it is, even when nothing is recorded. */
+export function planTypeLine(planType: string, planState: string | null | undefined): string {
+  const t = PLAN_TYPE_LABELS[planType as PlanType] ?? planType.replace(/_/g, " ");
+  return `Plan type: ${t}${planState ? ` · issued in ${planState}` : ""}`;
+}
+
 export function plural(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`;
 }

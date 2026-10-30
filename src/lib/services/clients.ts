@@ -15,7 +15,7 @@ import { requirePermission } from "../permissions";
 import { redactRestricted } from "../sensitivity";
 import { supervisionByMonth } from "../supervision";
 import { computeUtilization, type UnitBasis } from "../utilization";
-import { evaluateClientRules, loadRules } from "./payors";
+import { evaluateClientRules, loadApplicableRules } from "./payors";
 
 export function orgSettings(
   settings: unknown,
@@ -30,10 +30,8 @@ export function orgSettings(
     reassessmentLeadDays: s.reassessmentLeadDays ?? DEFAULT_CALENDAR_SETTINGS.reassessmentLeadDays,
     alertDays: s.alertDays ?? DEFAULT_CALENDAR_SETTINGS.alertDays,
     offices,
-    // Not chosen yet: the states the practice has offices in.
-    statesServed: s.statesServed?.length
-      ? s.statesServed
-      : [...new Set(offices.map((o) => o.state.toUpperCase()))].sort(),
+    // Never chosen: the states the practice has offices in. A saved empty list stays empty.
+    statesServed: s.statesServed ?? [...new Set(offices.map((o) => o.state.toUpperCase()))].sort(),
   };
 }
 
@@ -164,7 +162,7 @@ export async function clientDetail(ctx: OrgCtx, clientId: string, asOf: Day) {
       });
 
     const primaryPayor = client.payors.find((p) => p.priority === "primary");
-    const rules = primaryPayor ? await loadRules(tx, primaryPayor.payorId) : [];
+    const rules = primaryPayor ? await loadApplicableRules(tx, primaryPayor) : [];
     const events = auth
       ? caseloadCalendar(
           [
@@ -225,7 +223,7 @@ export async function caseload(ctx: OrgCtx, asOf: Day, days = 60) {
         startDate: toDay(a.startDate),
         endDate: toDay(a.endDate),
         kind: a.kind as "initial" | "reauth",
-        rules: p ? await loadRules(tx, p.payorId) : [],
+        rules: p ? await loadApplicableRules(tx, p) : [],
       });
     }
     const names = new Map(clients.map((c) => [c.id, displayName(c)]));

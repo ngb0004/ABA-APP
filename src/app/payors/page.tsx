@@ -11,7 +11,7 @@ import { withOrg } from "@/lib/db";
 import { toDay } from "@/lib/dates";
 import { can, requirePermission } from "@/lib/permissions";
 import type { RevisionRow } from "@/lib/rules-watch/parsers";
-import { ALL_STATES, groupByState } from "@/lib/payors/groups";
+import { ALL_STATES, groupByState, homeGroups } from "@/lib/payors/groups";
 import { LINE_OF_BUSINESS_LABELS, type LineOfBusiness } from "@/lib/payors/types";
 import { loadRules } from "@/lib/services/payors";
 import { listOpenReports } from "@/lib/services/rule-reports";
@@ -68,6 +68,8 @@ export default async function PayorsPage({
   // State -> insurer: the states the practice serves and nationwide payors, unless asked for every state.
   const { groups, hiddenStates } = groupByState(payors, statesServed, showAll);
   const shown = [...new Set(groups.flatMap((g) => g.payors))];
+  // A payor listing several states is shown in full once; its other groups point to it.
+  const home = homeGroups(groups);
   const all = shown.flatMap((p) => p.rules.filter((r) => !r.inheritedFrom));
   const count = (s: string) => all.filter((r) => r.trust?.status === s).length;
   // Each source is listed once, under the first shown group whose payors cite it; uncited ones under All states.
@@ -98,7 +100,8 @@ export default async function PayorsPage({
         <div className="panel" data-testid="open-reports">
           <h2 style={{ marginTop: 0 }}>Open rule reports</h2>
           <p className="muted">
-            You are signed in as a Yoma rule reviewer. Verify controls appear on each rule below.
+            You are signed in as a Yoma rule reviewer. Reports from every practice are listed here, and a
+            verification or upload below applies to every practice.
           </p>
           {reports.length ? (
             <div className="table-wrap">
@@ -117,6 +120,7 @@ export default async function PayorsPage({
                     <tr key={r.id} data-report={r.id}>
                       <td className="muted" data-label="Reported">
                         {toDay(r.createdAt)}
+                        {r.practice && <div>{r.practice}</div>}
                       </td>
                       <td data-label="Rule">
                         {r.payorName ?? "Unknown payor"}: {r.ruleType?.replace(/_/g, " ") ?? r.lineageKey}
@@ -314,7 +318,7 @@ export default async function PayorsPage({
       </div>
 
       {groups.map((g) => (
-        <section key={g.key} data-state-group={g.key}>
+        <section key={g.key} data-state-group={g.key} id={`state-${g.key}`}>
           <h2>
             {g.label}{" "}
             <span className="muted">
@@ -324,6 +328,14 @@ export default async function PayorsPage({
           </h2>
           {!g.payors.length && <p className="muted">No payor rules for this state yet.</p>}
           {g.payors.map((p) => {
+            const homeGroup = home.get(p);
+            if (homeGroup && homeGroup.key !== g.key)
+              return (
+                <p className="panel muted" key={p.id} data-payor-ref={p.key}>
+                  <strong>{p.name}</strong>: its rules are listed under{" "}
+                  <a href={`#state-${homeGroup.key}`}>{homeGroup.label}</a>.
+                </p>
+              );
             const stale = p.rules.filter((r) => r.trust?.status === "stale").length;
             const verifiedCount = p.rules.filter((r) => r.verified).length;
             // Documents this payor's rules cite, listed first in the curator's verify dialog.
@@ -411,7 +423,9 @@ export default async function PayorsPage({
                                 {r.inheritedFrom && (
                                   <div className="muted">Status follows {payorName(r.inheritedFrom)}</div>
                                 )}
-                                {!curator && <ReportRule ruleId={r.id} />}
+                                {!curator && (
+                                  <ReportRule ruleId={r.id} name={`rule: ${r.type.replace(/_/g, " ")}`} />
+                                )}
                               </div>
                             </td>
                           </tr>

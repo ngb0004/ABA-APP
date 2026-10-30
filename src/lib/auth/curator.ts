@@ -6,7 +6,7 @@
  */
 import type { PrismaClient } from "@prisma/client";
 import { z } from "zod";
-import { db, type OrgCtx } from "../db";
+import { db, withOrg, type OrgCtx, type Tx } from "../db";
 import { HttpError } from "../log";
 
 export const CURATOR_ONLY_MESSAGE =
@@ -22,6 +22,25 @@ export async function isPlatformCurator(ctx: Pick<OrgCtx, "userId">): Promise<bo
 /** 403 unless the signed-in user is a platform curator. Org role checks still apply on top. */
 export async function requireCurator(ctx: Pick<OrgCtx, "userId">): Promise<void> {
   if (!(await isPlatformCurator(ctx))) throw new HttpError(403, CURATOR_ONLY_MESSAGE);
+}
+
+/**
+ * Curation is done once for every practice: each org keeps its own copy of the library, so a
+ * curator's verification, revocation, upload, or report review runs in every org's own RLS scope
+ * (its tables, its audit log), as the curator. Org ids come from the narrow app_org_ids() helper,
+ * as for the scheduled source watcher. Call only after requireCurator. The signed-in org comes first.
+ */
+export async function forEachOrg<T>(
+  ctx: OrgCtx,
+  fn: (tx: Tx, orgId: string) => Promise<T>,
+  opts: { skipOwn?: boolean } = {},
+): Promise<T[]> {
+  const rows = await db().$queryRaw<{ id: string }[]>`SELECT app_org_ids() AS id`;
+  const others = rows.map((r) => r.id).filter((id) => id !== ctx.orgId);
+  const ids = opts.skipOwn ? others : [ctx.orgId, ...others];
+  const out: T[] = [];
+  for (const orgId of ids) out.push(await withOrg({ ...ctx, orgId }, (tx) => fn(tx, orgId)));
+  return out;
 }
 
 const Email = z.string().trim().toLowerCase().email().max(254);

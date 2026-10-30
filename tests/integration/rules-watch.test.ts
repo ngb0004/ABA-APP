@@ -19,9 +19,12 @@ import { POST as verifyRoute } from "@/app/api/payors/rules/[id]/verify/route";
 import { loginWithPassword, SESSION_COOKIE, verifyMfa } from "@/lib/auth/session";
 import { DEMO_PASSWORD } from "../../seed/synthetic/dataset";
 import { ctxAs, curatorCtx, curatorUser, org, userOf } from "../helpers/ctx";
+import { dataset } from "../helpers/synthetic-eval";
 import { fakeFetch } from "../helpers/fake-fetch";
 
 const bcba = ctxAs("BCBA");
+const other = dataset.orgs[1]!;
+const otherBcba = { orgId: other.id, userId: other.users[0]!.id, role: "BCBA" as const };
 // Verifying rules and uploading official copies is curation: a platform curator does it.
 const curator = curatorCtx;
 const rulesOf = (payorKey: string) =>
@@ -218,6 +221,39 @@ describe("verify with proof", () => {
     await verifyRuleWithQuote(curator, rule.id, { quote: QUOTE });
   });
 
+  it("one verification covers every practice whose copy of the document is the same", async () => {
+    // The other practice (no curator among its members) checks its own sources.
+    await watchOrgSources(otherBcba, { fetcher: fakeFetch() });
+    const theirs = async () => {
+      const p = await withOrg(otherBcba, (tx) =>
+        tx.payor.findUniqueOrThrow({ where: { orgId_key: { orgId: other.id, key: "cigna_evernorth" } } }),
+      );
+      const rules = await withOrg(otherBcba, (tx) => loadRules(tx, p.id));
+      return rules.find((r) => r.type === "submission_channel")!;
+    };
+    const rule = (await rulesOf("cigna_evernorth")).find((r) => r.type === "submission_channel")!;
+    await revokeRuleVerification(curator, rule.id, "Start over");
+    expect((await theirs()).trust!.status).toBe("unverified");
+    const ev = await verifyRuleWithQuote(curator, rule.id, { quote: QUOTE });
+    expect(ev.practices).toEqual({ verified: 2, differentCopy: 0 });
+    expect((await theirs()).trust).toMatchObject({ status: "verified", tier: "T1" });
+    // Recorded in the other practice's own audit log, as the curator.
+    const theirId = (await theirs()).id;
+    const logged = await withOrg(otherBcba, (tx) =>
+      tx.auditEvent.findFirstOrThrow({
+        where: { action: "payor_rule:verify", entityId: theirId },
+        orderBy: { createdAt: "desc" },
+      }),
+    );
+    expect(logged.userId).toBe(curator.userId);
+    await revokeRuleVerification(curator, rule.id, "Form revised");
+    expect((await theirs()).trust!.status).toBe("unverified");
+    expect((await rulesOf("cigna_evernorth")).find((r) => r.id === rule.id)!.trust!.status).toBe(
+      "unverified",
+    );
+    await verifyRuleWithQuote(curator, rule.id, { quote: QUOTE });
+  });
+
   it("the verify and revoke API routes return 403 to a practice BCBA and work for a curator", async () => {
     const rule = (await rulesOf("cigna_evernorth")).find((r) => r.type === "submission_channel")!;
     const call = async (path: string, token: string, body: unknown) => {
@@ -392,6 +428,13 @@ describe("uploaded official copies (documents with no public URL)", () => {
       tx.auditEvent.count({ where: { action: "source:uploaded", entityId: doc.id } }),
     );
     expect(audit).toBe(1);
+    // The other practice gets the same official copy, and the verification.
+    const copies = await withOrg(otherBcba, (tx) =>
+      tx.payorDocumentSnapshot.findMany({ where: { document: { key: HANDBOOK } } }),
+    );
+    expect(copies.map((c) => [c.orgId, c.textSha256, c.origin])).toEqual([
+      [other.id, snap.textSha256, "upload"],
+    ]);
   });
 });
 

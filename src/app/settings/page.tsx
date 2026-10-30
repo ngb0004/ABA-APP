@@ -5,7 +5,7 @@ import { FormToggle, RecordForm, type FieldSpec } from "@/components/record-form
 import { MEMBER_ROLES, practiceSettings } from "@/lib/services/records";
 import { orgSettings } from "@/lib/services/clients";
 import { requirePageCtx } from "@/lib/server/page-session";
-import { US_STATES } from "@/lib/payors/types";
+import { STATE_NAMES, US_STATES } from "@/lib/payors/types";
 
 export const metadata: Metadata = { title: "Practice settings" };
 
@@ -26,8 +26,9 @@ const settingsFields: FieldSpec[] = [
   {
     name: "statesServed",
     label: "States we serve (the Payor rules page shows these first)",
-    type: "checkboxes",
-    options: US_STATES,
+    type: "multiselect",
+    options: US_STATES.map((s) => ({ value: s, label: `${STATE_NAMES[s]} (${s})` })),
+    help: "With none chosen, the Payor rules page shows only payors that apply in every state.",
   },
   {
     name: "offices",

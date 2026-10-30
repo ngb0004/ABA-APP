@@ -1,37 +1,54 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { REPORT_NOTE_MAX as NOTE_MAX, REPORT_REASONS as REASONS } from "@/lib/payors/report-reasons";
 import { send } from "./actions";
+import { RowMenu } from "./row-menu";
 
-/** "Report a problem" with a payor rule: what is wrong, plus an optional note. Yoma's reviewers follow up. */
-export function ReportRule({ ruleId }: { ruleId: string }) {
-  const [open, setOpen] = useState(false);
+/**
+ * "Report a problem" with a payor rule, from the rule's ⋯ menu: what is wrong, plus an optional
+ * note, in a dialog. Yoma's reviewers follow up.
+ */
+export function ReportRule({ ruleId, name }: { ruleId: string; name: string }) {
+  return (
+    <RowMenu
+      name={name}
+      testId={`rule-menu-${ruleId}`}
+      actions={[
+        { label: "Report a problem", content: (close) => <ReportRuleForm ruleId={ruleId} onClose={close} /> },
+      ]}
+    />
+  );
+}
+
+function ReportRuleForm({ ruleId, onClose }: { ruleId: string; onClose: () => void }) {
   const [reason, setReason] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
+  // Unique per form, even when the same rule shows in more than one place.
+  const id = useId();
 
   if (sent)
     return (
-      <span className="muted" role="status" data-testid={`report-sent-${ruleId}`}>
-        Thanks. Yoma&apos;s reviewers will check this rule against the payor&apos;s current document.
-      </span>
-    );
-  if (!open)
-    return (
-      <button className="secondary small" data-testid={`report-${ruleId}`} onClick={() => setOpen(true)}>
-        Report a problem
-      </button>
+      <div>
+        <p role="status" data-testid={`report-sent-${ruleId}`}>
+          Thanks. Yoma&apos;s reviewers will check this rule against the payor&apos;s current document.
+        </p>
+        <button className="secondary" onClick={onClose}>
+          Close
+        </button>
+      </div>
     );
   return (
     <div className="report-form" data-testid={`report-form-${ruleId}`}>
-      <label htmlFor={`report-reason-${ruleId}`}>What&apos;s wrong?</label>
+      <label htmlFor={`${id}-reason`}>What&apos;s wrong?</label>
       <select
-        id={`report-reason-${ruleId}`}
+        id={`${id}-reason`}
         value={reason}
+        autoFocus
         onChange={(e) => setReason(e.target.value)}
         style={{ width: "100%" }}
       >
@@ -42,20 +59,21 @@ export function ReportRule({ ruleId }: { ruleId: string }) {
           </option>
         ))}
       </select>
-      <label htmlFor={`report-note-${ruleId}`}>Details (optional)</label>
-      <p className="alert warn" style={{ margin: "4px 0" }}>
+      <label htmlFor={`${id}-note`}>Details (optional)</label>
+      <p className="alert warn" id={`${id}-phi`} style={{ margin: "4px 0" }}>
         Don&apos;t include client names, dates of birth, or member IDs. Describe what the payor told you or
         what the letter says about the rule.
       </p>
       <textarea
-        id={`report-note-${ruleId}`}
+        id={`${id}-note`}
+        aria-describedby={`${id}-phi ${id}-count`}
         value={note}
         maxLength={NOTE_MAX}
         onChange={(e) => setNote(e.target.value)}
         placeholder="e.g. Our denial letter says reassessments are due every 6 months, not 12"
       />
-      <div className="muted">
-        {note.length}/{NOTE_MAX}
+      <div className="muted" id={`${id}-count`}>
+        {note.length}/{NOTE_MAX} characters
       </div>
       <div className="row">
         <button
@@ -76,7 +94,7 @@ export function ReportRule({ ruleId }: { ruleId: string }) {
         >
           {busy ? "Sending…" : "Send report"}
         </button>
-        <button className="secondary" onClick={() => setOpen(false)}>
+        <button className="secondary" data-testid={`cancel-report-${ruleId}`} onClick={onClose}>
           Cancel
         </button>
       </div>

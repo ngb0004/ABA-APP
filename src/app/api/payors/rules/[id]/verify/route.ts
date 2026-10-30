@@ -11,5 +11,5 @@ const Body = z.object({
 
 export const POST = api<{ id: string }>(async (req, ctx, { id }) => {
   const ev = await verifyRuleWithQuote(ctx, id, await readJson(req, Body));
-  return { evidenceId: ev.id };
+  return { evidenceId: ev.id, practices: ev.practices };
 });

@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { send } from "./actions";
 import { RecordForm } from "./record-form";
 
@@ -17,8 +17,13 @@ export function RowMenu(props: {
   name: string;
   /** The edit form (opens in a dialog and closes once saved). */
   edit?: FormProps;
-  /** More forms, each a menu item that opens its form in a dialog titled with its label. */
-  actions?: { label: string; form: FormProps }[];
+  /**
+   * More actions, each a menu item that opens a dialog titled with its label: a record form, or
+   * custom content (given a function that closes the dialog).
+   */
+  actions?: ({ label: string } & (
+    { form: FormProps; content?: never } | { content: (close: () => void) => ReactNode; form?: never }
+  ))[];
   remove?: { url: string; label?: string; confirm: string };
   testId?: string;
 }) {
@@ -54,6 +59,7 @@ export function RowMenu(props: {
 
   const action = typeof dialog === "number" ? props.actions?.[dialog] : undefined;
   const form = dialog === "edit" ? props.edit : action?.form;
+  const close = () => setDialog(null);
   const title = action ? `${action.label}: ${props.name}` : `Edit ${props.name}`;
 
   async function remove() {
@@ -123,7 +129,7 @@ export function RowMenu(props: {
                 ×
               </button>
             </div>
-            <RecordForm {...form!} onDone={() => setDialog(null)} />
+            {action?.content ? action.content(close) : <RecordForm {...form!} onDone={close} />}
           </div>
         </div>
       )}

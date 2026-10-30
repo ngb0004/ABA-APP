@@ -1,14 +1,17 @@
 import { beforeAll, describe, expect, it } from "vitest";
+import { addDays } from "@/lib/dates";
 import { db, withOrg } from "@/lib/db";
 import { benefitsFindings } from "@/lib/payors/benefits";
 import { loadClientData } from "@/lib/plan/context";
 import { exportBlockers } from "@/lib/plan/presubmission";
+import { caseload, clientDetail } from "@/lib/services/clients";
 import { createPlan, planView } from "@/lib/services/plans";
 import {
   createClient,
   deleteClientPayor,
   saveAuthorization,
   saveBenefitsCheck,
+  clientRecords,
   saveClientPayor,
 } from "@/lib/services/records";
 import { clientRequirements } from "@/lib/services/requirements";
@@ -210,6 +213,43 @@ describe("benefits check and the insurance's plan type", () => {
   });
 });
 
+describe("benefits checks follow the payor, not just the insurance row", () => {
+  it("changing a row's payor leaves the old payor's checks out of the new payor's views", async () => {
+    const { cid, pid, insId } = await clientWith(
+      "cigna_evernorth",
+      "commercial_fully_insured",
+      "SYN-CIG-700030",
+    );
+    await saveBenefitsCheck(bcba, cid, insId, check({ planFunding: "self_funded" }), AS_OF);
+    const shown = async () => {
+      const rec = (await clientRecords(bcba, cid)).client.payors.find((p) => p.id === insId)!;
+      const req = (await clientRequirements(bcba, cid, AS_OF)).insurances.find((i) => i.id === insId)!;
+      return {
+        records: rec.benefitsChecks.length,
+        requirements: req.checks.length,
+        conflict: req.fundingConflict,
+      };
+    };
+    expect(await shown()).toEqual({ records: 1, requirements: 1, conflict: true });
+    const aetna = await payorId("aetna");
+    await saveClientPayor(bcba, cid, insId, {
+      payorId: aetna,
+      priority: "primary",
+      memberId: "SYN-AET-700030",
+      planType: "commercial_fully_insured",
+    });
+    expect(await shown()).toEqual({ records: 0, requirements: 0, conflict: false });
+    // Switching back shows them again: the checks are history, never moved or deleted.
+    await saveClientPayor(bcba, cid, insId, {
+      payorId: pid,
+      priority: "primary",
+      memberId: "SYN-CIG-700030",
+      planType: "commercial_fully_insured",
+    });
+    expect((await shown()).records).toBe(1);
+  });
+});
+
 describe("benefits checks are isolated by org (RLS)", () => {
   it("another org sees none of them and cannot write one", async () => {
     const own = await withOrg(bcba, (tx) => tx.benefitsCheck.count());
@@ -249,7 +289,7 @@ describe("benefits checks are isolated by org (RLS)", () => {
 });
 
 describe("pre-submission audit: benefits check warnings", () => {
-  it("warns (never blocks) until a check since the authorization start covers ABA and answers prior auth", async () => {
+  it("warns (never blocks) until a current check covers ABA and answers prior auth", async () => {
     const { cid, pid, insId } = await clientWith("cigna_evernorth", "commercial_unknown", "SYN-CIG-700010");
     await saveAuthorization(bcba, cid, null, {
       payorId: pid,
@@ -269,9 +309,12 @@ describe("pre-submission audit: benefits check warnings", () => {
     };
 
     expect(await benefits()).toEqual(["benefits.not_checked"]);
-    // Checked before the authorization started: still not current.
-    await saveBenefitsCheck(bcba, cid, insId, check({ checkedOn: "2026-08-15" }), AS_OF);
+    // An initial authorization: a check months before it started is not current...
+    await saveBenefitsCheck(bcba, cid, insId, check({ checkedOn: "2026-05-01" }), AS_OF);
     expect(await benefits()).toEqual(["benefits.not_checked"]);
+    // ...but one in the weeks before the request is (the usual order).
+    await saveBenefitsCheck(bcba, cid, insId, check({ checkedOn: "2026-08-15" }), AS_OF);
+    expect(await benefits()).toEqual([]);
     await saveBenefitsCheck(bcba, cid, insId, check({ checkedOn: "2026-09-10", abaCovered: "no" }), AS_OF);
     expect(await benefits()).toEqual(["benefits.not_covered"]);
     await saveBenefitsCheck(
@@ -352,6 +395,59 @@ describe("per-client payor requirements", () => {
       expect(aet.groups.flatMap((g) => g.items).some((r) => r.rule.id === rule.id)).toBe(false);
     } finally {
       await withOrg(bcba, (tx) => tx.payorRule.update({ where: { id: rule.id }, data: { planTypes: [] } }));
+    }
+  });
+
+  it("rules for other plan types add no required plan items and no calendar deadlines", async () => {
+    const scope = (key: string, type: string, planTypes: string[]) =>
+      withOrg(bcba, (tx) =>
+        tx.payorRule.updateMany({ where: { payor: { key }, type }, data: { planTypes } }),
+      );
+    // Required plan items: Aetna's plan content rules on a self-funded plan.
+    const a = await clientWith("aetna", "commercial_self_funded", "SYN-AET-700020");
+    await saveAuthorization(bcba, a.cid, null, {
+      payorId: a.pid,
+      authNumber: "SYN-AUTH-7020",
+      kind: "initial",
+      startDate: "2026-09-01",
+      endDate: "2027-02-28",
+      units: [{ cptCode: "97153", approvedUnits: 80, unitBasis: "week" }],
+    });
+    const planId = (await createPlan(bcba, a.cid, "initial")).id;
+    const payorItems = async () =>
+      (await planView(bcba, planId, AS_OF)).sections
+        .flatMap((s) => s.items)
+        .filter((i) => i.key.startsWith("payor:"));
+    expect((await payorItems()).length).toBeGreaterThan(0);
+    // Calendar: TRICARE West's reauth window rule.
+    const t = await clientWith("tricare_west", "tricare", "SYN-TRW-700021");
+    await saveAuthorization(bcba, t.cid, null, {
+      payorId: t.pid,
+      authNumber: "SYN-AUTH-7021",
+      kind: "reauth",
+      startDate: "2026-08-01",
+      endDate: addDays(AS_OF, 90),
+      units: [{ cptCode: "97153", approvedUnits: 80, unitBasis: "week" }],
+    });
+    const windows = async () => {
+      const own = (await clientDetail(bcba, t.cid, AS_OF)).events;
+      const all = (await caseload(bcba, AS_OF)).events.filter((e) => e.clientId === t.cid);
+      return [own, all].map((list) => list.filter((e) => e.kind === "reauth_window_opens").length);
+    };
+    expect(await windows()).toEqual([1, 1]);
+    try {
+      await scope("aetna", "plan_content", ["commercial_fully_insured"]);
+      await scope("tricare_west", "request_timing", ["commercial_fully_insured"]);
+      expect(await payorItems()).toEqual([]);
+      expect(await windows()).toEqual([0, 0]);
+      // "maybe" (plan type not confirmed) keeps the rule in.
+      await withOrg(bcba, (tx) =>
+        tx.clientPayor.update({ where: { id: a.insId }, data: { planType: "commercial_unknown" } }),
+      );
+      expect((await payorItems()).length).toBeGreaterThan(0);
+    } finally {
+      await scope("aetna", "plan_content", []);
+      await scope("tricare_west", "request_timing", []);
     }
   });
 

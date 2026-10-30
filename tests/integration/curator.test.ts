@@ -185,6 +185,36 @@ describe("rule problem reports", () => {
     });
   });
 
+  it("a curator reviews every practice's reports, though no member of that practice is a curator", async () => {
+    const theirs = await reportRuleProblem(otherBcba, (await ruleOf(otherBcba, "ga_medicaid")).id, {
+      reason: "outdated",
+    });
+    await expect(listOpenReports(otherBcba)).rejects.toMatchObject({ status: 403 });
+    const open = await listOpenReports(curatorCtx);
+    expect(open.find((x) => x.id === theirs.id)).toMatchObject({
+      orgId: other.id,
+      practice: other.name,
+      reason: "outdated",
+      payorName: expect.any(String),
+    });
+    expect(open.map((x) => x.createdAt.getTime())).toEqual(
+      [...open.map((x) => x.createdAt.getTime())].sort((a, b) => a - b),
+    );
+    await resolveRuleReport(curatorCtx, theirs.id, { resolution: "Rule corrected in the library" });
+    const row = await withOrg(otherBcba, (tx) =>
+      tx.ruleReport.findUniqueOrThrow({ where: { id: theirs.id } }),
+    );
+    expect(row).toMatchObject({ resolvedById: curatorUser.id, resolution: "Rule corrected in the library" });
+    // Audit-logged in the practice that filed it.
+    const logged = await withOrg(otherBcba, (tx) =>
+      tx.auditEvent.findFirstOrThrow({ where: { action: "rule_report:resolve", entityId: theirs.id } }),
+    );
+    expect(logged.userId).toBe(curatorUser.id);
+    await expect(resolveRuleReport(curatorCtx, "not-an-id", { resolution: "x" })).rejects.toMatchObject({
+      status: 404,
+    });
+  });
+
   it("reports are isolated by org (RLS), even with a raw query", async () => {
     const mine = await reportRuleProblem(bcba, (await ruleOf(bcba, "ga_medicaid")).id, { reason: "other" });
     const theirs = await reportRuleProblem(otherBcba, (await ruleOf(otherBcba, "ga_medicaid")).id, {
@@ -198,13 +228,12 @@ describe("rule problem reports", () => {
     expect(seenByA.map((r) => r.id)).not.toContain(theirs.id);
     expect(seenByA.every((r) => r.org_id === org.id)).toBe(true);
     const seenByB = await withOrg(otherBcba, (tx) => tx.ruleReport.findMany());
-    expect(seenByB.map((r) => r.id)).toEqual([theirs.id]);
+    expect(seenByB.map((r) => r.id)).toContain(theirs.id);
+    expect(seenByB.map((r) => r.id)).not.toContain(mine.id);
+    expect(seenByB.every((r) => r.orgId === other.id)).toBe(true);
     // No org set: nothing at all.
     expect(await db().ruleReport.findMany()).toEqual([]);
-    // A curator in org A cannot resolve org B's report, and cannot write into org B.
-    await expect(resolveRuleReport(curatorCtx, theirs.id, { resolution: "x" })).rejects.toMatchObject({
-      status: 404,
-    });
+    // Nobody writes into another org directly, a curator's org included.
     await expect(
       withOrg(bcba, (tx) =>
         tx.ruleReport.create({

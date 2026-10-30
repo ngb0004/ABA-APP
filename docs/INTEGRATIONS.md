@@ -34,7 +34,7 @@ This document describes how the manual entry will be replaced, or supplemented, 
 - **DTR** (Documentation Templates and Rules): the payor's own questionnaire for the documentation it needs.
 - **PAS** (Prior Authorization Support): submitting the request and receiving the decision.
 
-**Who is covered.** Medicare Advantage organizations, state Medicaid and CHIP programs (fee-for-service and managed care), and qualified health plan (QHP) issuers on the federally facilitated ACA marketplaces. **Not covered:** employer and other commercial plans (including self-funded ERISA plans) and TRICARE. For an ABA practice, that means Medicaid managed care (for example, Georgia's care management organizations) is where this arrives first; most commercial clients will still need the manual route.
+**Who is covered.** Medicare Advantage organizations, state Medicaid and CHIP programs (fee-for-service and managed care), and qualified health plan (QHP) issuers on the federally facilitated ACA marketplaces. **Not covered:** employer and other commercial plans (including self-funded ERISA plans) and TRICARE. For an ABA practice, that means Medicaid is where this arrives first: state fee-for-service Medicaid and CHIP (for example, Georgia DCH's straight Medicaid and Katie Beckett, the `ga_medicaid` payor) by the fixed January 1, 2027 date, and Medicaid managed care (for example, Georgia's care management organizations) from the first rating period on or after it. Most commercial clients will still need the manual route.
 
 **How it feeds Yoma.**
 
@@ -46,12 +46,12 @@ This document describes how the manual entry will be replaced, or supplemented, 
 
 In June 2025, AHIP and the Blue Cross Blue Shield Association, with many of their member insurers and alongside the U.S. Department of Health and Human Services, announced voluntary commitments to simplify prior authorization. These include standardizing electronic prior authorization (building on the same FHIR standards) across commercial, Medicare Advantage, and Medicaid managed care, and aiming to answer at least 80% of electronic prior-authorization approvals in real time in 2027.
 
-**What it means for us.** It is voluntary, it is not enforced, and progress reported so far is modest. If it holds, commercial insurers would expose CRD/DTR/PAS-style APIs too, and the same integration as section 2 would cover commercial clients. Yoma plans for it but does not depend on it: the manual benefits check and the letter extraction stay the baseline.
+**What it means for us.** It is voluntary and it is not enforced. As of this writing (October 2026) we have not reviewed any public report that measures progress against it, so its progress is not yet verifiable; re-check before relying on it. If it holds, commercial insurers would expose CRD/DTR/PAS-style APIs too, and the same integration as section 2 would cover commercial clients. Yoma plans for it but does not depend on it: the manual benefits check and the letter extraction stay the baseline.
 
 ## Order of work (after the HIPAA phase)
 
 1. Clearinghouse eligibility (270/271) behind `EligibilityProvider`, writing `electronic_eligibility` benefits checks. Highest coverage, lowest effort, and it confirms the plan type that decides whether state mandates apply.
-2. CRD/DTR for Medicaid managed care payors as their Prior Authorization APIs go live in 2027: prior-authorization answers on benefits checks, DTR items on the requirements page, and DTR copies offered to rule reviewers.
+2. CRD/DTR for Medicaid payors (fee-for-service and managed care) as their Prior Authorization APIs go live in 2027: prior-authorization answers on benefits checks, DTR items on the requirements page, and DTR copies offered to rule reviewers.
 3. PAS submission for the same payors.
 4. Commercial payors, as and if they publish the same APIs.
 

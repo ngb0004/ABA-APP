@@ -31,3 +31,13 @@ export function groupByState<P extends { states: string[] }>(
     hiddenStates: showAll ? [] : others,
   };
 }
+
+/**
+ * Where each payor's rules are shown in full: the first group it appears in. A payor listing
+ * several states is shown once; its other groups only point to it (no duplicate rule rows or ids).
+ */
+export function homeGroups<P>(groups: StateGroup<P>[]): Map<P, StateGroup<P>> {
+  const home = new Map<P, StateGroup<P>>();
+  for (const g of groups) for (const p of g.payors) if (!home.has(p)) home.set(p, g);
+  return home;
+}

@@ -14,7 +14,7 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "db:up": "bash scripts/db-up.sh",
-    "db:migrate": "prisma migrate deploy",
+    "db:migrate": "prisma migrate deploy && tsx scripts/payor-sync.ts",
     "db:reset": "bash scripts/db-reset.sh",
     "db:seed": "tsx seed/synthetic/index.ts",
     "totp": "tsx scripts/totp.ts",

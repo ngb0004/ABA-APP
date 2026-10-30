@@ -346,7 +346,14 @@ export function runPresubmissionAudit(
   // The practice's own benefits check: a warning, never a block (it is not a payor rule).
   for (const f of benefitsFindings(
     b.benefitsChecks,
-    b.auth ? { payorId: b.auth.payorId, payorName: b.auth.payor.name, startDate: b.auth.startDate } : null,
+    b.auth
+      ? {
+          payorId: b.auth.payorId,
+          payorName: b.auth.payor.name,
+          startDate: b.auth.startDate,
+          kind: b.auth.kind,
+        }
+      : null,
   ))
     push({
       id: f.id,

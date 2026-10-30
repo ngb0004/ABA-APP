@@ -1,7 +1,7 @@
 import type { Tx } from "../db";
 import { ageYears, toDay, type Day } from "../dates";
 import type { EvalContext } from "../payors/context";
-import { evaluateRules, scopeFindings } from "../payors/evaluate";
+import { evaluateRules, planTypeFit, scopeFindings } from "../payors/evaluate";
 import { sectionDone, sectionsForTopic } from "../plan/sections";
 import type { PlanType, Rule, RuleType } from "../payors/types";
 import type { RevisionRow } from "../rules-watch/parsers";
@@ -17,6 +17,21 @@ export async function loadRules(tx: Tx, payorId: string): Promise<Rule[]> {
   });
   return withTrust(tx, rows);
 }
+
+/**
+ * The rules that can apply to one insurance: every rule for its payor except those limited to
+ * other plan types. "maybe" fits stay in. Use this wherever rules turn into work for the BCBA
+ * (required plan items, calendar deadlines); the evaluator keeps the full list so it can show n/a.
+ */
+export async function loadApplicableRules(
+  tx: Tx,
+  insurance: { payorId: string; planType: string },
+): Promise<Rule[]> {
+  return applicableRules(await loadRules(tx, insurance.payorId), insurance.planType as PlanType);
+}
+
+export const applicableRules = (rules: Rule[], planType: PlanType) =>
+  rules.filter((r) => planTypeFit(r, planType) !== "no");
 
 type RuleRow = {
   id: string;

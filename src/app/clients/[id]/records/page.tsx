@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { clientFields } from "@/components/client-fields";
 import { label, labeled } from "@/components/labels";
+import { planTypeLine } from "@/components/payor-display";
 import { FormToggle, RecordForm, type FieldSpec } from "@/components/record-form";
 import { RowMenu } from "@/components/row-menu";
 import { toDay } from "@/lib/dates";
@@ -14,7 +15,7 @@ import {
   YES_NO_UNKNOWN,
   type BenefitsCheckMethod,
 } from "@/lib/payors/benefits";
-import { PLAN_TYPES, PLAN_TYPE_LABELS, US_STATES, type PlanType } from "@/lib/payors/types";
+import { PLAN_TYPES, PLAN_TYPE_LABELS, US_STATES } from "@/lib/payors/types";
 import { can } from "@/lib/permissions";
 import {
   ATTACHMENT_KINDS,
@@ -227,8 +228,7 @@ export default async function RecordsPage({ params }: { params: Promise<{ id: st
                   {p.payor.name} ({label(p.priority).toLowerCase()}) · {p.memberId}
                   {p.planName ? ` · ${p.planName}` : ""}
                   <div className="muted" data-testid="plan-type">
-                    {PLAN_TYPE_LABELS[p.planType as PlanType] ?? p.planType}
-                    {p.planState ? ` · issued in ${p.planState}` : ""}
+                    {planTypeLine(p.planType, p.planState)}
                   </div>
                   <div className="muted" data-testid="benefits-checked">
                     {p.benefitsChecks[0]

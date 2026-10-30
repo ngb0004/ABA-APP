@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   benefitsFindings,
+  checksForInsurance,
   fundingContradicts,
   latestCheck,
   planTypeFromFunding,
@@ -63,6 +64,19 @@ describe("latestCheck", () => {
   });
 });
 
+describe("checksForInsurance", () => {
+  it("keeps only the row's checks for the payor it has now", () => {
+    const rows = [
+      { id: "a", clientPayorId: "row1", payorId: "p1" },
+      { id: "b", clientPayorId: "row1", payorId: "p2" }, // recorded before the row's payor changed
+      { id: "c", clientPayorId: "row2", payorId: "p1" },
+      { id: "d", clientPayorId: null, payorId: "p1" }, // insurance removed
+    ];
+    expect(checksForInsurance(rows, { id: "row1", payorId: "p1" }).map((c) => c.id)).toEqual(["a"]);
+    expect(checksForInsurance(rows, { id: "row1", payorId: "p3" })).toEqual([]);
+  });
+});
+
 describe("benefitsFindings", () => {
   it("is quiet for a check since the authorization started that covers ABA and answers prior auth", () => {
     expect(benefitsFindings([check()], auth)).toEqual([]);
@@ -87,6 +101,20 @@ describe("benefitsFindings", () => {
     expect(benefitsFindings([check({ abaCovered: "no", checkedOn: "2026-09-05" }), check()], auth)).toEqual(
       [],
     );
+  });
+
+  it("for an initial authorization, counts a check from the weeks before it started", () => {
+    const initial = { ...auth, kind: "initial" as const };
+    // The usual order: benefits checked, then the initial request.
+    expect(benefitsFindings([check({ checkedOn: "2026-08-15" })], initial)).toEqual([]);
+    expect(benefitsFindings([check({ checkedOn: "2026-06-03" })], initial)).toEqual([]); // 90 days before
+    const old = benefitsFindings([check({ checkedOn: "2026-06-02" })], initial);
+    expect(ids(old)).toEqual(["benefits.not_checked"]);
+    expect(old[0]!.message).toMatch(/within 90 days before the authorization started \(2026-09-01\)/);
+    // A reauthorization still needs a check since it started (a new plan year can change coverage).
+    expect(ids(benefitsFindings([check({ checkedOn: "2026-08-15" })], { ...auth, kind: "reauth" }))).toEqual([
+      "benefits.not_checked",
+    ]);
   });
 
   it("says nothing without an authorization", () => {

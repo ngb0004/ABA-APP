@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { REQUIREMENT_STATUS_LABELS, RULE_TYPE_LABELS } from "@/components/payor-display";
+import { planTypeLine, REQUIREMENT_STATUS_LABELS, RULE_TYPE_LABELS } from "@/components/payor-display";
 import {
   benefitsCheckFromEligibility,
   eligibilityProvider,
@@ -79,5 +79,14 @@ describe("eligibility provider stub", () => {
       "2026-10-01",
     );
     expect(inactive.abaCovered).toBe("no");
+  });
+});
+
+describe("planTypeLine", () => {
+  it("names the plan type, even when it is not recorded", () => {
+    expect(planTypeLine("unknown", null)).toBe("Plan type: Not recorded");
+    expect(planTypeLine("commercial_self_funded", "GA")).toBe(
+      "Plan type: Commercial, self-funded employer (ERISA) · issued in GA",
+    );
   });
 });

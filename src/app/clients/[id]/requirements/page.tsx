@@ -82,10 +82,21 @@ export default async function RequirementsPage({ params }: { params: Promise<{ i
               <tr>
                 <th>Plan state</th>
                 <td>
-                  {ins.planState || "Not known"}{" "}
-                  <span className="muted">
-                    {ins.planStateRecorded ? "(recorded on the insurance)" : "(the client's service state)"}
-                  </span>
+                  {ins.planState ? (
+                    <>
+                      {ins.planState}{" "}
+                      <span className="muted">
+                        {ins.planStateRecorded
+                          ? "(recorded on the insurance)"
+                          : "(the client's service state)"}
+                      </span>
+                    </>
+                  ) : (
+                    <span className="muted">
+                      Not known: add the plan state to the insurance, or the client&apos;s service address, on
+                      Records
+                    </span>
+                  )}
                 </td>
               </tr>
             </tbody>
@@ -169,20 +180,13 @@ export default async function RequirementsPage({ params }: { params: Promise<{ i
                   </thead>
                   <tbody>
                     {g.items.map((r) => {
+                      // The rule's raw terms are for checking against the source, so they sit in Details;
+                      // the row leads with what it means for this client.
                       const entries = paramEntries(r.rule.params);
                       return (
                         <tr key={r.rule.id} data-rule={r.rule.id}>
                           <td>
                             {RULE_TYPE_LABELS[r.rule.type as RuleType] ?? r.rule.type.replace(/_/g, " ")}
-                            {entries.length > 0 && (
-                              <dl className="params-list">
-                                {entries.map(([k, v]) => (
-                                  <div key={k}>
-                                    <dt>{k}:</dt> <dd>{v}</dd>
-                                  </div>
-                                ))}
-                              </dl>
-                            )}
                             {r.rule.notes && <div className="muted">{r.rule.notes}</div>}
                           </td>
                           <td>
@@ -193,14 +197,30 @@ export default async function RequirementsPage({ params }: { params: Promise<{ i
                               {REQUIREMENT_STATUS_LABELS[r.status]}
                             </span>
                             <div>{r.message}</div>
-                            {r.evidence.length > 0 && (
-                              <details>
+                            {(r.evidence.length > 0 || entries.length > 0) && (
+                              <details data-testid="requirement-details">
                                 <summary className="muted">Details</summary>
-                                <ul>
-                                  {r.evidence.map((e, i) => (
-                                    <li key={i}>{e}</li>
-                                  ))}
-                                </ul>
+                                {r.evidence.length > 0 && (
+                                  <ul>
+                                    {r.evidence.map((e, i) => (
+                                      <li key={i}>{e}</li>
+                                    ))}
+                                  </ul>
+                                )}
+                                {entries.length > 0 && (
+                                  <>
+                                    <div className="muted">
+                                      The rule&apos;s terms, as recorded from the source:
+                                    </div>
+                                    <dl className="params-list">
+                                      {entries.map(([k, v]) => (
+                                        <div key={k}>
+                                          <dt>{k}:</dt> <dd>{v}</dd>
+                                        </div>
+                                      ))}
+                                    </dl>
+                                  </>
+                                )}
                               </details>
                             )}
                           </td>

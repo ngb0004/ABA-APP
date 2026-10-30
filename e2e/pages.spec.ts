@@ -100,9 +100,25 @@ test("a BCBA sees payor rules read-only and can report a problem; a curator revi
   expect(
     (await page.request.post(`/api/payors/rules/${ruleId}/verify`, { data: { quote: "x" } })).status(),
   ).toBe(403);
-  await row.getByTestId(`report-${ruleId}`).click();
-  const form = row.getByTestId(`report-form-${ruleId}`);
+  // One compact ⋯ menu per rule, not a column of buttons.
+  await expect(ga.getByRole("button", { name: "Report a problem" })).toHaveCount(0);
+  const openReport = async () => {
+    await row
+      .getByTestId(`rule-menu-${ruleId}`)
+      .getByRole("button", { name: /^Actions for rule/ })
+      .click();
+    await row.getByRole("menuitem", { name: "Report a problem" }).click();
+  };
+  await openReport();
+  const dialog = page.getByRole("dialog");
+  const form = dialog.getByTestId(`report-form-${ruleId}`);
   await expect(form).toContainText("Don't include client names");
+  // Focus lands on the first question.
+  await expect(form.getByLabel("What's wrong?")).toBeFocused();
+  await expect(form.getByLabel("Details (optional)")).toHaveAttribute("aria-describedby", /.+/);
+  await form.getByTestId(`cancel-report-${ruleId}`).click();
+  await expect(dialog).toHaveCount(0);
+  await openReport();
   await form.getByLabel("What's wrong?").selectOption("doesnt_match_letter");
   await form.getByLabel("Details (optional)").fill("Denial for client Alpha Testchild says something else");
   await form.getByTestId(`submit-report-${ruleId}`).click();
@@ -111,7 +127,8 @@ test("a BCBA sees payor rules read-only and can report a problem; a curator revi
     .getByLabel("Details (optional)")
     .fill("Our denial letter says reassessments are due every 6 months.");
   await form.getByTestId(`submit-report-${ruleId}`).click();
-  await expect(row.getByTestId(`report-sent-${ruleId}`)).toBeVisible();
+  await expect(dialog.getByTestId(`report-sent-${ruleId}`)).toBeVisible();
+  await dialog.getByRole("button", { name: "Close", exact: true }).first().click();
 
   // The curator (a BCBA of the sample practice with the platform flag) sees the report and verify controls.
   await page.context().clearCookies();
@@ -121,7 +138,7 @@ test("a BCBA sees payor rules read-only and can report a problem; a curator revi
   await expect(reports).toContainText("Our denial letter says reassessments are due every 6 months.");
   await expect(reports).toContainText("Doesn't match my authorization letter or denial");
   await expect(page.locator(`[data-rule="${ruleId}"] [data-testid="verify-${ruleId}"]`)).toBeAttached();
-  await expect(page.locator(`[data-testid="report-${ruleId}"]`)).toHaveCount(0);
+  await expect(page.locator(`[data-testid="rule-menu-${ruleId}"]`)).toHaveCount(0);
   page.once("dialog", (d) => d.accept("Checked against the current manual; no change needed"));
   await reports.locator('[data-testid^="resolve-"]').first().click();
   await expect(reports).toContainText("No open reports");

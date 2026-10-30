@@ -19,6 +19,7 @@ import { RECORDED_EVENTS } from "../payors/evaluate";
 import { looksLikePhiInNote } from "../rules-watch/text";
 import {
   BENEFITS_CHECK_METHODS,
+  checksForInsurance,
   PLAN_FUNDING,
   planTypeFromFunding,
   YES_NO_UNKNOWN,
@@ -959,8 +960,8 @@ export async function clientRecords(ctx: OrgCtx, clientId: string) {
         payors: {
           include: {
             payor: true,
-            // The latest check, for "Benefits last checked" on each insurance.
-            benefitsChecks: { orderBy: [{ checkedOn: "desc" }, { createdAt: "desc" }], take: 1 },
+            // For "Benefits last checked" on each insurance (narrowed to its current payor below).
+            benefitsChecks: { orderBy: [{ checkedOn: "desc" }, { createdAt: "desc" }] },
           },
           orderBy: { priority: "asc" },
         },
@@ -972,6 +973,8 @@ export async function clientRecords(ctx: OrgCtx, clientId: string) {
     if (!client) throw new HttpError(404, "Not found");
     registerSensitiveName(client.firstName);
     registerSensitiveName(client.lastName);
+    // The latest check for the payor each row has now (a row's payor can be changed).
+    for (const p of client.payors) p.benefitsChecks = checksForInsurance(p.benefitsChecks, p).slice(0, 1);
     const sessions = await tx.serviceSession.findMany({
       where: { clientId },
       orderBy: [{ date: "desc" }, { startMinute: "desc" }],

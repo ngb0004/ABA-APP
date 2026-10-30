@@ -1,10 +1,10 @@
 /**
  * "Report a problem" with a payor rule. Anyone who can read the rules can report one; Yoma's
- * curators review open reports and fix the library. A report never changes a rule's status.
+ * curators review open reports from every practice and fix the library. A report never changes a rule's status.
  */
 import { z } from "zod";
 import { audit } from "../audit";
-import { requireCurator } from "../auth/curator";
+import { forEachOrg, requireCurator } from "../auth/curator";
 import { withOrg, type OrgCtx } from "../db";
 import { HttpError } from "../log";
 import { REPORT_NOTE_MAX as NOTE_MAX, REPORT_REASONS, type ReportReason } from "../payors/report-reasons";
@@ -67,16 +67,21 @@ export async function reportRuleProblem(ctx: OrgCtx, ruleId: string, raw: unknow
   });
 }
 
-/** Open reports for the curator's review, oldest first, with the rule they are about. */
+/**
+ * Open reports from every practice for the curator's review, oldest first, with the rule they are
+ * about and the practice that filed them. Each org is read in its own RLS scope (see forEachOrg).
+ */
 export async function listOpenReports(ctx: OrgCtx) {
   requirePermission(ctx.role, "payor:verify");
   await requireCurator(ctx);
-  return withOrg(ctx, async (tx) => {
+  const perOrg = await forEachOrg(ctx, async (tx, orgId) => {
     const reports = await tx.ruleReport.findMany({
       where: { resolvedAt: null },
       orderBy: { createdAt: "asc" },
       take: 200,
     });
+    if (!reports.length) return [];
+    const org = await tx.org.findUnique({ where: { id: orgId }, select: { name: true } });
     const ruleIds = [...new Set(reports.map((r) => r.ruleId).filter((x): x is string => !!x))];
     const rules = await tx.payorRule.findMany({
       where: { id: { in: ruleIds } },
@@ -87,6 +92,8 @@ export async function listOpenReports(ctx: OrgCtx) {
       const rule = r.ruleId ? byId.get(r.ruleId) : undefined;
       return {
         id: r.id,
+        orgId,
+        practice: org?.name ?? null,
         lineageKey: r.lineageKey,
         ruleId: r.ruleId,
         ruleType: rule?.type ?? null,
@@ -97,21 +104,28 @@ export async function listOpenReports(ctx: OrgCtx) {
       };
     });
   });
+  return perOrg
+    .flat()
+    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+    .slice(0, 200);
 }
 
-/** A curator closes a report, saying what was done. */
+/** A curator closes a report from any practice, saying what was done (audit-logged in that practice). */
 export async function resolveRuleReport(ctx: OrgCtx, reportId: string, raw: unknown) {
   requirePermission(ctx.role, "payor:verify");
   await requireCurator(ctx);
   const { resolution } = ResolveInput.parse(raw);
   if (looksLikePhiInNote(resolution)) throw new HttpError(422, PHI_NOTE_MESSAGE);
-  return withOrg(ctx, async (tx) => {
+  if (!z.uuid().safeParse(reportId).success) throw new HttpError(404, "No open report with that id");
+  const done = await forEachOrg(ctx, async (tx) => {
     const r = await tx.ruleReport.updateMany({
       where: { id: reportId, resolvedAt: null },
       data: { resolvedAt: new Date(), resolvedById: ctx.userId, resolution },
     });
-    if (r.count !== 1) throw new HttpError(404, "No open report with that id");
-    await audit(tx, { action: "rule_report:resolve", entityType: "RuleReport", entityId: reportId });
-    return { id: reportId };
+    if (r.count === 1)
+      await audit(tx, { action: "rule_report:resolve", entityType: "RuleReport", entityId: reportId });
+    return r.count === 1;
   });
+  if (!done.includes(true)) throw new HttpError(404, "No open report with that id");
+  return { id: reportId };
 }

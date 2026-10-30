@@ -3,8 +3,8 @@
  */
 import { Prisma } from "@prisma/client";
 import { audit, sha256 } from "../audit";
-import { requireCurator } from "../auth/curator";
-import { db, withOrg, type OrgCtx } from "../db";
+import { forEachOrg, requireCurator } from "../auth/curator";
+import { db, withOrg, type OrgCtx, type Tx } from "../db";
 import { toDay } from "../dates";
 import { HttpError } from "../log";
 import { requirePermission } from "../permissions";
@@ -207,7 +207,16 @@ export async function uploadOfficialCopy(
       { textSha256: sha },
     );
   const versionLabel = input.versionLabel?.trim().slice(0, 120) || null;
-  return withOrg(ctx, async (tx) => {
+  // The same official copy goes to every practice's copy of the document (same key, still upload-only).
+  const results = await forEachOrg(ctx, async (tx, orgId) => {
+    const target =
+      orgId === ctx.orgId
+        ? doc
+        : await tx.payorDocument.findFirst({
+            where: { key: doc.key, secondary: false, locator: { equals: Prisma.AnyNull } },
+          });
+    if (!target) return null;
+    const documentId = target.id;
     const latest = await tx.payorDocumentSnapshot.findFirst({
       where: { documentId },
       orderBy: { fetchedAt: "desc" },
@@ -234,7 +243,7 @@ export async function uploadOfficialCopy(
     const now = new Date();
     const snap = await tx.payorDocumentSnapshot.create({
       data: {
-        orgId: ctx.orgId,
+        orgId,
         documentId,
         fetchedAt: now,
         resolvedUrl: "",
@@ -248,7 +257,7 @@ export async function uploadOfficialCopy(
         uploadedById: ctx.userId,
       },
     });
-    const cited = doc.effectiveDate ? toDay(doc.effectiveDate) : null;
+    const cited = target.effectiveDate ? toDay(target.effectiveDate) : null;
     await tx.payorDocument.update({
       where: { id: documentId },
       data: {
@@ -267,6 +276,7 @@ export async function uploadOfficialCopy(
     });
     return { snapshotId: snap.id, unchanged: false };
   });
+  return results[0]!;
 }
 
 /** Check sources now (BCBA action). */
@@ -310,7 +320,7 @@ export async function verifyRuleWithQuote(
 ) {
   requirePermission(ctx.role, "payor:verify");
   await requireCurator(ctx);
-  return withOrg(ctx, async (tx) => {
+  const checked = await withOrg(ctx, async (tx) => {
     const rule = await tx.payorRule.findUniqueOrThrow({ where: { id: ruleId } });
     if (!rule.lineageKey)
       throw new HttpError(409, "This rule has not been synced yet. Run the payor library sync first.");
@@ -348,44 +358,107 @@ export async function verifyRuleWithQuote(
         422,
         `The quote must contain every number in the rule. Missing: ${missing.join(", ")}`,
       );
-    const ev = await tx.ruleEvidence.create({
-      data: {
-        orgId: ctx.orgId,
-        lineageKey: rule.lineageKey,
-        kind: "verify",
-        tier: "T1",
-        channel: "document",
-        documentId,
-        snapshotId: snap.id,
-        section: input.section?.trim() || rule.sourceSection,
-        quote,
-        textSha256: snap.textSha256,
-        reviewerId: ctx.userId,
-        note: input.note?.trim() || null,
-      },
-    });
-    await audit(tx, {
-      action: "payor_rule:verify",
-      entityType: "PayorRule",
-      entityId: ruleId,
-      meta: { lineageKey: rule.lineageKey, evidenceId: ev.id, documentId, quoteSha: sha256(quote) },
-    });
-    return ev;
+    return {
+      lineageKey: rule.lineageKey,
+      docKey: doc.key,
+      textSha256: snap.textSha256,
+      quote,
+      section: input.section?.trim() || rule.sourceSection,
+      note: input.note?.trim() || null,
+    };
   });
+  // Once for every practice: recorded wherever that practice's current copy of the document is
+  // the same text the quote was checked against. A practice with another copy is left for its
+  // next source check (counted, so the curator can see it).
+  const outcomes = await forEachOrg(ctx, (tx, orgId) =>
+    recordVerification(tx, orgId, ctx, { ...checked, ruleId: orgId === ctx.orgId ? ruleId : null }),
+  );
+  const own = outcomes[0];
+  if (!own || own === "different_copy")
+    throw new HttpError(409, "The document changed while verifying. Try again.");
+  return {
+    ...own,
+    practices: {
+      verified: outcomes.filter((o) => typeof o === "object").length,
+      differentCopy: outcomes.filter((o) => o === "different_copy").length,
+    },
+  };
+}
+
+async function recordVerification(
+  tx: Tx,
+  orgId: string,
+  ctx: OrgCtx,
+  c: {
+    lineageKey: string;
+    docKey: string;
+    textSha256: string;
+    quote: string;
+    section: string | null;
+    note: string | null;
+    /** The rule verified, in the curator's own org; elsewhere, that org's rule of the same lineage. */
+    ruleId: string | null;
+  },
+) {
+  const rule = await tx.payorRule.findFirst({
+    where: c.ruleId ? { id: c.ruleId } : { lineageKey: c.lineageKey },
+    orderBy: { inheritedFrom: { sort: "desc", nulls: "first" } },
+    select: { id: true },
+  });
+  const doc = await tx.payorDocument.findFirst({ where: { key: c.docKey }, select: { id: true } });
+  if (!rule || !doc) return null;
+  const snap = await tx.payorDocumentSnapshot.findFirst({
+    where: { documentId: doc.id },
+    orderBy: { fetchedAt: "desc" },
+    select: { id: true, textSha256: true },
+  });
+  if (snap?.textSha256 !== c.textSha256) return "different_copy" as const;
+  const ev = await tx.ruleEvidence.create({
+    data: {
+      orgId,
+      lineageKey: c.lineageKey,
+      kind: "verify",
+      tier: "T1",
+      channel: "document",
+      documentId: doc.id,
+      snapshotId: snap.id,
+      section: c.section,
+      quote: c.quote,
+      textSha256: c.textSha256,
+      reviewerId: ctx.userId,
+      note: c.note,
+    },
+  });
+  await audit(tx, {
+    action: "payor_rule:verify",
+    entityType: "PayorRule",
+    entityId: rule.id,
+    meta: { lineageKey: c.lineageKey, evidenceId: ev.id, documentId: doc.id, quoteSha: sha256(c.quote) },
+  });
+  return ev;
 }
 
 /** Withdraw a verification (platform curators only). */
 export async function revokeRuleVerification(ctx: OrgCtx, ruleId: string, note: string | null) {
   requirePermission(ctx.role, "payor:verify");
   await requireCurator(ctx);
-  return withOrg(ctx, async (tx) => {
+  const lineageKey = await withOrg(ctx, async (tx) => {
     const rule = await tx.payorRule.findUniqueOrThrow({ where: { id: ruleId } });
     if (!rule.lineageKey)
       throw new HttpError(409, "This rule has not been synced yet. Run the payor library sync first.");
+    return rule.lineageKey;
+  });
+  // Withdrawn in every practice that has the rule (see forEachOrg).
+  const evs = await forEachOrg(ctx, async (tx, orgId) => {
+    const rule =
+      orgId === ctx.orgId
+        ? { id: ruleId }
+        : await tx.payorRule.findFirst({ where: { lineageKey }, select: { id: true } });
+    if (!rule) return null;
     const ev = await tx.ruleEvidence.create({
       data: {
-        orgId: ctx.orgId,
-        lineageKey: rule.lineageKey,
+        orgId,
+        lineageKey,
         kind: "revoke",
         tier: "-",
         channel: "manual",
@@ -396,9 +469,10 @@ export async function revokeRuleVerification(ctx: OrgCtx, ruleId: string, note: 
     await audit(tx, {
       action: "payor_rule:revoke",
       entityType: "PayorRule",
-      entityId: ruleId,
-      meta: { lineageKey: rule.lineageKey, evidenceId: ev.id },
+      entityId: rule.id,
+      meta: { lineageKey, evidenceId: ev.id },
     });
     return ev;
   });
+  return evs[0]!;
 }

@@ -29,7 +29,7 @@ import {
 } from "../plan/sections";
 import type { RuleResult } from "../payors/types";
 import { renderMilestonesGridSvg } from "../vbmapp/grid-svg";
-import { evaluateClientRules, loadRules } from "./payors";
+import { evaluateClientRules, loadApplicableRules } from "./payors";
 
 export type ItemState = { status: "answered" | "none"; note?: string };
 export type RequiredItem = {
@@ -91,7 +91,7 @@ export function requiredItemsFor(
 
 async function primaryRules(tx: Tx, b: PlanBundle) {
   const p = b.client.payors.find((x) => x.priority === "primary");
-  return p ? loadRules(tx, p.payorId) : [];
+  return p ? loadApplicableRules(tx, p) : [];
 }
 
 // ---------------------------------------------------------------- create
@@ -104,7 +104,7 @@ export async function createPlan(ctx: OrgCtx, clientId: string, type: "initial" 
       include: { payors: true, authorizations: { orderBy: { endDate: "desc" }, take: 1 } },
     });
     const primary = client.payors.find((p) => p.priority === "primary");
-    const rules = primary ? await loadRules(tx, primary.payorId) : [];
+    const rules = primary ? await loadApplicableRules(tx, primary) : [];
     // Record the payor document versions this plan is written against.
     const docs = new Map<string, { key: string; name: string; version: string }>();
     for (const r of rules)

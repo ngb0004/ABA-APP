@@ -7,7 +7,7 @@
 import { withOrg, type OrgCtx } from "../db";
 import { toDay, type Day } from "../dates";
 import { HttpError, registerSensitiveName } from "../log";
-import { fundingContradicts, type PlanFunding } from "../payors/benefits";
+import { checksForInsurance, fundingContradicts, type PlanFunding } from "../payors/benefits";
 import type { EvalContext } from "../payors/context";
 import {
   RULE_CATEGORIES,
@@ -15,10 +15,10 @@ import {
   ruleCategory,
   type RequirementStatus,
 } from "../payors/categories";
-import { effectivePlanState, evaluateRules, planTypeFit, scopeFindings } from "../payors/evaluate";
+import { effectivePlanState, evaluateRules, scopeFindings } from "../payors/evaluate";
 import type { PlanType, Rule, ScopeFinding } from "../payors/types";
 import { requirePermission } from "../permissions";
-import { buildEvalContext, loadRules } from "./payors";
+import { applicableRules, buildEvalContext, loadRules } from "./payors";
 
 export type Requirement = {
   rule: Rule;
@@ -131,7 +131,7 @@ export async function clientRequirements(ctx: OrgCtx, clientId: string, asOf: Da
               sessions: sameAuth ? base.sessions : [],
             };
       const rules = await loadRules(tx, cp.payorId);
-      const applicable = rules.filter((r) => planTypeFit(r, planType) !== "no");
+      const applicable = applicableRules(rules, planType);
       const results = evaluateRules(applicable, evalCtx);
       const byGroup = new Map<string, Requirement[]>();
       for (const r of results) {
@@ -145,7 +145,7 @@ export async function clientRequirements(ctx: OrgCtx, clientId: string, asOf: Da
         });
         byGroup.set(key, list);
       }
-      const own = checks.filter((c) => c.clientPayorId === cp.id);
+      const own = checksForInsurance(checks, cp);
       insurances.push({
         id: cp.id,
         priority: cp.priority,

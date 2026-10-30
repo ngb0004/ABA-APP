@@ -265,7 +265,7 @@ describe("practice settings and team", () => {
     expect(after.seededAsOf).toBe((before.settings as Record<string, unknown>).seededAsOf);
   });
 
-  it("saves the states the practice serves, defaulting to its office states", async () => {
+  it("saves the states the practice serves, defaulting to its office states until chosen", async () => {
     const before = (await practiceSettings(bcba)).org;
     const base = {
       name: before.name,
@@ -275,8 +275,11 @@ describe("practice settings and team", () => {
       reauthLeadDays: 35,
       reassessmentLeadDays: 45,
     };
+    // Never chosen: the office states.
+    expect(orgSettings({ offices: base.offices }).statesServed).toEqual(["GA"]);
+    // Cleared on purpose: stays cleared (not silently back to the office states).
     await updateSettings(bcba, { ...base, statesServed: [] });
-    expect(orgSettings((await practiceSettings(bcba)).org.settings).statesServed).toEqual(["GA"]);
+    expect(orgSettings((await practiceSettings(bcba)).org.settings).statesServed).toEqual([]);
     await updateSettings(bcba, { ...base, statesServed: ["SC", "GA", "SC"] });
     const saved = (await practiceSettings(bcba)).org.settings;
     expect((saved as { statesServed: string[] }).statesServed).toEqual(["GA", "SC"]);
@@ -289,7 +292,7 @@ describe("practice settings and team", () => {
       tx.auditEvent.count({ where: { action: "org:settings_update", entityId: bcba.orgId } }),
     );
     expect(audit).toBeGreaterThan(0);
-    await updateSettings(bcba, { ...base, statesServed: [] });
+    await updateSettings(bcba, { ...base, statesServed: ["GA"] });
   });
 
   it("adds, re-roles, and removes members; always keeps a BCBA", async () => {

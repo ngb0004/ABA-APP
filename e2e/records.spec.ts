@@ -1,5 +1,5 @@
 import { expect, test, type Locator } from "@playwright/test";
-import { login } from "./helpers";
+import { api, login } from "./helpers";
 
 /** Fill a RecordForm field by its label (inputs carry ids, labels point at them). */
 const fill = (form: Locator, label: string, value: string) =>
@@ -130,6 +130,92 @@ test("a BCBA enters a fictional client end to end: details, insurance, diagnosis
   );
 });
 
+/** No sideways page scroll, and the element (when given) fits inside the viewport. */
+async function fitsPhone(page: import("@playwright/test").Page, what: string, el?: Locator) {
+  const { scroll, inner } = await page.evaluate(() => ({
+    scroll: document.documentElement.scrollWidth,
+    inner: window.innerWidth,
+  }));
+  expect(scroll, `${what}: page scrolls sideways`).toBeLessThanOrEqual(inner);
+  if (el) {
+    const box = (await el.boundingBox())!;
+    expect(box.x, `${what}: left edge`).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width, `${what}: right edge`).toBeLessThanOrEqual(inner);
+  }
+}
+
+test("payor requirements: no insurance, a funding conflict, rule terms in Details, and phone width", async ({
+  page,
+}) => {
+  await login(page, "bcba@sample-practice.test");
+  const c = await api(page, "POST", "/api/clients", {
+    firstName: "Echo",
+    lastName: "Phonechild",
+    dob: "2021-07-08",
+    serviceAddress: { line1: "5 Fiction Way", city: "Example City", state: "GA", zip: "30000" },
+    fictional: true,
+  });
+  await page.goto(`/clients/${c.id}/requirements`);
+  await expect(page.getByText("No insurance on file")).toBeVisible();
+  await expect(page.getByTestId("requirements-insurance")).toHaveCount(0);
+
+  await page.goto(`/clients/${c.id}/records`);
+  await page.getByTestId("add-insurance").click();
+  const ins = page.getByTestId("insurance-form");
+  await pick(ins, "Payor", "Cigna / Evernorth");
+  await fill(ins, "Member ID", "SYN-CIG-505050");
+  await ins.getByTestId("insurance-form-submit").click();
+  const insPanel = page.getByTestId("records-insurance");
+  // Blank plan type: the row says what is missing.
+  await expect(insPanel.getByTestId("plan-type")).toHaveText("Plan type: Not recorded");
+  await insPanel.getByRole("button", { name: "Actions for insurance" }).click();
+  await insPanel.getByRole("menuitem", { name: "Edit" }).click();
+  const edit = page.getByRole("dialog");
+  await edit.getByLabel("Plan type", { exact: true }).selectOption({ label: "Commercial, fully insured" });
+  await edit.getByRole("button", { name: /Save/ }).click();
+  await expect(insPanel.getByTestId("plan-type")).toHaveText("Plan type: Commercial, fully insured");
+
+  // Phone width: the benefits check dialog fits on screen.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await fitsPhone(page, "records");
+  await insPanel.getByRole("button", { name: "Actions for insurance" }).click();
+  await insPanel.getByRole("menuitem", { name: "Record benefits check" }).click();
+  const bc = page.getByTestId("benefits-check-form");
+  await fitsPhone(page, "benefits check dialog", page.getByRole("dialog"));
+  await pick(bc, "How", "Payor portal");
+  await pick(bc, "ABA covered", "Yes");
+  await pick(bc, "Prior authorization required", "Yes");
+  await pick(bc, "Plan funding", "Self-funded employer (ERISA)");
+  await bc.getByTestId("benefits-check-form-submit").click();
+  await expect(insPanel.getByTestId("benefits-checked")).toContainText("Benefits last checked");
+
+  await page.goto(`/clients/${c.id}/requirements`);
+  await fitsPhone(page, "requirements");
+  const req = page.getByTestId("requirements-insurance");
+  await expect(req).toContainText("The latest benefits check disagrees with the plan type on record");
+  // The rule's raw terms are behind Details; the row leads with what it means for this client.
+  const row = req
+    .locator("[data-rule]")
+    .filter({ has: page.locator(".params-list") })
+    .first();
+  await expect(row.locator(".params-list")).toBeHidden();
+  await row.getByTestId("requirement-details").locator("summary").click();
+  await expect(row.locator(".params-list")).toBeVisible();
+
+  // The Payor rules page and its report dialog fit on a phone too.
+  await page.goto("/payors");
+  await fitsPhone(page, "payor rules");
+  const ga = page.locator('[data-payor="ga_medicaid"]');
+  if (!(await ga.evaluate((el) => (el as HTMLDetailsElement).open)))
+    await ga.locator("summary").first().click();
+  const rule = ga.locator("[data-rule]").first();
+  await rule.getByRole("button", { name: /^Actions for rule/ }).click();
+  await rule.getByRole("menuitem", { name: "Report a problem" }).click();
+  await fitsPhone(page, "report dialog", page.getByRole("dialog"));
+  await expect(page.getByRole("dialog").getByLabel("What's wrong?")).toBeInViewport();
+  await page.getByRole("dialog").getByRole("button", { name: "Cancel" }).click();
+});
+
 test("goal data entry by an RBT, and practice settings and team by a BCBA", async ({ page }) => {
   await login(page, "rbt@sample-practice.test");
   await page.goto("/clients");
@@ -150,16 +236,42 @@ test("goal data entry by an RBT, and practice settings and team by a BCBA", asyn
   await page.getByRole("link", { name: "Settings" }).click();
   const s = page.getByTestId("settings-form");
   await s.getByLabel(/Submit reauths/).fill("28");
-  // States served default to the office states (GA); add South Carolina.
-  await expect(s.getByLabel("GA", { exact: true })).toBeChecked();
-  await s.getByLabel("SC", { exact: true }).check();
+  // States served default to the office states (GA): chips with full names, not a wall of checkboxes.
+  const picked = s.getByTestId("picked-statesServed");
+  await expect(picked).toHaveText(/Georgia \(GA\)/);
+  await expect(s.locator('input[type="checkbox"]')).toHaveCount(0);
+  await s.getByLabel(/^Add to: States we serve/).selectOption("SC");
+  await expect(picked).toContainText("South Carolina (SC)");
   await s.getByTestId("settings-form-submit").click();
   await page.reload();
   await expect(page.getByTestId("settings-form").getByLabel(/Submit reauths/)).toHaveValue("28");
-  await expect(page.getByTestId("settings-form").getByLabel("SC", { exact: true })).toBeChecked();
+  await expect(page.getByTestId("picked-statesServed")).toContainText("South Carolina (SC)");
   await page.goto("/payors");
   await expect(page.getByTestId("state-filter")).toContainText("GA, SC");
   await expect(page.locator('[data-state-group="SC"]')).toContainText("No payor rules for this state yet");
+  // Clearing every state sticks (it does not come back as GA after a reload).
+  await page.goto("/settings");
+  const s2 = page.getByTestId("settings-form");
+  await s2.getByRole("button", { name: "Remove Georgia (GA)" }).click();
+  await s2.getByRole("button", { name: "Remove South Carolina (SC)" }).click();
+  await expect(s2.getByTestId("picked-statesServed")).toHaveText("None chosen");
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes("/api/settings") && r.request().method() === "PUT"),
+    s2.getByTestId("settings-form-submit").click(),
+  ]);
+  await page.reload();
+  await expect(page.getByTestId("picked-statesServed")).toHaveText("None chosen");
+  // Put Georgia back for the other tests.
+  await page
+    .getByTestId("settings-form")
+    .getByLabel(/^Add to: States we serve/)
+    .selectOption("GA");
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes("/api/settings") && r.request().method() === "PUT"),
+    page.getByTestId("settings-form").getByTestId("settings-form-submit").click(),
+  ]);
+  await page.reload();
+  await expect(page.getByTestId("picked-statesServed")).toHaveText(/Georgia \(GA\)/);
   await page.goto("/settings");
 
   await page.getByTestId("add-member").click();

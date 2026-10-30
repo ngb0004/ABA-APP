@@ -16,6 +16,8 @@ export type FieldSpec = {
     | "select"
     | "checkbox"
     | "checkboxes"
+    /** Several choices from a long list: the chosen ones as removable chips, plus an "Add" select. */
+    | "multiselect"
     | "list"
     | "password"
     | "email";
@@ -59,7 +61,11 @@ function blankFor(fields: FieldSpec[]): Values {
     v = set(
       v,
       f.name,
-      f.type === "checkbox" ? false : f.type === "checkboxes" || f.type === "list" ? [] : "",
+      f.type === "checkbox"
+        ? false
+        : f.type === "checkboxes" || f.type === "multiselect" || f.type === "list"
+          ? []
+          : "",
     );
   return v;
 }
@@ -101,6 +107,54 @@ function Input({
         {f.label}
       </label>
     );
+  if (f.type === "multiselect") {
+    const list = (value as string[]) ?? [];
+    const opts = f.options ?? [];
+    const labelOf = (v: string) => {
+      const o = opts.find((x) => optionValue(x) === v);
+      return o ? optionLabel(o) : v;
+    };
+    return (
+      <fieldset style={{ border: 0, padding: 0, margin: 0 }}>
+        <legend>{f.label}</legend>
+        <div className="picked-list" data-testid={`picked-${f.name}`}>
+          {list.length ? (
+            list.map((v) => (
+              <span key={v} className="picked">
+                {labelOf(v)}
+                <button
+                  type="button"
+                  className="icon-btn"
+                  aria-label={`Remove ${labelOf(v)}`}
+                  onClick={() => onChange(list.filter((x) => x !== v))}
+                >
+                  ×
+                </button>
+              </span>
+            ))
+          ) : (
+            <span className="muted">None chosen</span>
+          )}
+        </div>
+        <select
+          id={id}
+          aria-label={`Add to: ${f.label}`}
+          value=""
+          onChange={(e) => e.target.value && onChange([...list, e.target.value])}
+        >
+          <option value="">Add…</option>
+          {opts
+            .filter((o) => !list.includes(optionValue(o)))
+            .map((o) => (
+              <option key={optionValue(o)} value={optionValue(o)}>
+                {optionLabel(o)}
+              </option>
+            ))}
+        </select>
+        {f.help && <div className="muted">{f.help}</div>}
+      </fieldset>
+    );
+  }
   if (f.type === "checkboxes") {
     const list = (value as string[]) ?? [];
     return (
