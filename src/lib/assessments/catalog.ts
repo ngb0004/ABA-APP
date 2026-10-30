@@ -68,6 +68,13 @@ const ScaleSchema = z
     aliases: Aliases,
     /** Goal bank domain number whose templates fit this area (goal suggestions). */
     goal_domain: z.number().int().min(1).max(99).optional(),
+    /**
+     * What a higher score means: better skills, or more concern (symptoms, stress, problem
+     * behavior). A sub-scale without one takes its parent's. Unset: no direction is claimed.
+     */
+    higher_is: z.enum(["better", "worse"]).optional(),
+    /** false for composites and indexes that are not compared with the domains (lowest / highest). */
+    rank: z.boolean().optional(),
   })
   .strict();
 

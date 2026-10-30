@@ -12,13 +12,14 @@ import {
 import { formatScore, type AssessmentItem, type DisplayScore } from "@/lib/assessments/view";
 import { IMPORT_ACCEPT } from "@/lib/assessments/extract/detect";
 import { ASSESSMENT_SAMPLE_TYPES, DEMO_SAMPLES, isDemo } from "@/lib/demo";
+import { toDay } from "@/lib/dates";
 import { can, requirePermission } from "@/lib/permissions";
 import { listAssessments } from "@/lib/services/assessments";
 import { asOfToday, orNotFound, requirePageCtx, uuidParam } from "@/lib/server/page-session";
 
 export const metadata: Metadata = { title: "Assessments" };
 
-const score = (s: DisplayScore) => formatScore(s.kind, s.value, s.possible);
+const score = (s: DisplayScore) => formatScore(s.kind, s.value, s.possible, s.name);
 const signed = (n: number) => (n > 0 ? `+${n}` : String(n));
 
 function Meta({ i }: { i: AssessmentItem }) {
@@ -73,7 +74,7 @@ export default async function AssessmentsPage({ params }: { params: Promise<{ id
                 <span key={p.id}>
                   {k > 0 && " · "}
                   <Link href={`/assessments/imports/${p.id}`}>
-                    {catalogType(catalog, p.typeKey)?.name ?? p.typeKey} ({p.filename})
+                    {catalogType(catalog, p.typeKey)?.name ?? p.typeKey} (uploaded {toDay(p.createdAt)})
                   </Link>
                 </span>
               ))}
@@ -134,47 +135,39 @@ export default async function AssessmentsPage({ params }: { params: Promise<{ id
                     )}
                     {i.notes && <div className="muted">{i.notes}</div>}
                   </div>
-                  {i.source === "vbmapp_import" ? (
+                  {/* VB-MAPP rows need no menu: the date already opens the grid. */}
+                  {i.source !== "vbmapp_import" && canWrite && draft && type && (
                     <RowMenu
-                      name="VB-MAPP administration"
-                      actions={[{ label: "Open grid", href: i.href! }]}
-                    />
-                  ) : (
-                    canWrite &&
-                    draft &&
-                    type && (
-                      <RowMenu
-                        name="assessment"
-                        testId="assessment-menu"
-                        edit={{
-                          url: `${base}/${i.id}`,
-                          method: "PUT",
-                          fields: assessmentFields(type, i.module),
-                          extra: { typeKey: i.typeKey, module: i.module },
-                          initial: editValues(catalog, i),
-                          submitLabel: "Save draft",
-                        }}
-                        actions={
-                          canConfirm
-                            ? [
-                                {
-                                  label: "Confirm",
-                                  request: {
-                                    url: `${base}/${i.id}/confirm`,
-                                    confirm:
-                                      "Confirm these scores? Confirmed scores are locked and can be used in plans.",
-                                  },
+                      name="assessment"
+                      testId="assessment-menu"
+                      edit={{
+                        url: `${base}/${i.id}`,
+                        method: "PUT",
+                        fields: assessmentFields(type, i.module),
+                        extra: { typeKey: i.typeKey, module: i.module },
+                        initial: editValues(catalog, i),
+                        submitLabel: "Save draft",
+                      }}
+                      actions={
+                        canConfirm
+                          ? [
+                              {
+                                label: "Confirm",
+                                request: {
+                                  url: `${base}/${i.id}/confirm`,
+                                  confirm:
+                                    "Confirm these scores? Confirmed scores are locked and can be used in plans.",
                                 },
-                              ]
-                            : []
-                        }
-                        remove={{
-                          url: `${base}/${i.id}`,
-                          confirm: "Delete this draft assessment?",
-                          label: "Delete",
-                        }}
-                      />
-                    )
+                              },
+                            ]
+                          : []
+                      }
+                      remove={{
+                        url: `${base}/${i.id}`,
+                        confirm: "Delete this draft assessment?",
+                        label: "Delete",
+                      }}
+                    />
                   )}
                 </div>
               );
@@ -196,7 +189,7 @@ export default async function AssessmentsPage({ params }: { params: Promise<{ id
                       <tr key={r.key}>
                         <th>{r.name}</th>
                         {r.cells.map((c, k) => (
-                          <td key={k}>{c ? formatScore(r.kind, c.value, c.possible) : "–"}</td>
+                          <td key={k}>{c ? formatScore(r.kind, c.value, c.possible, r.name) : "–"}</td>
                         ))}
                         <td>{r.change === null ? "–" : signed(r.change)}</td>
                       </tr>

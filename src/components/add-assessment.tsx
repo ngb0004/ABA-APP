@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { AddOption } from "./assessment-fields";
 import { RecordForm } from "./record-form";
 import { SamplePicker } from "./row-menu";
@@ -9,8 +9,12 @@ import { SamplePicker } from "./row-menu";
 type Mode = "enter" | "import";
 const TITLES: Record<Mode, string> = { enter: "Enter scores", import: "Import a file" };
 
+/** Everything a keyboard can reach inside an element, in order. */
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
 /**
- * The one "Add assessment" control: a dropdown with "Enter scores" and "Import a file". Either
+ * The one "Add assessment" control: a menu with "Enter scores" and "Import a file". Either
  * opens a dialog where the assessment is chosen first (grouped Skills / Standardized / Other),
  * because any file format can hold any assessment. VB-MAPP opens its workbook import page.
  */
@@ -29,18 +33,62 @@ export function AddAssessment(props: {
   const [chosen, setChosen] = useState<AddOption | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [menu, setMenu] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const wrap = useRef<HTMLDivElement>(null);
+  const dialog = useRef<HTMLDivElement>(null);
   const close = () => {
     setMode(null);
     setChosen(null);
     setError(null);
+    // Back to the control that opened the dialog.
+    trigger.current?.focus();
   };
 
   useEffect(() => {
+    if (!menu) return;
+    const shut = (e: MouseEvent | KeyboardEvent) => {
+      if (e instanceof KeyboardEvent ? e.key === "Escape" : !wrap.current?.contains(e.target as Node))
+        setMenu(false);
+    };
+    document.addEventListener("mousedown", shut);
+    document.addEventListener("keydown", shut);
+    return () => {
+      document.removeEventListener("mousedown", shut);
+      document.removeEventListener("keydown", shut);
+    };
+  }, [menu]);
+
+  useEffect(() => {
     if (!mode) return;
-    const esc = (e: KeyboardEvent) => e.key === "Escape" && close();
-    document.addEventListener("keydown", esc);
-    return () => document.removeEventListener("keydown", esc);
+    // Focus moves into the dialog (the assessment choice comes first) and Tab stays inside it.
+    dialog.current?.querySelector<HTMLElement>("#add-assessment-type")?.focus();
+    const keys = (e: KeyboardEvent) => {
+      if (e.key === "Escape") return close();
+      if (e.key !== "Tab" || !dialog.current) return;
+      const items = [...dialog.current.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
+        (el) => el.offsetParent !== null,
+      );
+      if (!items.length) return;
+      const first = items[0]!;
+      const last = items.at(-1)!;
+      const inside = dialog.current.contains(document.activeElement);
+      if (e.shiftKey && (document.activeElement === first || !inside)) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && (document.activeElement === last || !inside)) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", keys);
+    return () => document.removeEventListener("keydown", keys);
   }, [mode]);
+
+  const open = (m: Mode) => {
+    setMenu(false);
+    setMode(m);
+  };
 
   const options = props.groups.flatMap((g) => g.options);
   const title = mode === "enter" && chosen ? (chosen.title ?? chosen.label) : mode ? TITLES[mode] : "";
@@ -48,22 +96,31 @@ export function AddAssessment(props: {
 
   return (
     <div data-testid={props.testId}>
-      <select
-        className="inline-select"
-        aria-label="Add assessment"
-        value=""
-        onChange={(e) => {
-          const m = e.target.value as Mode;
-          if (m === "enter" || m === "import") setMode(m);
-        }}
-      >
-        <option value="">Add assessment…</option>
-        <option value="enter">Enter scores…</option>
-        <option value="import">Import a file…</option>
-      </select>
+      <div className="row-menu" ref={wrap}>
+        <button
+          ref={trigger}
+          type="button"
+          className="secondary"
+          aria-haspopup="menu"
+          aria-expanded={menu}
+          onClick={() => setMenu(!menu)}
+        >
+          Add assessment ▾
+        </button>
+        {menu && (
+          <div className="menu menu-left" role="menu">
+            <button type="button" role="menuitem" onClick={() => open("enter")}>
+              Enter scores…
+            </button>
+            <button type="button" role="menuitem" onClick={() => open("import")}>
+              Import a file…
+            </button>
+          </div>
+        )}
+      </div>
       {mode && (
         <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && close()}>
-          <div className="modal" role="dialog" aria-modal="true" aria-label={title}>
+          <div className="modal" role="dialog" aria-modal="true" aria-label={title} ref={dialog}>
             <div className="modal-head">
               <h3>{title}</h3>
               <button type="button" className="icon-btn" aria-label="Close" onClick={close}>

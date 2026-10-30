@@ -10,6 +10,8 @@ import {
   scalesFor,
 } from "@/lib/assessments/catalog";
 import { validateAssessment, AssessmentValidationError } from "@/lib/assessments/validate";
+import { assessmentFields, initialRows } from "@/components/assessment-fields";
+import { completeRows, customRowProblem, type CustomRowInput } from "@/lib/assessments/custom-row";
 import {
   assessmentItem,
   formatScore,
@@ -712,6 +714,27 @@ describe("grouping repeats", () => {
   });
 });
 
+describe("entry form fields", () => {
+  const sub = (typeKey: string, module: string | null = null) =>
+    (
+      assessmentFields(catalogType(catalog, typeKey)!, module).find((f) => f.name === "scores")!.fields ?? []
+    ).map((f) => f.name);
+  it("asks for possible points only where a scale takes them", () => {
+    for (const t of ["vineland_3", "srs_2", "pddbi", "psi_4", "sipa"])
+      expect(sub(t), t).toEqual(["scaleKey", "value"]);
+    expect(sub("ablls_r")).toEqual(["scaleKey", "value", "possible"]);
+    expect(sub("afls", "basic_living")).toEqual(["scaleKey", "value", "possible"]);
+  });
+  it("starting rows carry only the fields the form shows", () => {
+    expect(initialRows(catalogType(catalog, "srs_2")!, null)).toEqual([{ scaleKey: "total_t", value: "" }]);
+    expect(initialRows(catalogType(catalog, "ablls_r")!, null)[0]).toEqual({
+      scaleKey: "cooperation",
+      value: "",
+      possible: "",
+    });
+  });
+});
+
 describe("score display", () => {
   it("formats each kind", () => {
     expect(formatScore("score_of_possible", 12, 20)).toBe("12 / 20");
@@ -721,8 +744,43 @@ describe("score display", () => {
     expect(formatScore("percentile", 0.1, null)).toBe("0.1 percentile");
     expect(formatScore("percentile", 12, null)).toBe("12th percentile");
     expect(formatScore("percentile", 21, null)).toBe("21st percentile");
+    // A scale already named "... percentile" does not say it twice.
+    expect(formatScore("percentile", 85, null, "Total Stress percentile")).toBe("85th");
+    expect(formatScore("percentile", 85, null, "Total Stress")).toBe("85th percentile");
     expect(formatScore("percent", 45.5, null)).toBe("45.5%");
     expect(formatScore("raw", 77.5, 170)).toBe("77.5 / 170");
     expect(formatScore("age_equivalent_months", 30, null)).toBe("30 mo");
+  });
+});
+
+describe("hand-added scales on the import review", () => {
+  const row = (over: Partial<CustomRowInput>): CustomRowInput => ({
+    name: "",
+    kind: "",
+    value: "",
+    possible: "",
+    ...over,
+  });
+  it("a blank row is ignored and is not a score", () => {
+    expect(customRowProblem(row({}))).toBeNull();
+    expect(completeRows([row({})])).toEqual([]);
+  });
+  it("a partly filled row says what it still needs", () => {
+    expect(customRowProblem(row({ name: "Module 2 total" }))).toBe("choose the kind of score");
+    expect(customRowProblem(row({ value: "12" }))).toBe("enter a name");
+    expect(customRowProblem(row({ name: "X", kind: "raw" }))).toBe("enter a score");
+    expect(customRowProblem(row({ name: "X", kind: "score_of_possible", value: "4" }))).toBe(
+      "enter the possible points",
+    );
+    expect(customRowProblem(row({ name: "X", kind: "score_of_possible", value: "9", possible: "4" }))).toBe(
+      "more than possible",
+    );
+    expect(customRowProblem(row({ name: "X", kind: "raw", value: "9", possible: "4" }))).toBe(
+      "leave possible blank for this kind",
+    );
+  });
+  it("only complete rows count as scores", () => {
+    const done = row({ name: "X", kind: "raw", value: "9" });
+    expect(completeRows([row({}), row({ name: "Y" }), done])).toEqual([done]);
   });
 });

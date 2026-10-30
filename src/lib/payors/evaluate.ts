@@ -654,12 +654,17 @@ const EVALUATORS: Record<RuleType, Evaluator> = {
       const current = given.find((g) => dueBy(g.date) >= ctx.asOf);
       const newest = [...given].sort((x, y) => y.date.localeCompare(x.date))[0];
       const shown = current ?? newest;
+      // The rule's measure key ("PDDBI_teacher_or_BCBA") read as words.
+      const label = m.replace(/_/g, " ");
       if (shown) {
-        schedule.push(`${m} last given ${shown.date}: due by ${dueBy(shown.date)}`);
-        evidence.push(`${m}: ${shown.how} (${shown.date}), due ${cadence}`);
+        const next = dueBy(shown.date);
+        schedule.push(
+          `${label} last given ${shown.date}: ${next < ctx.asOf ? `overdue since ${next}` : `due by ${next}`}`,
+        );
+        evidence.push(`${label}: ${shown.how} (${shown.date}), due ${cadence}`);
       }
       if (!current)
-        missing.push(newest ? `${m} (${cadence}; last given ${newest.date})` : `${m} (${cadence})`);
+        missing.push(newest ? `${label} (${cadence}; last given ${newest.date})` : `${label} (${cadence})`);
     }
     if (p.full_publisher_report_required === true)
       evidence.push("Full publisher report required for each measure");

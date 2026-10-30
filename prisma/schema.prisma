@@ -408,6 +408,10 @@ model Assessment {
   reviewerId     String?   @db.Uuid
   reviewedAt     DateTime?
   notes          String?
+  /// Token series ("vineland_3", "pddbi_parent") and number within it, stored when confirmed and
+  /// never reassigned: tokens are "assessment.<seriesKey>.<seriesNumber>".
+  seriesKey      String?
+  seriesNumber   Int?
   createdById    String?   @db.Uuid
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
@@ -416,6 +420,8 @@ model Assessment {
   fromImport AssessmentImport? @relation(fields: [importId], references: [id])
   scores     AssessmentScore[]
 
+  // A partial unique index on importId (one assessment per import) is in the SQL migration.
+  @@unique([clientId, seriesKey, seriesNumber])
   @@index([clientId, administeredOn])
   @@map("assessment")
 }
@@ -768,24 +774,24 @@ model Plan {
 }
 
 model PlanSection {
-  id           String    @id @default(uuid()) @db.Uuid
-  orgId        String    @map("org_id") @db.Uuid
-  planId       String    @db.Uuid
-  key          String
-  ordinal      Int
-  title        String
-  state        String    @default("draft") // draft | edited | approved
+  id            String    @id @default(uuid()) @db.Uuid
+  orgId         String    @map("org_id") @db.Uuid
+  planId        String    @db.Uuid
+  key           String
+  ordinal       Int
+  title         String
+  state         String    @default("draft") // draft | edited | approved
   /// Last AI draft (tokenized, firewall-validated).
-  aiDraft      String?
+  aiDraft       String?
   /// Current content (tokenized). Rendered by substituting sourced values.
-  content      String    @default("")
+  content       String    @default("")
   /// {itemKey: {status: "answered"|"none", note?}}
-  items        Json      @default("{}")
-  approvedById String?   @db.Uuid
-  approvedAt   DateTime?
+  items         Json      @default("{}")
+  approvedById  String?   @db.Uuid
+  approvedAt    DateTime?
   /// Why this section needs a redraft (e.g. the plan's assessments changed); null when it does not.
   redraftReason String?
-  updatedAt    DateTime  @updatedAt
+  updatedAt     DateTime  @updatedAt
 
   plan      Plan                  @relation(fields: [planId], references: [id])
   revisions PlanSectionRevision[]

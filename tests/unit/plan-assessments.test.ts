@@ -10,6 +10,8 @@ import {
   sectionsUsingAssessments,
   seriesKey,
   seriesNumbers,
+  nextSeriesNumber,
+  DIRECTION_FACT,
   usedAssessments,
 } from "@/lib/assessments/plan";
 import { assessmentItem, type StoredAssessment } from "@/lib/assessments/view";
@@ -27,7 +29,11 @@ import { readFileSync } from "node:fs";
 const catalog = assessmentCatalog();
 const CLIENT = "00000000-0000-4000-8000-000000000001";
 
-type Row = StoredAssessment & { reviewedAt: Date | null };
+type Row = StoredAssessment & {
+  reviewedAt: Date | null;
+  seriesKey?: string | null;
+  seriesNumber?: number | null;
+};
 let seq = 0;
 function row(over: Partial<Row> & { typeKey: string; administeredOn: Date }): Row {
   seq++;
@@ -151,6 +157,53 @@ describe("series keys and numbers", () => {
     expect(seriesKey(catalog, other)).toBe("other_ados_2");
   });
 
+  it("a stored number never changes: a back-dated administration confirmed later gets the next one", () => {
+    const stored = (r: Row, n: number) => ({ ...r, seriesKey: "vineland_3", seriesNumber: n });
+    const a = stored(vinelandOld, 1);
+    const b = stored(vinelandNew, 2);
+    const older = row({
+      typeKey: "vineland_3",
+      administeredOn: day("2024-03-01"),
+      scores: [score("abc", 60)],
+    });
+    expect(nextSeriesNumber(catalog, [a, b], older)).toEqual({ series: "vineland_3", n: 3, backfill: [] });
+    const n = seriesNumbers(catalog, [a, b, { ...older, seriesKey: "vineland_3", seriesNumber: 3 }]);
+    expect(n.get(vinelandOld.id)).toEqual({ series: "vineland_3", n: 1 });
+    expect(n.get(vinelandNew.id)).toEqual({ series: "vineland_3", n: 2 });
+    expect(n.get(older.id)).toEqual({ series: "vineland_3", n: 3 });
+  });
+
+  it("rows confirmed before numbers were stored keep their date order, and are stored on the next confirm", () => {
+    const older = row({
+      typeKey: "vineland_3",
+      administeredOn: day("2024-03-01"),
+      scores: [score("abc", 60)],
+    });
+    expect(nextSeriesNumber(catalog, all, older)).toEqual({
+      series: "vineland_3",
+      n: 3,
+      backfill: [
+        { id: vinelandOld.id, series: "vineland_3", n: 1 },
+        { id: vinelandNew.id, series: "vineland_3", n: 2 },
+        { id: other.id, series: "other_ados_2", n: 1 },
+        { id: ablls.id, series: "ablls_r", n: 1 },
+      ],
+    });
+  });
+
+  it("'previous administration' facts follow dates, not token numbers", () => {
+    const later = { ...vinelandOld, seriesKey: "vineland_3", seriesNumber: 2 };
+    const earlier = { ...vinelandNew, seriesKey: "vineland_3", seriesNumber: 1 };
+    // Token 1 is the newer administration here; its previous one is token 2.
+    const ctx = new SourcedContext(
+      assessmentValues(catalog, CLIENT, [later, earlier], [later.id, earlier.id]),
+    );
+    expect(ctx.get("assessment.vineland_3.1.abc")!.facts).toContain(
+      "higher than at the previous selected administration ({{assessment.vineland_3.2.date}})",
+    );
+    expect(ctx.get("assessment.vineland_3.2.abc")!.facts!.join(" ")).not.toMatch(/previous/);
+  });
+
   it("numbers confirmed administrations oldest first, whether or not they are selected", () => {
     const n = seriesNumbers(catalog, all);
     expect(n.get(vinelandOld.id)).toEqual({ series: "vineland_3", n: 1 });
@@ -223,8 +276,63 @@ describe("assessment tokens", () => {
       "highest area of this assessment by share of possible points",
     );
     expect(v("assessment.vineland_3.2.socialization").facts).toContain(
-      "lowest standard score among this assessment's main scores",
+      "lowest standard score among this assessment's main domains, where a higher score means stronger skills: the area of greatest need among them",
     );
+    // The composite is not ranked with the domains it summarizes.
+    expect(v("assessment.vineland_3.2.abc").facts!.join(" ")).not.toMatch(/lowest|highest/);
+    expect(v("assessment.vineland_3.2.abc").facts).toContain(DIRECTION_FACT.better);
+  });
+
+  it("ranks only scales of the same direction; indexes and composites are never ranked", () => {
+    // The maladaptive index (v-scale, higher means more concern) is never the "lowest domain".
+    const vin = row({
+      typeKey: "vineland_3",
+      administeredOn: day("2026-05-01"),
+      scores: [
+        score("abc", 71),
+        score("communication", 69),
+        score("daily_living", 76),
+        score("socialization", 66),
+        score("maladaptive_index", 18),
+        score("internalizing", 17),
+      ],
+    });
+    const vc = new SourcedContext(assessmentValues(catalog, CLIENT, [vin], [vin.id]));
+    expect(vc.get("assessment.vineland_3.1.socialization")!.facts!.join(" ")).toMatch(
+      /lowest.*greatest need/,
+    );
+    expect(vc.get("assessment.vineland_3.1.maladaptive_index")!.facts).toEqual([DIRECTION_FACT.worse]);
+    // A sub-scale takes its parent's direction.
+    expect(vc.get("assessment.vineland_3.1.internalizing")!.facts).toEqual([DIRECTION_FACT.worse]);
+    // PDDBI (Charlie's parent form): problem and approach domains are never ranked together.
+    const pddbi = row({
+      typeKey: "pddbi",
+      form: "parent",
+      administeredOn: day("2026-04-13"),
+      scores: [
+        score("autism_composite", 63),
+        score("ritualisms", 66),
+        score("social_approach", 38),
+        score("expressive_language", 41),
+      ],
+    });
+    const pc = new SourcedContext(assessmentValues(catalog, CLIENT, [pddbi], [pddbi.id]));
+    const f = (k: string) => pc.get(`assessment.pddbi_parent.1.${k}`)!.facts ?? [];
+    expect(f("social_approach")).toEqual([DIRECTION_FACT.better]);
+    expect(f("ritualisms")).toEqual([DIRECTION_FACT.worse]);
+    expect(f("autism_composite")).toEqual([DIRECTION_FACT.worse]);
+    // With three problem domains they are ranked by concern.
+    const more = row({
+      typeKey: "pddbi",
+      form: "teacher",
+      administeredOn: day("2026-04-14"),
+      scores: [score("ritualisms", 66), score("aggressiveness", 52), score("specific_fears", 58)],
+    });
+    const mc = new SourcedContext(assessmentValues(catalog, CLIENT, [more], [more.id]));
+    expect(mc.get("assessment.pddbi_teacher.1.ritualisms")!.facts).toContain(
+      "highest T-score among this assessment's main problem scales, where a higher score means more concern: the area of greatest concern among them",
+    );
+    expect(mc.get("assessment.pddbi_teacher.1.aggressiveness")!.facts!.join(" ")).toMatch(/least concern/);
   });
 
   it("says higher or lower than the previous selected administration", () => {
@@ -330,6 +438,12 @@ describe("redraft marking after the selection changes", () => {
     expect(redraftMarks([sec("assessment_results", "not_applicable", "Text")])).toEqual([]);
     expect(redraftMarks([sec("medical_necessity", "approved", "Text")])).toEqual([]);
   });
+
+  it("also flags any other section whose text cites an assessment token", () => {
+    expect(
+      redraftMarks([sec("medical_necessity", "approved", "ABC was {{assessment.vineland_3.1.abc}}.")]),
+    ).toEqual([{ key: "medical_necessity", state: "draft", reopened: true }]);
+  });
 });
 
 // ---------------------------------------------------------------- payor rule tool names
@@ -419,7 +533,7 @@ describe("outcome measure due dates from confirmed assessments", () => {
     );
     expect(late.status).toBe("fail");
     expect(late.message).toBe("Outcome measures due: Vineland-3 (every year; last given 2025-10-01)");
-    expect(late.schedule).toEqual(["Vineland-3 last given 2025-10-01: due by 2026-10-01"]);
+    expect(late.schedule).toEqual(["Vineland-3 last given 2025-10-01: overdue since 2026-10-01"]);
     // Due on the anniversary itself is still current.
     const onDay = evaluateRule(
       rule({ annually: ["Vineland-3"] }),
@@ -435,18 +549,18 @@ describe("outcome measure due dates from confirmed assessments", () => {
     );
     expect(r.status).toBe("fail");
     expect(r.message).toBe(
-      "Outcome measures due: PDDBI_teacher_or_BCBA (every six months; last given 2026-01-15)",
+      "Outcome measures due: PDDBI teacher or BCBA (every six months; last given 2026-01-15)",
     );
     expect(r.schedule).toEqual([
-      "PDDBI_parent last given 2026-06-01: due by 2026-12-01",
-      "PDDBI_teacher_or_BCBA last given 2026-01-15: due by 2026-07-15",
+      "PDDBI parent last given 2026-06-01: due by 2026-12-01",
+      "PDDBI teacher or BCBA last given 2026-01-15: overdue since 2026-07-15",
     ]);
     // A parent form does not count for the teacher form.
     const parentOnly = evaluateRule(
       rule({ every_6_months: ["PDDBI_teacher_or_BCBA"] }),
       ctxWith([given("pddbi", "2026-10-01", "parent")]),
     );
-    expect(parentOnly.message).toBe("Outcome measures due: PDDBI_teacher_or_BCBA (every six months)");
+    expect(parentOnly.message).toBe("Outcome measures due: PDDBI teacher or BCBA (every six months)");
   });
 
   it("'PSI or SIPA' is met by either", () => {
@@ -460,7 +574,7 @@ describe("outcome measure due dates from confirmed assessments", () => {
     expect(evaluateRule(rr, ctxWith([given("srs_2", "2025-01-10")])).status).toBe("pass");
     const due = evaluateRule(rr, ctxWith([given("srs_2", "2024-10-01")]));
     expect(due.status).toBe("fail");
-    expect(due.schedule).toEqual(["SRS-2 last given 2024-10-01: due by 2026-10-01"]);
+    expect(due.schedule).toEqual(["SRS-2 last given 2024-10-01: overdue since 2026-10-01"]);
   });
 
   it("initial: a baseline from the last six months", () => {

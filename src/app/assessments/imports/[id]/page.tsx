@@ -15,14 +15,15 @@ import { asOfToday, orNotFound, requirePageCtx, uuidParam } from "@/lib/server/p
 
 export const metadata: Metadata = { title: "Review score import" };
 
+/** Each format with its article, so the sentence reads "from an image (read with OCR)". */
 const FORMAT_LABELS: Record<string, string> = {
-  xlsx: "Excel workbook",
-  xls: "Excel workbook",
-  csv: "CSV file",
-  pdf: "PDF (text layer)",
-  image: "image (read with OCR)",
-  txt: "text file",
-  docx: "Word file",
+  xlsx: "an Excel workbook",
+  xls: "an Excel workbook",
+  csv: "a CSV file",
+  pdf: "a PDF (text layer)",
+  image: "an image (read with OCR)",
+  txt: "a text file",
+  docx: "a Word file",
 };
 
 export default async function AssessmentImportPage({ params }: { params: Promise<{ id: string }> }) {
@@ -53,9 +54,9 @@ export default async function AssessmentImportPage({ params }: { params: Promise
       <h1>Review score import</h1>
       <p className="page-sub">
         {type?.name ?? imp.typeKey}
-        {moduleName ? `: ${moduleName}` : ""} from {imp.filename}, a {FORMAT_LABELS[imp.format] ?? imp.format}
-        . Check every number against the file before confirming; nothing is saved until you do. The file
-        itself was not kept.
+        {moduleName ? `: ${moduleName}` : ""} from {FORMAT_LABELS[imp.format] ?? `a ${imp.format} file`}.
+        Check every number against the file before confirming; nothing is saved until you do. The file itself
+        was not kept.
       </p>
       {imp.status !== "pending" ? (
         <div className="panel" data-testid="import-closed">

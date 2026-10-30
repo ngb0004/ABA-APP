@@ -107,14 +107,26 @@ export function headerKind(text: string): ColKind | null {
   return null;
 }
 
-type Header = { cols: (ColKind | null)[]; labelCol: number };
+type Header = {
+  cols: (ColKind | null)[];
+  labelCol: number;
+  /** Spreadsheet and Word tables: each column's kind by its real column, empty cells included. */
+  byCol: Map<number, ColKind | null> | null;
+};
 
 /** A header line: no numbers, and at least one cell names a kind of score. */
 function asHeader(line: Line): Header | null {
   if (line.cells.some((c) => cellNumber(c) !== null || parseOfPossible(c.text))) return null;
   const cols = line.cells.map((c) => headerKind(c.text));
   if (!cols.some((k) => k && k !== "ignore")) return null;
-  return { cols, labelCol: Math.max(0, cols.indexOf(null)) };
+  let byCol: Map<number, ColKind | null> | null = null;
+  if (line.cells.every((c) => c.col !== undefined)) {
+    byCol = new Map();
+    line.cells.forEach((c, i) => {
+      if (!byCol!.get(c.col!)) byCol!.set(c.col!, cols[i] ?? null);
+    });
+  }
+  return { cols, labelCol: Math.max(0, cols.indexOf(null)), byCol };
 }
 
 // ---------------------------------------------------------------- labels
@@ -206,6 +218,15 @@ function valuesAfter(
     return n === null ? null : { value: n, possible: null, cell: c, kind: "unknown" };
   });
   if (!header) return { reads: reads.filter((r): r is Read => r !== null), aligned: false, bounded };
+  if (header.byCol && rest.every((c) => c.col !== undefined)) {
+    // Spreadsheet and Word tables: each value goes under the header cell in its own column.
+    const byCol = header.byCol;
+    const vals = reads
+      .filter((r): r is Read => r !== null)
+      .map((r) => ({ ...r, kind: byCol.get(r.cell.col!) ?? ("unknown" as const) }));
+    const aligned = vals.some((r) => r.kind !== "unknown");
+    return { reads: vals, aligned, bounded };
+  }
   const headerAfter = header.cols.slice(header.labelCol + 1);
   if (line.cells.length === header.cols.length && labelAt === header.labelCol) {
     // Same shape as the header: read each value under its own column.
@@ -374,7 +395,7 @@ export function proposeScores(args: {
     const h = asHeader(line);
     if (h) {
       if (cells.length === 1) {
-        // A one-cell heading like "Domain T-scores" sets the kind for the rows below it.
+        // A one-cell heading like "Domain T-scores" sets the kind for the unlabelled rows below it.
         const k = h.cols[0];
         sectionKind = k && k !== "score" && k !== "possible" && k !== "ignore" ? k : null;
         header = null;
@@ -395,8 +416,19 @@ export function proposeScores(args: {
     const { reads, aligned, bounded: isBounded } = valuesAfter(line, labelAt, header);
     if (isBounded) bounded.push(line.where);
     if (!reads.length) return;
-    const base: Confidence = aligned || m.impliedKind || sectionKind ? "high" : "medium";
-    const noHeader: ScoreFlag[] = aligned || m.impliedKind || sectionKind ? [] : ["no_column_header"];
+    // A one-line heading ("Percentile ranks") decides the kind of an unlabelled number: the
+    // scale's companion of that kind, or nothing when the scale has none.
+    let sectioned = false;
+    if (!aligned && !m.impliedKind && sectionKind && s.kind !== "score_of_possible") {
+      if (sectionKind !== s.kind) {
+        const c = companions(s).find((x) => x.kind === sectionKind);
+        if (!c) return;
+        s = c;
+      }
+      sectioned = true;
+    }
+    const base: Confidence = aligned || m.impliedKind || sectioned ? "high" : "medium";
+    const noHeader: ScoreFlag[] = aligned || m.impliedKind || sectioned ? [] : ["no_column_header"];
 
     if (s.kind === "score_of_possible") {
       const of = reads.find((r) => r.possible !== null);
@@ -404,6 +436,8 @@ export function proposeScores(args: {
       const score = reads.find((r) => r.kind === "score" || r.kind === "raw");
       const poss = reads.find((r) => r.kind === "possible");
       if (score && poss) return propose(s, score.value, poss.value, score.cell, m.alias.label, "high");
+      // Under a header, a row with no number in its score column has no score to propose.
+      if (aligned && !score) return;
       if (!aligned && reads.length === 2)
         return propose(s, reads[0]!.value, reads[1]!.value, reads[0]!.cell, m.alias.label, "medium", [
           "no_column_header",

@@ -3,7 +3,8 @@
  * deterministic extraction (no AI) → review screen → the BCBA checks every number and confirms
  * → a confirmed Assessment with provenance on each score. Or discard.
  *
- * Never stored: the file's bytes or text, names, birth dates, or IDs found in it (only flags).
+ * Never stored: the file's bytes or text, its uploaded name, or names, birth dates, or IDs found
+ * in it (only flags).
  * Permissions mirror the manual entry: upload and discard as `assessment:write`, confirm as
  * `assessment:confirm`, review as `client:read`.
  */
@@ -54,7 +55,12 @@ export function importableType(
   return { type, module };
 }
 
-const safeFilename = (name: string) => name.replace(/[^\w.\- ]/g, "_").slice(0, 120) || "upload";
+/**
+ * The name an import is stored under: the assessment type and the file's real extension, never
+ * the uploaded name (report files are often named after the child, with a birth date or ID).
+ */
+export const storedImportName = (typeKey: string, extension: string) =>
+  `${typeKey}.${extension.replace(/[^a-z0-9]/gi, "").toLowerCase() || "file"}`;
 
 export async function uploadAssessmentImport(
   ctx: OrgCtx,
@@ -85,7 +91,7 @@ export async function uploadAssessmentImport(
         clientId,
         typeKey: type.key,
         module,
-        filename: safeFilename(input.filename),
+        filename: storedImportName(type.key, file.extension),
         fileSha256: sha256(input.data),
         mime: file.mime,
         format: file.format,
@@ -204,6 +210,15 @@ export async function confirmAssessmentImport(
     const v = validateAssessment(catalog, { ...body, typeKey: imp.typeKey, module: imp.module }, asOf);
     if (!v.scores.length) throw new HttpError(422, "Enter at least one score before confirming");
 
+    // Claim the import first, atomically: of two confirms at once, only one finds it pending
+    // (the other waits on the row lock, then matches nothing). A unique index on
+    // assessment.importId backs this up.
+    const claimed = await tx.assessmentImport.updateMany({
+      where: { id: imp.id, status: "pending" },
+      data: { status: "confirmed", reviewerId: userId, reviewedAt: new Date(), phiStripped: imp.phiDetected },
+    });
+    if (claimed.count !== 1) throw new HttpError(409, "This import was already reviewed");
+
     const proposal = imp.parsed as unknown as Proposal;
     const proposed = new Map(proposal.scores.map((s) => [s.scaleKey, s]));
     let edited = 0;
@@ -259,10 +274,6 @@ export async function confirmAssessmentImport(
         };
       }),
     });
-    await tx.assessmentImport.update({
-      where: { id: imp.id },
-      data: { status: "confirmed", reviewerId: userId, reviewedAt: new Date(), phiStripped: imp.phiDetected },
-    });
     await audit(tx, {
       action: "assessment_import:confirm",
       entityType: "AssessmentImport",
@@ -297,10 +308,11 @@ export async function discardAssessmentImport(ctx: OrgCtx, importId: string) {
     });
     if (!imp) throw new HttpError(404, "Not found");
     if (imp.status !== "pending") throw new HttpError(409, "This import was already reviewed");
-    await tx.assessmentImport.update({
-      where: { id: importId },
+    const claimed = await tx.assessmentImport.updateMany({
+      where: { id: importId, status: "pending" },
       data: { status: "discarded", reviewerId: userId, reviewedAt: new Date() },
     });
+    if (claimed.count !== 1) throw new HttpError(409, "This import was already reviewed");
     await audit(tx, {
       action: "assessment_import:discard",
       entityType: "AssessmentImport",

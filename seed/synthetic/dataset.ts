@@ -348,8 +348,9 @@ export const DEMO_PASSWORD = "synthetic-demo-only";
  * 2: 23-section plans and goal records (dates, status, locked baselines).
  * 3: insurance plan types and plan states (and, in the same release, benefits checks).
  * 4: assessments other than VB-MAPP (Vineland-3, SRS-2, PDDBI, PSI-4, ABLLS-R, AFLS).
+ * 5: stored assessment token numbers.
  */
-export const SEED_VERSION = 4;
+export const SEED_VERSION = 5;
 
 export function buildDataset(asOf: Day): SynDataset {
   const orgId = sid("org:sample-practice");

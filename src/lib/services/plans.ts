@@ -10,8 +10,8 @@ import {
   defaultAssessmentSelection,
   redraftMarks,
   REDRAFT_REASON,
+  nextSeriesNumber,
   sameSelection,
-  seriesKey,
 } from "../assessments/plan";
 import { assessmentItem, newestFirst, vbmappItem } from "../assessments/view";
 import { audit, sha256 } from "../audit";
@@ -536,8 +536,8 @@ export async function reopenSection(ctx: OrgCtx, planId: string, key: string) {
 
 /**
  * The assessments this plan uses (assessment ids; verified VB-MAPP administrations are always
- * used). A change flags each section that drew on assessments for a redraft and reopens it if it
- * was approved. Nothing is approved automatically.
+ * used). A change among the confirmed ones flags each section that drew on assessments for a
+ * redraft and reopens it if it was approved. Nothing is approved automatically.
  */
 export async function setPlanAssessments(ctx: OrgCtx, planId: string, ids: string[]) {
   requirePermission(ctx.role, "section:edit");
@@ -556,7 +556,21 @@ export async function setPlanAssessments(ctx: OrgCtx, planId: string, ids: strin
     const next = found.map((a) => a.id);
     if (sameSelection(plan.assessmentIds, next)) return { changed: false, redraft: [] as string[] };
     await tx.plan.update({ where: { id: planId }, data: { assessmentIds: next } });
-    const marks = await markForRedraft(tx, ctx, plan.sections);
+    // Drafts give no values, so only a change among the confirmed ones reopens sections (a
+    // selected draft flags them when it is confirmed).
+    const confirmed = new Set(
+      (
+        await tx.assessment.findMany({
+          where: { id: { in: [...new Set([...plan.assessmentIds, ...next])] }, status: "confirmed" },
+          select: { id: true },
+        })
+      ).map((a) => a.id),
+    );
+    const usedChanged = !sameSelection(
+      plan.assessmentIds.filter((x) => confirmed.has(x)),
+      next.filter((x) => confirmed.has(x)),
+    );
+    const marks = usedChanged ? await markForRedraft(tx, ctx, plan.sections) : [];
     await audit(tx, {
       action: "plan:assessments",
       entityType: "Plan",
@@ -604,27 +618,41 @@ export async function markForRedraft(
 }
 
 /**
- * After an assessment is confirmed: plans that selected it (as a draft) now have its scores, and
- * a confirmed administration dated before others of its series renumbers their tokens. Either
- * way, open plans that use the series get their assessment sections flagged for a redraft.
+ * Stores the token number of an assessment that was just confirmed: the next one in its series,
+ * never reused or reassigned (a back-dated administration does not renumber the others). Rows
+ * confirmed before numbers were stored get theirs first, as they already read. A per-client
+ * lock keeps two confirms at once from taking the same number.
+ */
+export async function storeSeriesNumber(tx: Tx, assessmentId: string) {
+  const a = await tx.assessment.findUniqueOrThrow({ where: { id: assessmentId }, include: { scores: true } });
+  if (a.status !== "confirmed" || a.seriesNumber !== null) return;
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`assessment-series:${a.clientId}`}::text))`;
+  const others = await tx.assessment.findMany({
+    where: { clientId: a.clientId, status: "confirmed", id: { not: a.id } },
+    include: { scores: true },
+  });
+  const { series, n, backfill } = nextSeriesNumber(assessmentCatalog(), others, a);
+  for (const b of backfill)
+    await tx.assessment.update({ where: { id: b.id }, data: { seriesKey: b.series, seriesNumber: b.n } });
+  await tx.assessment.update({ where: { id: a.id }, data: { seriesKey: series, seriesNumber: n } });
+}
+
+/**
+ * After an assessment is confirmed: its token number is stored, and open plans that selected it
+ * (as a draft) now have its scores, so their assessment sections are flagged for a redraft.
+ * Token numbers never shift, so no other plan, and no finalized plan, changes.
  */
 export async function afterAssessmentConfirmed(tx: Tx, ctx: OrgCtx, assessmentId: string) {
-  const a = await tx.assessment.findUniqueOrThrow({ where: { id: assessmentId } });
-  const catalog = assessmentCatalog();
-  const series = seriesKey(catalog, a);
-  const sameSeries = (
-    await tx.assessment.findMany({ where: { clientId: a.clientId, typeKey: a.typeKey, status: "confirmed" } })
-  ).filter((x) => seriesKey(catalog, x) === series);
-  const renumbers = sameSeries.some((x) => x.id !== a.id && x.administeredOn > a.administeredOn);
+  await storeSeriesNumber(tx, assessmentId);
+  const a = await tx.assessment.findUniqueOrThrow({
+    where: { id: assessmentId },
+    select: { clientId: true },
+  });
   const plans = await tx.plan.findMany({
-    where: { clientId: a.clientId, status: { not: "finalized" } },
+    where: { clientId: a.clientId, status: { not: "finalized" }, assessmentIds: { has: assessmentId } },
     include: { sections: true },
   });
-  for (const p of plans) {
-    const affected =
-      p.assessmentIds.includes(a.id) || (renumbers && sameSeries.some((x) => p.assessmentIds.includes(x.id)));
-    if (affected) await markForRedraft(tx, ctx, p.sections);
-  }
+  for (const p of plans) await markForRedraft(tx, ctx, p.sections);
 }
 
 /** A deleted draft leaves every plan's selection. */

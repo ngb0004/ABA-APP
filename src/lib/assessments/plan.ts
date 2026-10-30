@@ -67,31 +67,63 @@ export function seriesKey(
   return parts.join("_");
 }
 
-type Dated = StoredAssessment & { reviewedAt: Date | null };
+type Dated = StoredAssessment & {
+  reviewedAt: Date | null;
+  /** Stored when confirmed (never reassigned). Null on rows confirmed before numbers were stored. */
+  seriesKey?: string | null;
+  seriesNumber?: number | null;
+};
+
+const byDate = (a: Dated, b: Dated) =>
+  toDay(a.administeredOn).localeCompare(toDay(b.administeredOn)) ||
+  (a.reviewedAt?.getTime() ?? 0) - (b.reviewedAt?.getTime() ?? 0) ||
+  a.id.localeCompare(b.id);
 
 /**
- * Each confirmed assessment's number within its series, oldest first (1, 2, ...). Numbering
- * counts every confirmed administration, selected or not, so a token keeps its meaning when the
- * selection changes. Confirmed rows are locked and never deleted.
+ * Each confirmed assessment's number within its series. The number is stored when the
+ * assessment is confirmed and never reassigned, so a token always names the same
+ * administration, whatever is confirmed later (a back-dated one gets the next number, not 1).
+ * Rows confirmed before numbers were stored follow, oldest first, as they always were numbered.
+ * Numbering counts every confirmed administration, selected or not. Confirmed rows are locked
+ * and never deleted.
  */
 export function seriesNumbers(catalog: Catalog, all: Dated[]): Map<string, { series: string; n: number }> {
-  const confirmed = all
-    .filter((a) => a.status === "confirmed")
-    .sort(
-      (a, b) =>
-        toDay(a.administeredOn).localeCompare(toDay(b.administeredOn)) ||
-        (a.reviewedAt?.getTime() ?? 0) - (b.reviewedAt?.getTime() ?? 0) ||
-        a.id.localeCompare(b.id),
-    );
-  const count = new Map<string, number>();
+  const confirmed = all.filter((a) => a.status === "confirmed");
   const out = new Map<string, { series: string; n: number }>();
-  for (const a of confirmed) {
+  const top = new Map<string, number>();
+  for (const a of confirmed)
+    if (a.seriesKey && a.seriesNumber) {
+      out.set(a.id, { series: a.seriesKey, n: a.seriesNumber });
+      top.set(a.seriesKey, Math.max(top.get(a.seriesKey) ?? 0, a.seriesNumber));
+    }
+  for (const a of confirmed.filter((x) => !out.has(x.id)).sort(byDate)) {
     const series = seriesKey(catalog, a);
-    const n = (count.get(series) ?? 0) + 1;
-    count.set(series, n);
+    const n = (top.get(series) ?? 0) + 1;
+    top.set(series, n);
     out.set(a.id, { series, n });
   }
   return out;
+}
+
+/**
+ * The number to store for an assessment being confirmed: one more than the highest in its series
+ * among the client's other confirmed assessments. Those without a stored number yet are listed
+ * in `backfill` (with the number they already read as) so they are stored first.
+ */
+export function nextSeriesNumber(
+  catalog: Catalog,
+  others: Dated[],
+  a: Dated,
+): { series: string; n: number; backfill: { id: string; series: string; n: number }[] } {
+  const rest = others.filter((x) => x.id !== a.id && x.status === "confirmed");
+  const numbers = seriesNumbers(catalog, rest);
+  const series = seriesKey(catalog, a);
+  const n = Math.max(0, ...[...numbers.values()].filter((x) => x.series === series).map((x) => x.n)) + 1;
+  const backfill = rest
+    .filter((x) => !(x.seriesKey && x.seriesNumber))
+    .sort(byDate)
+    .map((x) => ({ id: x.id, ...numbers.get(x.id)! }));
+  return { series, n, backfill };
 }
 
 const fmt = (n: number) => String(Math.round(n * 100) / 100);
@@ -214,8 +246,12 @@ export function assessmentValues(
           source: src(field),
         });
 
-    // The previous selected administration of the same series, for higher / lower facts.
-    const prev = used.filter((x) => x.series === u.series && x.n < u.n).at(-1);
+    // The previous selected administration of the same series (by date: `used` is oldest
+    // first), for higher / lower facts. Token numbers are stable, not chronological.
+    const prev = used
+      .slice(0, used.indexOf(u))
+      .filter((x) => x.series === u.series)
+      .at(-1);
     const facts = scoreFacts(a, prev?.item ?? null, prev ? tok(`${prev.base}.date`) : "");
     const names = new Map(a.scores.map((s) => [s.key, s.name]));
     for (const s of a.scores) {
@@ -279,9 +315,15 @@ export function assessmentValues(
   return out;
 }
 
+export const DIRECTION_FACT = {
+  better: "on this scale a higher score means stronger skills",
+  worse: "on this scale a higher score means more concern",
+} as const;
+
 /**
- * Qualitative facts, names only: the lowest and highest skill area by share of possible points,
- * areas fully scored, the lowest and highest domain among top-level scores of one kind, and
+ * Qualitative facts, names only: what a higher score means (from the catalog), the lowest and highest skill area by share of possible points,
+ * areas fully scored, the lowest and highest domain among top-level scores of one kind and
+ * direction (with what that means clinically), and
  * whether a score is higher or lower than at the previous selected administration.
  */
 export function scoreFacts(a: AssessmentItem, prev: AssessmentItem | null, prevDate: string) {
@@ -299,17 +341,37 @@ export function scoreFacts(a: AssessmentItem, prev: AssessmentItem | null, prevD
       if (share(s) === high) add(s.key, "highest area of this assessment by share of possible points");
     }
   }
-  for (const kind of ["standard", "t_score"] as const) {
-    const doms = a.scores.filter((s) => s.kind === kind && !s.parent);
-    if (doms.length < 3) continue;
-    const low = Math.min(...doms.map((s) => s.value));
-    const high = Math.max(...doms.map((s) => s.value));
-    if (low === high) continue;
-    for (const s of doms) {
-      if (s.value === low) add(s.key, `lowest ${KIND_LABELS[kind]} among this assessment's main scores`);
-      if (s.value === high) add(s.key, `highest ${KIND_LABELS[kind]} among this assessment's main scores`);
+  // Each score's direction, from the catalog: never assumed from the kind of score.
+  for (const s of a.scores) if (s.higherIs) add(s.key, DIRECTION_FACT[s.higherIs]);
+  // Domains are ranked only against domains of the same kind and direction; composites and
+  // indexes (rank: false), scales without a direction, and added scales are never ranked.
+  for (const kind of ["standard", "t_score"] as const)
+    for (const dir of ["better", "worse"] as const) {
+      const doms = a.scores.filter(
+        (s) => s.kind === kind && !s.parent && s.rank !== false && s.higherIs === dir,
+      );
+      if (doms.length < 3) continue;
+      const low = Math.min(...doms.map((s) => s.value));
+      const high = Math.max(...doms.map((s) => s.value));
+      if (low === high) continue;
+      const k = KIND_LABELS[kind];
+      for (const s of doms) {
+        if (s.value === low)
+          add(
+            s.key,
+            dir === "better"
+              ? `lowest ${k} among this assessment's main domains, where a higher score means stronger skills: the area of greatest need among them`
+              : `lowest ${k} among this assessment's main problem scales, where a higher score means more concern: the area of least concern among them`,
+          );
+        if (s.value === high)
+          add(
+            s.key,
+            dir === "better"
+              ? `highest ${k} among this assessment's main domains, where a higher score means stronger skills: the relative strength among them`
+              : `highest ${k} among this assessment's main problem scales, where a higher score means more concern: the area of greatest concern among them`,
+          );
+      }
     }
-  }
   if (prev)
     for (const s of a.scores) {
       const p = prev.scores.find((x) => x.key === s.key);
@@ -374,7 +436,7 @@ export type RedraftSection = {
 
 /**
  * Sections to flag for a redraft after the plan's assessments change: those that use
- * assessments and already have text. An approved section is reopened (draft when its text is
+ * assessments, or whose text cites an assessment token, and already have text. An approved section is reopened (draft when its text is
  * the untouched AI draft, otherwise edited), never approved again automatically. Sections
  * marked not applicable, and empty ones, are left alone.
  */
@@ -382,8 +444,10 @@ export function redraftMarks(
   sections: RedraftSection[],
 ): { key: string; state: string; reopened: boolean }[] {
   const uses = new Set(sectionsUsingAssessments(sections.map((s) => s.key)));
+  // Any other section whose text cites an assessment token (a BCBA may add one anywhere).
+  const cites = (content: string) => /\{\{\s*assessment\./.test(content);
   return sections
-    .filter((s) => uses.has(s.key) && s.state !== "not_applicable" && s.content.trim())
+    .filter((s) => (uses.has(s.key) || cites(s.content)) && s.state !== "not_applicable" && s.content.trim())
     .map((s) => {
       if (s.state !== "approved") return { key: s.key, state: s.state, reopened: false };
       const untouched = s.aiDraft !== null && s.content === s.aiDraft;

@@ -171,6 +171,93 @@ describe("assessments used in a plan", () => {
     expect(after.sourced.has("assessment.srs_2.2.total_t")).toBe(true);
   });
 
+  it("selecting or deselecting a draft reopens nothing: drafts give no values", async () => {
+    const d = await createAssessment(
+      bcba,
+      charlie,
+      {
+        typeKey: "srs_2",
+        administeredOn: "2026-10-18",
+        administeredBy: "BCBA-Q",
+        scores: [{ scaleKey: "total_t", value: 66 }],
+      },
+      AS_OF,
+    );
+    created.push(d.id);
+    const approve = () =>
+      withOrg(bcba, (tx) =>
+        tx.planSection.update({
+          where: { planId_key: { planId, key: "assessment_results" } },
+          data: { state: "approved", approvedById: bcba.userId, approvedAt: new Date(), redraftReason: null },
+        }),
+      );
+    await approve();
+    const base = (await selectionOf()).filter((x) => x !== d.id);
+    expect(await setPlanAssessments(bcba, planId, [...base, d.id])).toEqual({ changed: true, redraft: [] });
+    expect(await sectionOf("assessment_results")).toMatchObject({ state: "approved", redraftReason: null });
+    expect(await setPlanAssessments(bcba, planId, base)).toEqual({ changed: true, redraft: [] });
+    expect(await sectionOf("assessment_results")).toMatchObject({ state: "approved", redraftReason: null });
+  });
+
+  it("a back-dated administration confirmed later never renumbers tokens, in open or finalized plans", async () => {
+    const two = (await createPlan(bcba, charlie, "reauth")).id;
+    await setPlanAssessments(bcba, two, [vinelandOld, vinelandNew]);
+    // A BCBA may cite an assessment token in any section; this one is approved and finalized.
+    await withOrg(bcba, async (tx) => {
+      await tx.planSection.update({
+        where: { planId_key: { planId: two, key: "medical_necessity" } },
+        data: {
+          content: "ABC {{assessment.vineland_3.2.abc}}.",
+          state: "approved",
+          approvedById: bcba.userId,
+          approvedAt: new Date(),
+        },
+      });
+      await tx.plan.update({ where: { id: two }, data: { status: "finalized" } });
+    });
+    const values = async (id: string) =>
+      Object.fromEntries(
+        (await planView(bcba, id, AS_OF)).sourced
+          .filter((v) => v.key.startsWith("assessment.vineland_3."))
+          .map((v) => [v.key, v.value]),
+      );
+    const before = await values(two);
+    expect(before["assessment.vineland_3.2.abc"]).toBeDefined();
+
+    const older = await createAssessment(
+      bcba,
+      charlie,
+      {
+        typeKey: "vineland_3",
+        administeredOn: "2024-01-10",
+        administeredBy: "BCBA-Q",
+        scores: [{ scaleKey: "abc", value: 58 }],
+      },
+      AS_OF,
+    );
+    created.push(older.id);
+    await confirmAssessment(bcba, charlie, older.id);
+    const stored = await withOrg(bcba, (tx) =>
+      tx.assessment.findMany({
+        where: { id: { in: [vinelandOld, vinelandNew, older.id] } },
+        select: { id: true, seriesKey: true, seriesNumber: true },
+      }),
+    );
+    const n = (id: string) => stored.find((x) => x.id === id)!.seriesNumber;
+    expect([n(vinelandOld), n(vinelandNew), n(older.id)]).toEqual([1, 2, 3]);
+    // The finalized plan reads exactly as before, and its approved section was not reopened.
+    expect(await values(two)).toEqual(before);
+    const mn = await withOrg(bcba, (tx) =>
+      tx.planSection.findUniqueOrThrow({ where: { planId_key: { planId: two, key: "medical_necessity" } } }),
+    );
+    expect(mn).toMatchObject({ state: "approved", redraftReason: null });
+    // Selecting it in an open plan gives it the next number.
+    await setPlanAssessments(bcba, planId, [...(await selectionOf()), older.id]);
+    const keys = (await planView(bcba, planId, AS_OF)).sourced.map((v) => v.key);
+    expect(keys).toContain("assessment.vineland_3.3.abc");
+    expect(keys).toContain("assessment.vineland_3.2.abc");
+  });
+
   it("deleting a selected draft drops it from the selection", async () => {
     const d = await createAssessment(
       bcba,

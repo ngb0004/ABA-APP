@@ -32,6 +32,9 @@ function scaleOption(s: {
   return { value: s.key, label: `${s.name} (${KIND_LABELS[s.kind]}${range})` };
 }
 
+/** Whether a score row has a "Possible" field: only when a listed scale takes one. */
+const takesPossible = (scales: { kind: string }[]) => scales.some((s) => s.kind === "score_of_possible");
+
 export function assessmentFields(t: CatalogType, module: string | null): FieldSpec[] {
   const scales = scalesFor(t, module);
   const fields: FieldSpec[] = [];
@@ -66,6 +69,8 @@ export function assessmentFields(t: CatalogType, module: string | null): FieldSp
       optional: true,
       options: t.respondents.map((r) => ({ value: r.key, label: r.name })),
     });
+  // "Possible" only where a listed scale takes one (skill areas), never on standard scores.
+  const ofPossible = scales.filter((s) => s.kind === "score_of_possible").length;
   if (scales.length)
     fields.push({
       name: "scores",
@@ -75,14 +80,16 @@ export function assessmentFields(t: CatalogType, module: string | null): FieldSp
       fields: [
         { name: "scaleKey", label: "Scale", type: "select", options: scales.map(scaleOption) },
         { name: "value", label: "Score", type: "number" },
-        {
-          name: "possible",
-          label: "Possible",
-          type: "number",
-          help: scales.some((s) => s.kind === "score_of_possible")
-            ? "Score-of-possible areas only"
-            : undefined,
-        },
+        ...(ofPossible
+          ? [
+              {
+                name: "possible",
+                label: "Possible",
+                type: "number" as const,
+                help: ofPossible < scales.length ? "Score-of-possible areas only" : undefined,
+              },
+            ]
+          : []),
       ],
     });
   if (t.customScales)
@@ -119,7 +126,11 @@ export function assessmentFields(t: CatalogType, module: string | null): FieldSp
 export function initialRows(t: CatalogType, module: string | null) {
   const scales = scalesFor(t, module);
   const pick = t.group === "skills" ? scales : scales.filter((s) => t.summary.includes(s.key));
-  return pick.map((s) => ({ scaleKey: s.key, value: "", possible: "" }));
+  return pick.map((s) => ({
+    scaleKey: s.key,
+    value: "",
+    ...(takesPossible(scales) ? { possible: "" } : {}),
+  }));
 }
 
 export type AddOption = {
@@ -174,7 +185,11 @@ export function editValues(catalog: Catalog, item: AssessmentItem): Record<strin
     notes: item.notes ?? "",
     scores: item.scores
       .filter((s) => known.includes(s.key))
-      .map((s) => ({ scaleKey: s.key, value: s.value, possible: s.possible ?? "" })),
+      .map((s) => ({
+        scaleKey: s.key,
+        value: s.value,
+        ...(takesPossible(t ? scalesFor(t, item.module) : []) ? { possible: s.possible ?? "" } : {}),
+      })),
     customScales: item.scores
       .filter((s) => !known.includes(s.key))
       .map((s) => ({ name: s.name, kind: s.kind, value: s.value, possible: s.possible ?? "" })),

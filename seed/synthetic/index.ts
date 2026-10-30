@@ -13,6 +13,7 @@ import { masteryDefaults, tokenizeMastery } from "../../src/lib/goals/tokenize";
 import { syncPayorLibrary } from "../../src/lib/payors/library";
 import { assessmentCatalog } from "../../src/lib/assessments/catalog";
 import { validateAssessment } from "../../src/lib/assessments/validate";
+import { seriesNumbers } from "../../src/lib/assessments/plan";
 import { buildDataset, SEED_VERSION, sid, type SynOrg } from "./dataset";
 
 const d = (day: Day) => new Date(`${day}T00:00:00Z`);
@@ -306,6 +307,13 @@ async function seedClient(
       })),
     });
   }
+  // Token numbers are stored at confirmation (oldest first here, as they were all confirmed at once).
+  const confirmed = await tx.assessment.findMany({
+    where: { clientId: c.id, status: "confirmed" },
+    include: { scores: true },
+  });
+  for (const [id, { series, n }] of seriesNumbers(assessmentCatalog(), confirmed))
+    await tx.assessment.update({ where: { id }, data: { seriesKey: series, seriesNumber: n } });
   const primaryDx = c.diagnoses.find((x) => x.isPrimary) ?? c.diagnoses[0]!;
   for (const goal of c.goals) {
     const dx = c.diagnoses.find((x) => x.deficitAreas.includes(goal.deficitArea)) ?? primaryDx;

@@ -69,7 +69,8 @@ describe("assessment score imports", () => {
       format: "pdf",
       mime: "application/pdf",
       phiDetected: false,
-      filename: "vineland3_scores.pdf",
+      // Never the uploaded name: report files are often named after the child.
+      filename: "vineland_3.pdf",
     });
     expect(review.import.fileSha256).toMatch(/^[0-9a-f]{64}$/);
     // Stored: the proposal only, never the file's text.
@@ -176,6 +177,39 @@ describe("assessment score imports", () => {
       tx.assessmentImport.findUniqueOrThrow({ where: { id: up.importId } }),
     );
     expect(after.phiStripped).toBe(true);
+  });
+
+  it("two confirms of one import at once save one assessment", async () => {
+    const up = await upload("ablls_r_areas.xlsx", "ablls_r");
+    const body = await reviewedBody(up.importId);
+    const results = await Promise.allSettled([
+      confirmAssessmentImport(bcba, up.importId, body, AS_OF),
+      confirmAssessmentImport(bcba, up.importId, body, AS_OF),
+    ]);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    const failed = results.find((r) => r.status === "rejected") as PromiseRejectedResult;
+    expect(failed.reason).toMatchObject({ status: 409 });
+    expect(await withOrg(bcba, (tx) => tx.assessment.count({ where: { importId: up.importId } }))).toBe(1);
+  });
+
+  it("the uploaded file name is never stored, whatever it holds", async () => {
+    const r = await uploadAssessmentImport(
+      bcba,
+      clientId("client3"),
+      {
+        filename: "Testchild_Charlie_DOB_2019-01-15_MBR123456789.txt",
+        data: fixture("pddbi_parent.txt"),
+        typeKey: "pddbi",
+      },
+      AS_OF,
+    );
+    made.push(r.importId);
+    const imp = await withOrg(bcba, (tx) =>
+      tx.assessmentImport.findUniqueOrThrow({ where: { id: r.importId } }),
+    );
+    expect(imp.filename).toBe("pddbi.txt");
+    const list = await listAssessments(bcba, clientId("client3"));
+    expect(JSON.stringify(list.pendingImports)).not.toMatch(/Testchild|2019|MBR/);
   });
 
   it("an image is read with local OCR; a discarded import saves nothing", async () => {

@@ -9,9 +9,13 @@ async function noSidewaysScroll(page: Page, what: string) {
   expect(scroll, `${what}: page scrolls sideways`).toBeLessThanOrEqual(inner);
 }
 
-/** The one "Add assessment" dropdown, then the assessment inside the dialog. */
+/** The one "Add assessment" menu, then the assessment inside the dialog. */
+async function openAdd(page: Page, mode: "Enter scores" | "Import a file") {
+  await page.getByRole("button", { name: /^Add assessment/ }).click();
+  await page.getByRole("menuitem", { name: `${mode}…` }).click();
+}
 async function chooseAdd(page: Page, mode: "Enter scores" | "Import a file", type: string) {
-  await page.getByRole("combobox", { name: "Add assessment" }).selectOption({ label: `${mode}…` });
+  await openAdd(page, mode);
   await page
     .getByRole("dialog", { name: mode })
     .getByRole("combobox", { name: "Assessment", exact: true })
@@ -148,10 +152,15 @@ test("assessments: import score files (image and PDF samples), check every numbe
   await page.goto(`/clients/${c1}/assessments`);
 
   // The assessment is chosen before any file: one format can hold any assessment.
-  await page.getByRole("combobox", { name: "Add assessment" }).selectOption({ label: "Import a file…" });
+  await openAdd(page, "Import a file");
   const dialog = page.getByRole("dialog", { name: "Import a file" });
   await expect(dialog.getByTestId("assessment-import")).toContainText("Choose the assessment first");
+  // Focus moves into the dialog, stays there on Tab, and returns to the menu button on close.
+  await expect(dialog.getByRole("combobox", { name: "Assessment", exact: true })).toBeFocused();
+  for (let i = 0; i < 4; i++) await page.keyboard.press("Tab");
+  expect(await dialog.evaluate((d) => d.contains(document.activeElement))).toBe(true);
   await dialog.getByRole("button", { name: "Close" }).click();
+  await expect(page.getByRole("button", { name: /^Add assessment/ })).toBeFocused();
 
   // An image, read with local OCR: every number shows where it was found. Then discard it.
   await loadSample(page, "SRS-2", "srs2_scores.png");
@@ -285,4 +294,81 @@ test("assessments in a plan: choose them, the section is flagged for a redraft, 
       .filter({ hasText: /^Vineland-3 last given .+: due by / })
       .first(),
   ).toBeVisible();
+});
+
+test("assessments: ABLLS-R goal suggestions, the long entry form at 640px, and an other assessment", async ({
+  page,
+}) => {
+  await login(page, "bcba@sample-practice.test");
+  const c1 = await openClient(page, "Alpha Testchild");
+
+  // Alpha's confirmed ABLLS-R suggests goals from its lowest skill areas; "+ Add goal" adds one.
+  await page.goto(`/clients/${c1}/goals`);
+  const suggestions = page.getByTestId("area-suggestion");
+  await expect(suggestions.first()).toBeVisible();
+  await expect(suggestions.first()).toContainText("ABLLS-R");
+  const goals = page.getByRole("heading", { level: 2, name: /^Goal \d+:/ });
+  const before = await goals.count();
+  await suggestions
+    .filter({ has: page.getByRole("button", { name: /^Add .* for / }) })
+    .first()
+    .getByRole("button")
+    .click();
+  await expect(goals).toHaveCount(before + 1);
+
+  // The ABLLS-R entry form has a row per skill area: at 640px it scrolls down, never sideways.
+  await page.goto(`/clients/${c1}/assessments`);
+  await page.setViewportSize({ width: 640, height: 900 });
+  await chooseAdd(page, "Enter scores", "ABLLS-R");
+  const form = page.getByRole("dialog", { name: "Add ABLLS-R" });
+  await expect(form.locator("[id$='-scores-0-possible']")).toBeVisible();
+  await noSidewaysScroll(page, "ABLLS-R entry form");
+  expect(await form.evaluate((d) => d.scrollWidth <= d.clientWidth)).toBe(true);
+  await form.getByRole("button", { name: "Close" }).click();
+  // Standard scores never ask for possible points.
+  await chooseAdd(page, "Enter scores", "Vineland-3");
+  const vin = page.getByRole("dialog", { name: "Add Vineland-3" });
+  await expect(vin.locator("[id$='-scores-0-value']")).toBeVisible();
+  await expect(vin.locator("[id$='-scores-0-possible']")).toHaveCount(0);
+  await vin.getByRole("button", { name: "Close" }).click();
+  await page.setViewportSize({ width: 1280, height: 900 });
+
+  // An assessment not in the catalog: the BCBA names it and its scores.
+  await chooseAdd(page, "Enter scores", "Other assessment");
+  const other = page.getByRole("dialog", { name: "Add Other assessment" });
+  await other.locator("#assessment-form-customName").fill("ADOS-2");
+  await other.locator("#assessment-form-administeredOn").fill("2026-10-22");
+  await other.locator("#assessment-form-administeredBy").fill("AS");
+  await other.locator("#assessment-form-customScales-0-name").fill("Overall total");
+  await other.locator("#assessment-form-customScales-0-kind").selectOption({ label: "raw score" });
+  await other.locator("#assessment-form-customScales-0-value").fill("14");
+  await other.getByTestId("assessment-form-submit").click();
+  await expect(other).toHaveCount(0);
+  const ados = page.getByTestId("assessment-group").filter({ hasText: "ADOS-2" });
+  await expect(ados.getByTestId("assessment-row")).toContainText("draft");
+  page.once("dialog", (d) => void d.accept());
+  await ados.getByRole("button", { name: "Actions for assessment" }).click();
+  await ados.getByRole("menuitem", { name: "Delete" }).click();
+  await expect(ados).toHaveCount(0);
+
+  // VB-MAPP rows need no ⋯ menu: the date opens the grid.
+  const vbmapp = page.getByTestId("assessment-group").filter({ hasText: "VB-MAPP" });
+  await expect(vbmapp.getByRole("button", { name: /^Actions for/ })).toHaveCount(0);
+});
+
+test("assessments: empty states on the list and in a plan", async ({ page }) => {
+  await login(page, "bcba@other-practice.test");
+  const c = await openClient(page, "Delta Otherorg");
+  await page.goto(`/clients/${c}/assessments`);
+  await expect(page.getByText("No assessments yet.")).toBeVisible();
+  await page.goto(`/clients/${c}`);
+  await page.getByTestId("new-initial-plan").click();
+  await page.waitForURL(/\/plans\//);
+  const panel = page.getByTestId("plan-assessments");
+  await panel.locator("summary").click();
+  await expect(panel).toContainText("No assessments on record.");
+  await expect(panel.getByRole("link", { name: "Add one" })).toHaveAttribute(
+    "href",
+    `/clients/${c}/assessments`,
+  );
 });

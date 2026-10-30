@@ -12,6 +12,10 @@
 #   forms / respondents: choices shown on the entry form (stored as keys)
 #   modules: AFLS-style modules, each with its own skill areas
 #   scales: key, name, kind, optional min/max, optional parent (a subdomain of another scale)
+#     higher_is (on a scale): better (skills) or worse (more concern: symptoms, stress, problem
+#       behavior). Sub-scales take their parent's. Unset means no direction is claimed in plans.
+#     rank: false for composites and indexes that are not compared with the domains as
+#       "lowest" or "highest" (an overall composite, a maladaptive index on another scale)
 #   summary: scale keys shown in the list and used in plan text
 #   summary_total: show the sum of the score-of-possible areas as the summary
 #   custom_scales: the BCBA may add areas or scales that are not listed here
@@ -133,8 +137,25 @@ assessments:
       - { key: clinician, name: Clinician, aliases: [BCBA, Examiner] }
       - { key: other, name: Other }
     scales:
-      - { key: abc, name: Adaptive Behavior Composite, kind: standard, min: 20, max: 140, aliases: [ABC] }
-      - { key: communication, name: Communication, kind: standard, min: 20, max: 140, aliases: [COM] }
+      - {
+          key: abc,
+          name: Adaptive Behavior Composite,
+          kind: standard,
+          min: 20,
+          max: 140,
+          aliases: [ABC],
+          higher_is: better,
+          rank: false,
+        }
+      - {
+          key: communication,
+          name: Communication,
+          kind: standard,
+          min: 20,
+          max: 140,
+          aliases: [COM],
+          higher_is: better,
+        }
       - {
           key: daily_living,
           name: Daily Living Skills,
@@ -142,9 +163,26 @@ assessments:
           min: 20,
           max: 140,
           aliases: [DLS, Daily Living],
+          higher_is: better,
         }
-      - { key: socialization, name: Socialization, kind: standard, min: 20, max: 140, aliases: [SOC] }
-      - { key: motor, name: Motor Skills, kind: standard, min: 20, max: 140, aliases: [MOT, Motor] }
+      - {
+          key: socialization,
+          name: Socialization,
+          kind: standard,
+          min: 20,
+          max: 140,
+          aliases: [SOC],
+          higher_is: better,
+        }
+      - {
+          key: motor,
+          name: Motor Skills,
+          kind: standard,
+          min: 20,
+          max: 140,
+          aliases: [MOT, Motor],
+          higher_is: better,
+        }
       - { key: abc_pct, name: Adaptive Behavior Composite percentile, kind: percentile, parent: abc }
       - { key: communication_pct, name: Communication percentile, kind: percentile, parent: communication }
       - {
@@ -193,6 +231,8 @@ assessments:
           kind: standard,
           min: 1,
           max: 24,
+          higher_is: worse,
+          rank: false,
         }
       - {
           key: internalizing,
@@ -223,7 +263,7 @@ assessments:
       - { key: adult, name: Adult Form }
     respondents: *respondents
     scales:
-      - { key: total_t, name: Total, kind: t_score, aliases: [SRS-2 Total, Total score] }
+      - { key: total_t, name: Total, kind: t_score, aliases: [SRS-2 Total, Total score], higher_is: worse }
       - { key: total_raw, name: Total raw score, kind: raw, parent: total_t }
       - {
           key: sci,
@@ -283,17 +323,29 @@ assessments:
     respondents: *respondents
     # Kept minimal on purpose; the BCBA adds any other domain T-scores reported.
     scales:
-      - { key: autism_composite, name: Autism Composite, kind: t_score }
-      - { key: sensory_perceptual, name: Sensory/Perceptual Approach Behaviors, kind: t_score }
-      - { key: ritualisms, name: Ritualisms/Resistance to Change, kind: t_score }
-      - { key: social_pragmatic, name: Social Pragmatic Problems, kind: t_score }
-      - { key: semantic_pragmatic, name: Semantic/Pragmatic Problems, kind: t_score }
-      - { key: arousal_regulation, name: Arousal Regulation Problems, kind: t_score }
-      - { key: specific_fears, name: Specific Fears, kind: t_score }
-      - { key: aggressiveness, name: Aggressiveness, kind: t_score }
-      - { key: social_approach, name: Social Approach Behaviors, kind: t_score }
-      - { key: expressive_language, name: Expressive Language, kind: t_score }
-      - { key: learning_memory_receptive, name: "Learning, Memory, and Receptive Language", kind: t_score }
+      # Problem domains: a higher T-score means more concern. Approach (competence) domains:
+      # a higher T-score means stronger skills. They are never ranked against each other.
+      - { key: autism_composite, name: Autism Composite, kind: t_score, higher_is: worse, rank: false }
+      - {
+          key: sensory_perceptual,
+          name: Sensory/Perceptual Approach Behaviors,
+          kind: t_score,
+          higher_is: worse,
+        }
+      - { key: ritualisms, name: Ritualisms/Resistance to Change, kind: t_score, higher_is: worse }
+      - { key: social_pragmatic, name: Social Pragmatic Problems, kind: t_score, higher_is: worse }
+      - { key: semantic_pragmatic, name: Semantic/Pragmatic Problems, kind: t_score, higher_is: worse }
+      - { key: arousal_regulation, name: Arousal Regulation Problems, kind: t_score, higher_is: worse }
+      - { key: specific_fears, name: Specific Fears, kind: t_score, higher_is: worse }
+      - { key: aggressiveness, name: Aggressiveness, kind: t_score, higher_is: worse }
+      - { key: social_approach, name: Social Approach Behaviors, kind: t_score, higher_is: better }
+      - { key: expressive_language, name: Expressive Language, kind: t_score, higher_is: better }
+      - {
+          key: learning_memory_receptive,
+          name: "Learning, Memory, and Receptive Language",
+          kind: t_score,
+          higher_is: better,
+        }
     summary: [autism_composite]
 
   - key: psi_4
@@ -306,11 +358,31 @@ assessments:
       - { key: full_length, name: Full-Length Form }
       - { key: short_form, name: Short Form }
     respondents: *respondents
+    # Full-Length Form scales. The Short Form reports different subscales; the BCBA adds them
+    # as custom scales (QUESTIONS_FOR_BCBA.md, Assessments).
     scales:
-      - { key: total_stress_pct, name: Total Stress percentile, kind: percentile, aliases: [Total Stress] }
+      - {
+          key: total_stress_pct,
+          name: Total Stress percentile,
+          kind: percentile,
+          aliases: [Total Stress],
+          higher_is: worse,
+        }
       - { key: total_stress_raw, name: Total Stress raw score, kind: raw, parent: total_stress_pct }
-      - { key: child_domain_pct, name: Child Domain percentile, kind: percentile, aliases: [Child Domain] }
-      - { key: parent_domain_pct, name: Parent Domain percentile, kind: percentile, aliases: [Parent Domain] }
+      - {
+          key: child_domain_pct,
+          name: Child Domain percentile,
+          kind: percentile,
+          aliases: [Child Domain],
+          higher_is: worse,
+        }
+      - {
+          key: parent_domain_pct,
+          name: Parent Domain percentile,
+          kind: percentile,
+          aliases: [Parent Domain],
+          higher_is: worse,
+        }
     summary: [total_stress_pct]
 
   - key: sipa
@@ -320,16 +392,44 @@ assessments:
     payor_names: [SIPA]
     custom_scales: true
     respondents: *respondents
+    # Total Stress is made up of three domains; Life Stress is reported separately.
     scales:
-      - { key: total_stress_pct, name: Total Stress percentile, kind: percentile, aliases: [Total Stress] }
+      - {
+          key: total_stress_pct,
+          name: Total Stress percentile,
+          kind: percentile,
+          aliases: [Total Stress],
+          higher_is: worse,
+        }
       - { key: total_stress_raw, name: Total Stress raw score, kind: raw, parent: total_stress_pct }
       - {
           key: adolescent_domain_pct,
           name: Adolescent Domain percentile,
           kind: percentile,
           aliases: [Adolescent Domain],
+          higher_is: worse,
         }
-      - { key: parent_domain_pct, name: Parent Domain percentile, kind: percentile, aliases: [Parent Domain] }
+      - {
+          key: parent_domain_pct,
+          name: Parent Domain percentile,
+          kind: percentile,
+          aliases: [Parent Domain],
+          higher_is: worse,
+        }
+      - {
+          key: adolescent_parent_relationship_pct,
+          name: Adolescent-Parent Relationship Domain percentile,
+          kind: percentile,
+          aliases: [Adolescent-Parent Relationship Domain, Adolescent-Parent Relationship],
+          higher_is: worse,
+        }
+      - {
+          key: life_stress_pct,
+          name: Life Stress percentile,
+          kind: percentile,
+          aliases: [Life Stress, Life Stressors],
+          higher_is: worse,
+        }
     summary: [total_stress_pct]
 
   - key: peak

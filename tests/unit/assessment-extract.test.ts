@@ -1,8 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
+import { deflateRawSync } from "node:zlib";
 import * as XLSX from "xlsx";
 import { catalogType, loadAssessmentCatalog, parseAssessmentCatalog } from "@/lib/assessments/catalog";
-import { detectFormat, MAX_IMPORT_BYTES } from "@/lib/assessments/extract/detect";
+import {
+  checkZipSize,
+  detectFormat,
+  MAX_IMPORT_BYTES,
+  MAX_UNZIPPED_BYTES,
+} from "@/lib/assessments/extract/detect";
 import { extractAssessmentFile, type Proposal } from "@/lib/assessments/extract";
 import {
   parseDay,
@@ -425,6 +431,64 @@ describe("file type checks (magic bytes)", () => {
     expect(() => detectFormat("scores.txt", Buffer.from([0x41, 0x00, 0x42]))).toThrow(/do not match/);
     expect(() => detectFormat("scores.csv", fixture("srs2_scores.png"))).toThrow(/do not match/);
   });
+  /** A minimal zip (deflated entries, central directory) for the decompression checks. */
+  const zip = (entries: [string, Buffer][]) => {
+    const locals: Buffer[] = [];
+    const centrals: Buffer[] = [];
+    let offset = 0;
+    for (const [name, raw] of entries) {
+      const data = deflateRawSync(raw);
+      const n = Buffer.from(name, "latin1");
+      const local = Buffer.alloc(30);
+      local.writeUInt32LE(0x04034b50, 0);
+      local.writeUInt16LE(8, 8);
+      local.writeUInt32LE(data.length, 18);
+      local.writeUInt32LE(raw.length, 22);
+      local.writeUInt16LE(n.length, 26);
+      const central = Buffer.alloc(46);
+      central.writeUInt32LE(0x02014b50, 0);
+      central.writeUInt16LE(8, 10);
+      central.writeUInt32LE(data.length, 20);
+      central.writeUInt32LE(raw.length, 24);
+      central.writeUInt16LE(n.length, 28);
+      central.writeUInt32LE(offset, 42);
+      locals.push(local, n, data);
+      centrals.push(central, n);
+      offset += 30 + n.length + data.length;
+    }
+    const cd = Buffer.concat(centrals);
+    const end = Buffer.alloc(22);
+    end.writeUInt32LE(0x06054b50, 0);
+    end.writeUInt16LE(entries.length, 8);
+    end.writeUInt16LE(entries.length, 10);
+    end.writeUInt32LE(cd.length, 12);
+    end.writeUInt32LE(offset, 16);
+    return Buffer.concat([...locals, cd, end]);
+  };
+  it("rejects Office files that inflate past the limit, whatever their sizes claim", () => {
+    const small = zip([
+      ["xl/workbook.xml", Buffer.from("<workbook/>")],
+      ["xl/worksheets/sheet1.xml", Buffer.from("<sheet/>")],
+    ]);
+    expect(detectFormat("ok.xlsx", small).format).toBe("xlsx");
+    const bomb = zip([
+      ["xl/workbook.xml", Buffer.from("<workbook/>")],
+      ["xl/worksheets/sheet1.xml", Buffer.alloc(MAX_UNZIPPED_BYTES + 1, 0x20)],
+    ]);
+    expect(bomb.length).toBeLessThan(1024 * 1024);
+    expect(() => detectFormat("bomb.xlsx", bomb)).toThrow(/too large once unpacked/);
+    // A central directory that understates the size is caught by inflating with a cap.
+    const lying = Buffer.from(bomb);
+    const cdAt = lying.readUInt32LE(lying.length - 6);
+    const second = cdAt + 46 + "xl/workbook.xml".length;
+    lying.writeUInt32LE(10, second + 24);
+    expect(() => detectFormat("bomb.xlsx", lying)).toThrow(/too large once unpacked/);
+    const docBomb = zip([["word/document.xml", Buffer.alloc(MAX_UNZIPPED_BYTES + 1, 0x20)]]);
+    expect(() => detectFormat("bomb.docx", docBomb)).toThrow(/too large once unpacked/);
+    // The real fixtures pass.
+    expect(() => checkZipSize(fixture("ablls_r_areas.xlsx"))).not.toThrow();
+    expect(() => checkZipSize(fixture("psi4_scores.docx"))).not.toThrow();
+  });
   it("rejects unsupported types, empty files, and files over 15 MB", () => {
     expect(() => detectFormat("macro.xlsm", fixture("ablls_r_areas.xlsx"))).toThrow(/Upload an Excel/);
     expect(() => detectFormat("x.exe", Buffer.from("MZ"))).toThrow(/Upload an Excel/);
@@ -493,8 +557,8 @@ describe("readers", () => {
     XLSX.utils.book_append_sheet(wb, ws, "Scores");
     const lines = sheetLines(XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer, "xlsx");
     expect(lines[0]!.cells).toEqual([
-      { text: "Total", where: "Scores!A1" },
-      { text: "74", where: "Scores!B1", num: 74 },
+      { text: "Total", where: "Scores!A1", col: 0 },
+      { text: "74", where: "Scores!B1", num: 74, col: 1 },
     ]);
   });
   it("a PDF with no text layer asks for an image or hand entry", async () => {
@@ -513,5 +577,110 @@ describe("readers", () => {
         asOf: AS_OF,
       }),
     ).rejects.toMatchObject({ status: 422, message: expect.stringMatching(/No text found in this PDF/) });
+  });
+});
+
+describe("one-line section headings pick the scale kind", () => {
+  it("a percentile heading files the number under the percentile companion", () => {
+    const p = propose("vineland_3", "Percentile ranks\nCommunication  45\nSocialization  30");
+    expect(table(p)).toEqual({
+      communication_pct: [45, null, "line 2"],
+      socialization_pct: [30, null, "line 3"],
+    });
+    expect(p.scores.every((s) => s.confidence === "high" && s.flags.length === 0)).toBe(true);
+  });
+  it("a raw-score heading files the number under the raw companion", () => {
+    expect(table(propose("psi_4", "Raw scores\nTotal Stress 85"))).toEqual({
+      total_stress_raw: [85, null, "line 2"],
+    });
+  });
+  it("a heading of a kind the scale has no companion for proposes nothing", () => {
+    expect(propose("srs_2", "Raw scores\nSocial Awareness  45").scores).toEqual([]);
+  });
+  it("a heading of the scale's own kind keeps it, at high confidence", () => {
+    const p = propose("srs_2", "T-scores\nSocial Awareness  45");
+    expect(p.scores[0]).toMatchObject({
+      scaleKey: "social_awareness",
+      value: 45,
+      confidence: "high",
+      flags: [],
+    });
+  });
+});
+
+describe("spreadsheet and Word columns", () => {
+  const book = (rows: (string | number | null)[][]) => {
+    const ws = XLSX.utils.aoa_to_sheet(rows.map((r) => r.map((c) => (c === null ? undefined : c))));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "S");
+    return XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
+  };
+  const fromSheet = (typeKey: string, rows: (string | number | null)[][]) =>
+    proposeScores({
+      catalog,
+      type: typeOf(typeKey),
+      module: null,
+      format: "xlsx",
+      lines: sheetLines(book(rows), "xlsx"),
+      asOf: AS_OF,
+    });
+
+  it("a blank cell keeps every other value under its own column", () => {
+    expect(
+      table(
+        fromSheet("srs_2", [
+          ["Scale", "Raw score", "T-score"],
+          ["Social Awareness", 45, null],
+          ["Total", 98, 74],
+        ]),
+      ),
+    ).toEqual({ total_raw: [98, null, "S!B3"], total_t: [74, null, "S!C3"] });
+    expect(
+      table(
+        fromSheet("vineland_3", [
+          ["Domain", "Standard score", "Percentile"],
+          ["Communication", null, 45],
+        ]),
+      ),
+    ).toEqual({ communication_pct: [45, null, "S!C2"] });
+    expect(
+      table(
+        fromSheet("psi_4", [
+          ["Scale", "Raw score", "Percentile"],
+          ["Child Domain", 60, null],
+        ]),
+      ),
+    ).toEqual({});
+  });
+  it("a score-of-possible area with only its possible points filled proposes nothing", () => {
+    expect(
+      fromSheet("ablls_r", [
+        ["Area", "Score", "Possible"],
+        ["Imitation", null, 34],
+      ]).scores,
+    ).toEqual([]);
+  });
+  it("a header with a blank first cell still lines up", () => {
+    const p = fromSheet("srs_2", [
+      [null, "Raw score", "T-score"],
+      ["Social Awareness", 12, 70],
+    ]);
+    expect(table(p)).toEqual({ social_awareness: [70, null, "S!C2"] });
+    expect(p.scores[0]!.confidence).toBe("high");
+  });
+  it("Word table cells keep their column, empty ones included", () => {
+    const lines = docxHtmlLines(
+      "<table><tr><td>Scale</td><td>Raw score</td><td>Percentile</td></tr>" +
+        "<tr><td>Total Stress</td><td>262</td><td></td></tr></table>",
+    );
+    const p = proposeScores({
+      catalog,
+      type: typeOf("psi_4"),
+      module: null,
+      format: "docx",
+      lines,
+      asOf: AS_OF,
+    });
+    expect(table(p)).toEqual({ total_stress_raw: [262, null, "table 1, row 2"] });
   });
 });

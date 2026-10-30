@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import type { Proposal, ProposedScore } from "@/lib/assessments/extract/match";
+import { completeRows, customRowProblem, isBlankRow } from "@/lib/assessments/custom-row";
 import { send } from "./actions";
 import { RowMenu } from "./row-menu";
 
@@ -99,9 +100,13 @@ export function ImportReview(props: {
   const found = props.scales.filter((s) => proposed.has(s.key));
   const missing = props.scales.filter((s) => !proposed.has(s.key));
   const unchecked = props.scales.filter((s) => rows[s.key]!.value.trim() !== "" && !rows[s.key]!.reviewed);
-  const entered = props.scales.filter((s) => rows[s.key]!.value.trim() !== "").length + custom.length;
+  // Hand-added rows count only when complete; partly filled ones block until finished or removed.
+  const unfinished = custom.filter((c) => customRowProblem(c) !== null).length;
+  const entered =
+    props.scales.filter((s) => rows[s.key]!.value.trim() !== "").length + completeRows(custom).length;
   const blockers = [
     unchecked.length > 0 && `${unchecked.length} score${unchecked.length === 1 ? "" : "s"} still to check`,
+    unfinished > 0 && `${unfinished} added row${unfinished === 1 ? "" : "s"} to finish or remove`,
     !head.administeredOn && "the date administered",
     !head.administeredBy.trim() && "your initials",
     props.phiDetected && !stripPhi && "confirming that no name, birth date, or ID is imported",
@@ -128,13 +133,15 @@ export function ImportReview(props: {
           reviewed: rows[s.key]!.reviewed,
         })),
       // Added by hand on this screen, so already checked by the person typing them.
-      customScales: custom.map((c) => ({
-        name: c.name,
-        kind: c.kind,
-        value: num(c.value),
-        possible: num(c.possible),
-        reviewed: true,
-      })),
+      customScales: custom
+        .filter((c) => !isBlankRow(c))
+        .map((c) => ({
+          name: c.name,
+          kind: c.kind,
+          value: num(c.value),
+          possible: num(c.possible),
+          reviewed: true,
+        })),
     });
     setBusy(false);
     if (!r.ok)
@@ -230,6 +237,7 @@ export function ImportReview(props: {
             <input
               id={`import-${s.key}-checked`}
               type="checkbox"
+              aria-label={`${s.name} checked against the file`}
               checked={row.reviewed}
               disabled={row.value.trim() === ""}
               onChange={(e) => edit(s.key, { reviewed: e.target.checked })}
@@ -371,8 +379,9 @@ export function ImportReview(props: {
             {custom.map((c, i) => {
               const set = (patch: Partial<CustomRow>) =>
                 setCustom(custom.map((x, k) => (k === i ? { ...x, ...patch } : x)));
+              const issue = customRowProblem(c);
               return (
-                <div key={i} className="row" data-testid="import-custom">
+                <div key={i} className="row" style={{ flexWrap: "wrap" }} data-testid="import-custom">
                   <input
                     aria-label="Name"
                     placeholder="Name"
@@ -412,6 +421,11 @@ export function ImportReview(props: {
                   >
                     ×
                   </button>
+                  {issue && (
+                    <span className="badge danger" data-testid="import-custom-problem">
+                      {issue}
+                    </span>
+                  )}
                 </div>
               );
             })}

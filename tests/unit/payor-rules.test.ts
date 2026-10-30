@@ -203,8 +203,12 @@ describe("rule types (evaluated as verified)", () => {
   it("outcome_measure_schedule: Client 3 measures are due (PDDBI stale, teacher form missing)", () => {
     const r = evaluateRule(verified(find("tricare_east", "outcome_measure_schedule")), ctx3);
     expect(r.status).toBe("fail");
-    expect(r.message).toMatch(/PDDBI_parent/);
-    expect(r.message).toMatch(/PDDBI_teacher_or_BCBA/);
+    // Rule keys read as words, and a stale one says it is overdue.
+    expect(r.message).toMatch(/PDDBI parent \(every six months; last given/);
+    expect(r.message).toMatch(/PDDBI teacher or BCBA \(every six months\)/);
+    expect(r.schedule!.find((x) => x.startsWith("PDDBI parent"))).toMatch(
+      /^PDDBI parent last given \d{4}-\d{2}-\d{2}: overdue since \d{4}-\d{2}-\d{2}$/,
+    );
     expect(r.message).not.toMatch(/PSI/);
     // From the confirmed assessments: the Vineland-3 given about two hundred days ago is due within the year.
     expect(r.schedule).toContain("Vineland-3 last given 2026-04-12: due by 2027-04-12");

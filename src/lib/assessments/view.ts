@@ -40,6 +40,10 @@ export type DisplayScore = {
   value: number;
   possible: number | null;
   parent: string | null;
+  /** What a higher score means (catalog; a sub-scale takes its parent's). Null: not claimed. */
+  higherIs?: "better" | "worse" | null;
+  /** False for composites and indexes that are never ranked against the domains. */
+  rank?: boolean;
   /** Computed here (a skills total), not a stored value. */
   computed?: boolean;
 };
@@ -98,6 +102,8 @@ export function assessmentItem(catalog: Catalog, _clientId: string, a: StoredAss
       value: s.value,
       possible: s.possible,
       parent: c?.parent ?? null,
+      higherIs: c?.higher_is ?? known.find((k) => k.key === c?.parent)?.higher_is ?? null,
+      rank: c ? c.rank !== false : true,
     };
   });
   // Catalog order first (so domains read in their usual order), then added scales as entered.
@@ -302,14 +308,17 @@ export function ordinal(n: number): string {
   return `${n}${["th", "st", "nd", "rd"][n % 10] ?? "th"}`;
 }
 
-/** A score as the BCBA reads it ("12 / 20", "T 62", "3rd percentile"). For display, never AI text. */
-export function formatScore(kind: ScaleKind, value: number, possible: number | null): string {
+/**
+ * A score as the BCBA reads it ("12 / 20", "T 62", "3rd percentile"). For display, never AI text.
+ * With the scale's name: a scale already named "... percentile" shows just "3rd".
+ */
+export function formatScore(kind: ScaleKind, value: number, possible: number | null, name?: string): string {
   if (possible !== null && possible !== undefined) return `${fmt(value)} / ${fmt(possible)}`;
   switch (kind) {
     case "t_score":
       return `T ${fmt(value)}`;
     case "percentile":
-      return `${ordinal(value)} percentile`;
+      return name && /\bpercentile\s*$/i.test(name) ? ordinal(value) : `${ordinal(value)} percentile`;
     case "percent":
       return `${fmt(value)}%`;
     case "age_equivalent_months":

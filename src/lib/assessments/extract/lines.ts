@@ -17,6 +17,11 @@ export type Cell = {
   date?: Day;
   /** OCR word confidence (0-100), lowest of the cell's words. */
   conf?: number;
+  /**
+   * The column a spreadsheet or Word table cell is in (0-based). Empty cells are skipped, so
+   * values are matched to a header by this, never by how many cells a row has.
+   */
+  col?: number;
 };
 export type Line = {
   where: string;

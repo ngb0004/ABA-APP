@@ -855,6 +855,11 @@ button.icon-btn[aria-expanded="true"] {
   display: flex;
   flex-direction: column;
 }
+/* A menu under a button at the start of a line opens to the right. */
+.row-menu .menu.menu-left {
+  left: 0;
+  right: auto;
+}
 .row-menu .menu button {
   background: transparent;
   color: var(--text);

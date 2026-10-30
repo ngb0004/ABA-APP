@@ -67,15 +67,16 @@ export function sheetLines(data: Buffer, format: "xlsx" | "xls" | "csv"): Line[]
         const cell = ws[addr] as XLSX.CellObject | undefined;
         if (!cell || cell.v === undefined || cell.v === null || cell.t === "e") continue;
         const where = label ? `${label}!${addr}` : `cell ${addr}`;
+        const col = c - range.s.c;
         if (cell.t === "n" && typeof cell.v === "number") {
           if (cell.z && XLSX.SSF.is_date(cell.z)) {
             const d = XLSX.SSF.parse_date_code(cell.v);
             const day = `${String(d.y).padStart(4, "0")}-${String(d.m).padStart(2, "0")}-${String(d.d).padStart(2, "0")}`;
-            cells.push({ text: day, where, date: day });
-          } else cells.push({ text: cell.w ?? String(cell.v), where, num: cell.v });
+            cells.push({ text: day, where, date: day, col });
+          } else cells.push({ text: cell.w ?? String(cell.v), where, num: cell.v, col });
         } else if (cell.t === "s" || cell.t === "b" || cell.t === "d") {
           const text = String(cell.w ?? cell.v).trim();
-          if (text) cells.push(...splitCell({ text, where }));
+          if (text) cells.push(...splitCell({ text, where, col }));
         }
       }
       if (cells.length)
@@ -282,8 +283,9 @@ export function docxHtmlLines(html: string): Line[] {
       for (const tr of part.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)) {
         row += 1;
         const where = `table ${table}, row ${row}`;
-        const cells = [...tr[1]!.matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)].flatMap((td) =>
-          splitCells(htmlText(td[1]!)).map((text) => ({ text, where })),
+        // Each cell keeps its column, so an empty <td> does not shift the ones after it.
+        const cells = [...tr[1]!.matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)].flatMap((td, col) =>
+          splitCells(htmlText(td[1]!)).map((text) => ({ text, where, col })),
         );
         if (cells.length) lines.push({ where, cells, group: `table ${table}` });
       }
