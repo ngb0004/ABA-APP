@@ -6,6 +6,7 @@ import { FormToggle, RecordForm, type FieldSpec } from "@/components/record-form
 import { RowMenu } from "@/components/row-menu";
 import { toDay } from "@/lib/dates";
 import { isDemo } from "@/lib/demo";
+import { PLAN_TYPES, PLAN_TYPE_LABELS, US_STATES, type PlanType } from "@/lib/payors/types";
 import { can } from "@/lib/permissions";
 import {
   ATTACHMENT_KINDS,
@@ -41,6 +42,26 @@ export default async function RecordsPage({ params }: { params: Promise<{ id: st
     { name: "priority", label: "Priority", type: "select", options: labeled(["primary", "secondary"]) },
     { name: "memberId", label: "Member ID", placeholder: "SYN-…", help: "Synthetic only: starts with SYN-" },
     { name: "planName", label: "Plan name", optional: true },
+    {
+      name: "planType",
+      label: "Plan type",
+      type: "select",
+      optional: true,
+      // Blank stays "not recorded": every rule applies, with a warning to confirm it.
+      options: PLAN_TYPES.filter((t) => t !== "unknown").map((t) => ({
+        value: t,
+        label: PLAN_TYPE_LABELS[t],
+      })),
+      help: "From the benefits check. Self-funded employer plans are exempt from state autism mandates.",
+    },
+    {
+      name: "planState",
+      label: "State plan was issued in",
+      type: "select",
+      optional: true,
+      options: US_STATES,
+      help: "Leave blank if it is the client's service state",
+    },
     { name: "secondaryDocsSigned", label: "Secondary insurance documents signed", type: "checkbox" },
   ];
   const dxFields: FieldSpec[] = [
@@ -155,6 +176,10 @@ export default async function RecordsPage({ params }: { params: Promise<{ id: st
                 <td>
                   {p.payor.name} ({label(p.priority).toLowerCase()}) · {p.memberId}
                   {p.planName ? ` · ${p.planName}` : ""}
+                  <div className="muted" data-testid="plan-type">
+                    {PLAN_TYPE_LABELS[p.planType as PlanType] ?? p.planType}
+                    {p.planState ? ` · issued in ${p.planState}` : ""}
+                  </div>
                 </td>
                 <td>
                   {canIns && (
@@ -170,6 +195,8 @@ export default async function RecordsPage({ params }: { params: Promise<{ id: st
                           priority: p.priority,
                           memberId: p.memberId,
                           planName: p.planName ?? "",
+                          planType: p.planType === "unknown" ? "" : p.planType,
+                          planState: p.planState ?? "",
                           secondaryDocsSigned: p.secondaryDocsSigned,
                         },
                       }}

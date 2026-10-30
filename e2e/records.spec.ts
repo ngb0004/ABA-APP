@@ -39,8 +39,13 @@ test("a BCBA enters a fictional client end to end: details, insurance, diagnosis
   await ins.getByTestId("insurance-form-submit").click();
   await expect(ins.getByRole("alert")).toContainText("SYN-");
   await fill(ins, "Member ID", "SYN-CIG-404040");
+  await pick(ins, "Plan type", "Commercial, self-funded employer (ERISA)");
+  await pick(ins, "State plan was issued in", "GA");
   await ins.getByTestId("insurance-form-submit").click();
   await expect(page.getByTestId("records-insurance")).toContainText("SYN-CIG-404040");
+  await expect(page.getByTestId("records-insurance")).toContainText(
+    "Commercial, self-funded employer (ERISA) · issued in GA",
+  );
 
   await page.getByTestId("add-diagnosis").click();
   const dx = page.getByTestId("diagnosis-form");
@@ -106,9 +111,17 @@ test("goal data entry by an RBT, and practice settings and team by a BCBA", asyn
   await page.getByRole("link", { name: "Settings" }).click();
   const s = page.getByTestId("settings-form");
   await s.getByLabel(/Submit reauths/).fill("28");
+  // States served default to the office states (GA); add South Carolina.
+  await expect(s.getByLabel("GA", { exact: true })).toBeChecked();
+  await s.getByLabel("SC", { exact: true }).check();
   await s.getByTestId("settings-form-submit").click();
   await page.reload();
   await expect(page.getByTestId("settings-form").getByLabel(/Submit reauths/)).toHaveValue("28");
+  await expect(page.getByTestId("settings-form").getByLabel("SC", { exact: true })).toBeChecked();
+  await page.goto("/payors");
+  await expect(page.getByTestId("state-filter")).toContainText("GA, SC");
+  await expect(page.locator('[data-state-group="SC"]')).toContainText("No payor rules for this state yet");
+  await page.goto("/settings");
 
   await page.getByTestId("add-member").click();
   const m = page.getByTestId("member-form");

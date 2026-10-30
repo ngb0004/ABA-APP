@@ -8,6 +8,9 @@
 #   official docs  = listed under documents
 # `page` and `quote` record where the rule was read in the official document.
 # Unverified rules may only produce WARN in the evaluator.
+# Each payor lists the `states` its rules apply in (empty = every state) and its `line_of_business`.
+# A rule may carry `plan_types: [...]` when its source limits it (e.g., a state mandate that binds
+# fully insured plans only); add one only when the source says so.
 # Reviewed against the official documents in docs/PAYOR_DOCUMENTS_REVIEW.md.
 
 documents:
@@ -92,6 +95,8 @@ documents:
 payors:
   - id: ga_medicaid
     name: "Georgia Medicaid (straight / Katie Beckett)"
+    states: [GA]
+    line_of_business: medicaid
     rules:
       - type: required_document
         params: {doc: "GA Medicaid PA cover sheet (Appendix D)"}
@@ -358,12 +363,16 @@ payors:
 
   - id: peach_state
     name: "Peach State Health Plan (GA Medicaid CMO)"
+    states: [GA]
+    line_of_business: medicaid_managed_care
     inherits: ga_medicaid
     rules:
       - {type: request_timing, params: {code: "97151", with_other_codes: true}, source: checklist_2026, verified: false}
 
   - id: amerigroup
     name: "Amerigroup (GA Medicaid CMO)"
+    states: [GA]
+    line_of_business: medicaid_managed_care
     inherits: ga_medicaid
     rules:
       - {type: request_timing, params: {code: "97151", separate_request: true, months_before_auth_end: 3}, source: checklist_2026, verified: false}
@@ -372,6 +381,9 @@ payors:
 
   - id: aetna
     name: "Aetna (commercial)"
+    # National commercial clinical policy: applies wherever Aetna is the payor.
+    states: []
+    line_of_business: commercial
     rules:
       - {type: required_document, params: {doc: "Aetna ABA Treatment Request (GR-69017-4)"}, source: aetna_aba_request_gr69017_4, verified: false}
       - type: submission_channel
@@ -504,6 +516,9 @@ payors:
 
   - id: cigna_evernorth
     name: "Cigna / Evernorth"
+    # National commercial clinical policy (EN0499) and PA form.
+    states: []
+    line_of_business: commercial
     rules:
       - {type: required_document, params: {doc: "Evernorth ABA Prior Authorization Form"}, source: evernorth_aba_pa_928213d, verified: false}
       - {type: submission_channel, params: {channel: email, address: "ABA@Evernorth.com", preferred: true, fallback: fax, note: "Use fax number printed on current form; checklist number differs"}, source: evernorth_aba_pa_928213d, verified: false}
@@ -681,6 +696,9 @@ payors:
 
   - id: umr
     name: "UMR (third-party administrator)"
+    # UMR is a third-party administrator for self-funded employer (ERISA) plans, which state autism mandates do not bind.
+    states: []
+    line_of_business: commercial
     rules:
       - {type: required_document, params: {doc: "UMR ABA Therapy Documentation Requirements"}, source: umr_aba_doc_reqs, verified: false}
       - {type: submission_channel, params: {channel: fax, phone_review: false}, source: umr_aba_doc_reqs, verified: false}
@@ -690,6 +708,9 @@ payors:
 
   - id: bcbs_ga_anthem
     name: "BCBS Georgia (Anthem UM)"
+    # BCBS plans are separate companies per state; this is Anthem in Georgia.
+    states: [GA]
+    line_of_business: commercial
     rules:
       - {type: required_document, params: {doc: "Anthem ABA treatment request form", note: "Not found publicly; obtain via Availity/provider portal"}, source: checklist_2026, verified: false}
       - {type: form_address, params: {use: service_state_office}, source: checklist_2026, verified: false}
@@ -719,12 +740,18 @@ payors:
 
   - id: lucet_credence_bcbs
     name: "BCBS via Lucet (behavioral health manager)"
+    # Lucet manages behavioral health for some BCBS plans; which state is unconfirmed (see QUESTIONS_FOR_BCBA.md).
+    states: [GA]
+    line_of_business: commercial
     rules:
       - {type: plan_content, params: {must_include: [transition_fade_plan_tied_to_goals, generalization_to_caregivers, care_coordination, discharge_plan]}, source: null, verified: false, notes: "From one approval letter's next-request requirements; letter-derived rules are per-auth, not global"}
 
   # Rules both TRICARE regions share. Rules the East documents restate are in each region's extra_rules.
   - id: tricare_east
     name: "TRICARE East (Humana Military)"
+    # Federal program, not state-regulated: the region follows the sponsor's enrollment, so no state list.
+    states: []
+    line_of_business: tricare
     rules: &tricare_common
       - {type: daily_cap, params: {all_services_hours: 8}, source: checklist_2026, verified: false}
       - {type: daily_cap, params: {code: "97155", hours: 2}, source: checklist_2026, verified: false}
@@ -921,6 +948,8 @@ payors:
 
   - id: tricare_west
     name: "TRICARE West (TriWest)"
+    states: []
+    line_of_business: tricare
     rules: *tricare_common
     extra_rules:
       - {type: staff_credential, params: {role: technician, must_be: RBT}, source: checklist_2026, verified: false}

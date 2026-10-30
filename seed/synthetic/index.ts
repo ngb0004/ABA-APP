@@ -154,6 +154,8 @@ async function seedClient(
       priority: p.priority,
       memberId: p.memberId,
       planName: p.planName,
+      planType: p.planType,
+      planState: p.planState,
       secondaryDocsSigned: p.secondaryDocsSigned ?? false,
     })),
   });

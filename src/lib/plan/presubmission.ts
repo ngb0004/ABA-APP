@@ -11,7 +11,7 @@ import {
   requiredCategoryChecks,
   unresolvedPlaceholders,
 } from "../goals/checks";
-import type { RuleResult } from "../payors/types";
+import type { RuleResult, ScopeFinding } from "../payors/types";
 import { goalKeyKind, type PlanBundle } from "./context";
 import { dataGaps, flatProgress } from "./progress";
 import { SECTION_BY_KEY, sectionDone, sectionsForTopic, type SectionCondition } from "./sections";
@@ -37,6 +37,8 @@ export function runPresubmissionAudit(
   sourced: SourcedContext,
   ruleResults: RuleResult[],
   asOf: Day,
+  /** Payor-choice findings (wrong state, plan type not recorded): warnings only. */
+  scope: ScopeFinding[] = [],
 ): AuditCheck[] {
   const checks: AuditCheck[] = [];
   const push = (c: AuditCheck) => checks.push(c);
@@ -339,6 +341,15 @@ export function runPresubmissionAudit(
         (r) => `${r.rule.type.replace(/_/g, " ")}: ${r.rule.trust!.reasons[0] ?? "re-check the source"}`,
       ),
       action: "Review the current payor document on the Payor rules page and re-verify these rules",
+    });
+  for (const f of scope)
+    push({
+      id: `payor.${f.id}`,
+      category: "Payor rules",
+      status: "warn",
+      message: f.message,
+      details: f.evidence,
+      action: "Check the client's insurance on Records",
     });
   for (const r of ruleResults) {
     if (r.status === "n/a" || (r.status === "pass" && r.rule.verified)) continue;

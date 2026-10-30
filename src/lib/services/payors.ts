@@ -1,9 +1,9 @@
 import type { Tx } from "../db";
 import { ageYears, toDay, type Day } from "../dates";
 import type { EvalContext } from "../payors/context";
-import { evaluateRules } from "../payors/evaluate";
+import { evaluateRules, scopeFindings } from "../payors/evaluate";
 import { sectionDone, sectionsForTopic } from "../plan/sections";
-import type { Rule, RuleType } from "../payors/types";
+import type { PlanType, Rule, RuleType } from "../payors/types";
 import type { RevisionRow } from "../rules-watch/parsers";
 import { computeTrust, relatedChanges, type SnapshotState } from "../rules-watch/status";
 import { quoteAppears } from "../rules-watch/text";
@@ -30,6 +30,7 @@ type RuleRow = {
   notes: string | null;
   inheritedFrom: string | null;
   lineageKey: string;
+  planTypes?: string[];
 };
 
 const snapshotState = (s: {
@@ -197,6 +198,7 @@ export async function withTrust(tx: Tx, rows: RuleRow[], today: Day = toDay(new 
       },
       notes: r.notes,
       inheritedFrom: r.inheritedFrom,
+      planTypes: r.planTypes ?? [],
     });
   }
   return out;
@@ -212,7 +214,7 @@ export async function buildEvalContext(
   const client = await tx.client.findUniqueOrThrow({
     where: { id: clientId },
     include: {
-      payors: true,
+      payors: { include: { payor: true } },
       attachments: true,
       authorizations: { include: { units: true }, orderBy: { endDate: "desc" } },
     },
@@ -240,7 +242,17 @@ export async function buildEvalContext(
       hasIep: client.hasIep,
       hasSecondaryPayor: client.payors.some((p) => p.priority === "secondary"),
       events: client.events,
+      planType: (primary?.planType ?? "unknown") as PlanType,
+      planState: primary?.planState ?? null,
     },
+    payor: primary
+      ? {
+          key: primary.payor.key,
+          name: primary.payor.name,
+          states: primary.payor.states,
+          lineOfBusiness: primary.payor.lineOfBusiness,
+        }
+      : null,
     authorization: auth
       ? {
           kind: auth.kind as "initial" | "reauth",
@@ -296,7 +308,7 @@ export async function buildEvalContext(
 
 export async function evaluateClientRules(tx: Tx, clientId: string, asOf: Day, planId?: string | null) {
   const { ctx, payorId } = await buildEvalContext(tx, clientId, asOf, planId);
-  if (!payorId) return { ctx, results: [] };
+  if (!payorId) return { ctx, results: [], scope: [] };
   const rules = await loadRules(tx, payorId);
-  return { ctx, results: evaluateRules(rules, ctx) };
+  return { ctx, results: evaluateRules(rules, ctx), scope: scopeFindings(rules, ctx) };
 }

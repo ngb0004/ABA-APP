@@ -55,3 +55,24 @@ test("the payor rules page explains statuses and tiers", async ({ page }) => {
   await expect(page.getByTestId("payor-legend")).toContainText("T1");
   await expect(page.getByTestId("payor-legend")).toContainText("needs re-check");
 });
+
+test("the payor rules page groups insurers by state, with nationwide payors on their own", async ({
+  page,
+}) => {
+  await login(page, "bcba@sample-practice.test");
+  await page.goto("/payors");
+  const ga = page.locator('[data-state-group="GA"]');
+  const all = page.locator('[data-state-group="ALL"]');
+  await expect(ga.getByRole("heading", { level: 2 })).toContainText("Georgia");
+  await expect(ga.locator('[data-payor="ga_medicaid"]')).toBeVisible();
+  await expect(ga.locator('[data-payor="tricare_east"]')).toHaveCount(0);
+  await expect(all.getByRole("heading", { level: 2 })).toContainText("All states");
+  await expect(all.locator('[data-payor="tricare_east"]')).toBeVisible();
+  await expect(all.locator('[data-payor="cigna_evernorth"]')).toBeVisible();
+  // Sources are grouped the same way.
+  await expect(page.locator('[data-doc-group="GA"] [data-doc="ga_medicaid_asd_manual"]')).toBeVisible();
+  await expect(page.locator('[data-doc-group="ALL"] [data-doc="tricare_tom_c18s3"]')).toBeVisible();
+  await page.getByTestId("show-every-state").click();
+  await expect(page).toHaveURL(/states=all/);
+  await expect(page.getByTestId("state-filter")).toContainText("Showing every state");
+});

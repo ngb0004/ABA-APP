@@ -14,6 +14,7 @@ export function evalContextFor(
   plan: EvalContext["plan"] = null,
   overrides: Partial<EvalContext> = {},
 ): EvalContext {
+  const primary = c.payors.find((p) => p.priority === "primary");
   return {
     asOf: AS_OF,
     client: {
@@ -22,7 +23,10 @@ export function evalContextFor(
       hasIep: c.hasIep,
       hasSecondaryPayor: c.payors.some((p) => p.priority === "secondary"),
       events: c.events,
+      planType: primary?.planType ?? "unknown",
+      planState: primary?.planState ?? null,
     },
+    payor: null,
     authorization: {
       kind: c.authorization.kind,
       startDate: c.authorization.startDate,

@@ -148,8 +148,8 @@ export async function planView(ctx: OrgCtx, planId: string, asOf: Day) {
     const b = await loadPlanBundle(tx, planId);
     const sourced = buildSourcedContext(b, asOf);
     const rules = await primaryRules(tx, b);
-    const { results } = await evaluateClientRules(tx, b.client.id, asOf, planId);
-    const checks = runPresubmissionAudit(b, sourced, results, asOf);
+    const { results, scope } = await evaluateClientRules(tx, b.client.id, asOf, planId);
+    const checks = runPresubmissionAudit(b, sourced, results, asOf, scope);
     const answers = (b.intake?.answers ?? {}) as IntakeAnswers;
     const render = (text: string) => {
       try {
@@ -602,8 +602,8 @@ export async function assertExportable(
 ): Promise<{ bundle: PlanBundle; results: RuleResult[] }> {
   const b = await loadPlanBundle(tx, planId);
   const sourced = buildSourcedContext(b, asOf);
-  const { results } = await evaluateClientRules(tx, b.client.id, asOf, planId);
-  const blockers = exportBlockers(runPresubmissionAudit(b, sourced, results, asOf));
+  const { results, scope } = await evaluateClientRules(tx, b.client.id, asOf, planId);
+  const blockers = exportBlockers(runPresubmissionAudit(b, sourced, results, asOf, scope));
   const unapproved = b.plan.sections.filter((s) => !sectionDone(s.state));
   if (unapproved.length || blockers.length)
     throw new HttpError(

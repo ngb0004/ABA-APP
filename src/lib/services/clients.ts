@@ -19,15 +19,21 @@ import { evaluateClientRules, loadRules } from "./payors";
 
 export function orgSettings(
   settings: unknown,
-): CalendarSettings & { offices: { state: string; address: string }[] } {
+): CalendarSettings & { offices: { state: string; address: string }[]; statesServed: string[] } {
   const s = (settings ?? {}) as Partial<CalendarSettings> & {
     offices?: { state: string; address: string }[];
+    statesServed?: string[];
   };
+  const offices = s.offices ?? [];
   return {
     reauthLeadDays: s.reauthLeadDays ?? DEFAULT_CALENDAR_SETTINGS.reauthLeadDays,
     reassessmentLeadDays: s.reassessmentLeadDays ?? DEFAULT_CALENDAR_SETTINGS.reassessmentLeadDays,
     alertDays: s.alertDays ?? DEFAULT_CALENDAR_SETTINGS.alertDays,
-    offices: s.offices ?? [],
+    offices,
+    // Not chosen yet: the states the practice has offices in.
+    statesServed: s.statesServed?.length
+      ? s.statesServed
+      : [...new Set(offices.map((o) => o.state.toUpperCase()))].sort(),
   };
 }
 
@@ -113,7 +119,7 @@ export async function clientDetail(ctx: OrgCtx, clientId: string, asOf: Day) {
           { start: toDay(auth.startDate), end: toDay(auth.endDate), asOf },
         )
       : [];
-    const { results: ruleResults } = await evaluateClientRules(tx, clientId, asOf);
+    const { results: ruleResults, scope: payorScope } = await evaluateClientRules(tx, clientId, asOf);
 
     const alerts: ClientAlert[] = [];
     if (auth) {
@@ -149,6 +155,7 @@ export async function clientDetail(ctx: OrgCtx, clientId: string, asOf: Day) {
         });
       }
     }
+    for (const f of payorScope) alerts.push({ level: "warn", message: f.message });
     const fit = availabilityFit(rawAnswers, auth?.recommendedHoursPerWeek);
     if (fit.fits === false)
       alerts.push({
@@ -186,6 +193,7 @@ export async function clientDetail(ctx: OrgCtx, clientId: string, asOf: Day) {
       utilization,
       supervision,
       ruleResults,
+      payorScope,
       alerts,
       events,
       safety: safetyFlags(rawAnswers),

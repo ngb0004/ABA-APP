@@ -18,7 +18,7 @@ import {
   updateClient,
   updateSettings,
 } from "@/lib/services/records";
-import { clientDetail } from "@/lib/services/clients";
+import { clientDetail, orgSettings } from "@/lib/services/clients";
 import { evaluateClientRules } from "@/lib/services/payors";
 import { AS_OF, dataset } from "../helpers/synthetic-eval";
 import { clientId, ctxAs, org } from "../helpers/ctx";
@@ -85,6 +85,42 @@ describe("insurance, diagnoses, authorizations", () => {
     await expect(
       saveClientPayor(ctxAs("RBT"), cid, null, { ...payor, priority: "secondary" }),
     ).rejects.toMatchObject({ status: 403 });
+  });
+
+  it("saves plan type and plan state; the evaluator warns, never blocks, on unknown type or wrong state", async () => {
+    const c = (await createClient(bcba, { ...newClient, firstName: "Quinn" })).id;
+    const bcbsGa = (
+      await withOrg(bcba, (tx) => tx.payor.findFirstOrThrow({ where: { key: "bcbs_ga_anthem" } }))
+    ).id;
+    const payor = { payorId: bcbsGa, priority: "primary", memberId: "SYN-BCB-121212" };
+    await expect(saveClientPayor(bcba, c, null, { ...payor, planType: "fully_insured" })).rejects.toThrow();
+    await expect(saveClientPayor(bcba, c, null, { ...payor, planState: "Georgia" })).rejects.toThrow();
+    // Blank fields: not recorded, and the plan state falls back to the service state (GA).
+    const { id } = await saveClientPayor(bcba, c, null, { ...payor, planType: null, planState: null });
+    let row = await withOrg(bcba, (tx) => tx.clientPayor.findUniqueOrThrow({ where: { id } }));
+    expect(row).toMatchObject({ planType: "unknown", planState: null });
+    let ev = await withOrg(bcba, (tx) => evaluateClientRules(tx, c, AS_OF));
+    expect(ev.ctx.client).toMatchObject({ planType: "unknown", planState: null });
+    expect(ev.ctx.payor).toMatchObject({
+      key: "bcbs_ga_anthem",
+      states: ["GA"],
+      lineOfBusiness: "commercial",
+    });
+    expect(ev.scope.map((f) => f.id)).toEqual(["scope.plan_type"]);
+
+    await saveClientPayor(bcba, c, id, { ...payor, planType: "commercial_self_funded", planState: "TX" });
+    row = await withOrg(bcba, (tx) => tx.clientPayor.findUniqueOrThrow({ where: { id } }));
+    expect(row).toMatchObject({ planType: "commercial_self_funded", planState: "TX" });
+    ev = await withOrg(bcba, (tx) => evaluateClientRules(tx, c, AS_OF));
+    expect(ev.scope).toHaveLength(1);
+    expect(ev.scope[0]).toMatchObject({ id: "scope.payor_state", status: "warn" });
+    expect(ev.results.every((r) => r.status !== "fail")).toBe(true);
+    const d = await clientDetail(bcba, c, AS_OF);
+    expect(d.alerts.some((a) => /plans issued in GA/.test(a.message))).toBe(true);
+    const audit = await withOrg(bcba, (tx) =>
+      tx.auditEvent.count({ where: { action: "insurance:update", entityId: id } }),
+    );
+    expect(audit).toBe(1);
   });
 
   it("keeps one primary diagnosis and never strands a linked goal", async () => {
@@ -227,6 +263,33 @@ describe("practice settings and team", () => {
     const after = (await practiceSettings(bcba)).org.settings as Record<string, unknown>;
     expect(after).toMatchObject({ npi: "SYN-NPI-1111111111", reauthLeadDays: 35 });
     expect(after.seededAsOf).toBe((before.settings as Record<string, unknown>).seededAsOf);
+  });
+
+  it("saves the states the practice serves, defaulting to its office states", async () => {
+    const before = (await practiceSettings(bcba)).org;
+    const base = {
+      name: before.name,
+      npi: "SYN-NPI-1111111111",
+      taxId: null,
+      offices: [{ state: "GA", address: "100 Example Way, Peachtree City, GA 30269" }],
+      reauthLeadDays: 35,
+      reassessmentLeadDays: 45,
+    };
+    await updateSettings(bcba, { ...base, statesServed: [] });
+    expect(orgSettings((await practiceSettings(bcba)).org.settings).statesServed).toEqual(["GA"]);
+    await updateSettings(bcba, { ...base, statesServed: ["SC", "GA", "SC"] });
+    const saved = (await practiceSettings(bcba)).org.settings;
+    expect((saved as { statesServed: string[] }).statesServed).toEqual(["GA", "SC"]);
+    expect(orgSettings(saved).statesServed).toEqual(["GA", "SC"]);
+    // A save that does not send the list keeps it.
+    await updateSettings(bcba, base);
+    expect(orgSettings((await practiceSettings(bcba)).org.settings).statesServed).toEqual(["GA", "SC"]);
+    await expect(updateSettings(bcba, { ...base, statesServed: ["Georgia"] })).rejects.toThrow();
+    const audit = await withOrg(bcba, (tx) =>
+      tx.auditEvent.count({ where: { action: "org:settings_update", entityId: bcba.orgId } }),
+    );
+    expect(audit).toBeGreaterThan(0);
+    await updateSettings(bcba, { ...base, statesServed: [] });
   });
 
   it("adds, re-roles, and removes members; always keeps a BCBA", async () => {

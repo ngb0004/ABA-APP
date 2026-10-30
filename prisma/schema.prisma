@@ -167,6 +167,11 @@ model ClientPayor {
   priority            String  @default("primary") // primary | secondary
   memberId            String
   planName            String?
+  /// medicaid | medicaid_managed_care | commercial_fully_insured | commercial_self_funded
+  /// | commercial_unknown | tricare | unknown. Self-funded (ERISA) plans are exempt from state mandates.
+  planType            String  @default("unknown")
+  /// USPS code of the state the plan was issued in; null means the client's service state.
+  planState           String?
   secondaryDocsSigned Boolean @default(false)
 
   client Client @relation(fields: [clientId], references: [id])
@@ -333,11 +338,15 @@ model MilestoneScore {
 // ---------------------------------------------------------------- payors
 
 model Payor {
-  id       String  @id @default(uuid()) @db.Uuid
-  orgId    String  @map("org_id") @db.Uuid
-  key      String
-  name     String
-  inherits String?
+  id             String   @id @default(uuid()) @db.Uuid
+  orgId          String   @map("org_id") @db.Uuid
+  key            String
+  name           String
+  inherits       String?
+  /// USPS codes the payor's rules apply in; empty means every state (TRICARE, national policies).
+  states         String[] @default([])
+  /// medicaid | medicaid_managed_care | commercial | tricare | other
+  lineOfBusiness String   @default("other")
 
   rules          PayorRule[]
   clientPayors   ClientPayor[]
@@ -405,12 +414,12 @@ model PayorDocumentSnapshot {
 }
 
 model PayorRule {
-  id               String  @id @default(uuid()) @db.Uuid
-  orgId            String  @map("org_id") @db.Uuid
-  payorId          String  @db.Uuid
+  id               String   @id @default(uuid()) @db.Uuid
+  orgId            String   @map("org_id") @db.Uuid
+  payorId          String   @db.Uuid
   type             String
   params           Json
-  sourceDocumentId String? @db.Uuid
+  sourceDocumentId String?  @db.Uuid
   sourceSection    String?
   /// Page in the official document where the rule was read.
   sourcePage       String?
@@ -421,7 +430,9 @@ model PayorRule {
   inheritedFrom    String?
   /// Shared by a rule and the copies other payors inherit, so evidence applies to all of them.
   lineageKey       String
-  ordinal          Int     @default(0)
+  /// Plan types the rule is limited to; empty means every plan type.
+  planTypes        String[] @default([])
+  ordinal          Int      @default(0)
 
   payor          Payor          @relation(fields: [payorId], references: [id])
   sourceDocument PayorDocument? @relation(fields: [sourceDocumentId], references: [id])

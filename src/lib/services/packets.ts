@@ -10,7 +10,7 @@ import { HttpError } from "../log";
 import { requirePermission } from "../permissions";
 import { buildSourcedContext, type PlanBundle } from "../plan/context";
 import { goalGraphSvg } from "../plan/graphs";
-import type { RuleResult } from "../payors/types";
+import type { RuleResult, ScopeFinding } from "../payors/types";
 import { renderMilestonesGridSvg } from "../vbmapp/grid-svg";
 import { evaluateClientRules } from "./payors";
 import { GOAL_STATUS_LABEL, measureUnit, type GoalStatus } from "../plan/context";
@@ -31,6 +31,7 @@ export function buildChecklist(
   b: PlanBundle,
   results: RuleResult[],
   done: Record<string, boolean>,
+  scope: ScopeFinding[] = [],
 ): ChecklistItem[] {
   const items: ChecklistItem[] = [];
   const approved = b.plan.sections.every((s) => sectionDone(s.state));
@@ -85,6 +86,14 @@ export function buildChecklist(
       done: done[key],
     });
   }
+  for (const f of scope)
+    items.push({
+      key: f.id,
+      label: f.message,
+      status: "warn",
+      source: "payor_rule",
+      action: "Check the client's insurance on Records",
+    });
   const letter = b.letters.find((l) => l.status === "confirmed");
   if (letter) {
     const ex = letter.extracted as {
@@ -116,10 +125,10 @@ export async function packetView(ctx: OrgCtx, planId: string, asOf: Day) {
   requirePermission(ctx.role, "client:read");
   return withOrg(ctx, async (tx) => {
     const b = await loadPlanBundle(tx, planId);
-    const { results } = await evaluateClientRules(tx, b.client.id, asOf, planId);
+    const { results, scope } = await evaluateClientRules(tx, b.client.id, asOf, planId);
     const done = ((b.plan.packet?.checklist as { done?: Record<string, boolean> } | null)?.done ??
       {}) as Record<string, boolean>;
-    return { bundle: b, checklist: buildChecklist(b, results, done), packet: b.plan.packet };
+    return { bundle: b, checklist: buildChecklist(b, results, done, scope), packet: b.plan.packet };
   });
 }
 

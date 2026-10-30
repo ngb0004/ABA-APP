@@ -20,6 +20,94 @@ export const RULE_TYPES = [
 ] as const;
 export type RuleType = (typeof RULE_TYPES)[number];
 
+/** USPS codes for the states, DC, and the territories a payor or plan can be scoped to. */
+// prettier-ignore
+export const US_STATES = [
+  "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "DC", "FL", "GA", "HI", "ID", "IL", "IN", "IA", "KS",
+  "KY", "LA", "ME", "MD", "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ", "NM", "NY", "NC",
+  "ND", "OH", "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY",
+  "PR", "GU", "VI", "AS", "MP",
+] as const;
+export type UsState = (typeof US_STATES)[number];
+
+// prettier-ignore
+export const STATE_NAMES: Record<UsState, string> = {
+  AL: "Alabama", AK: "Alaska", AZ: "Arizona", AR: "Arkansas", CA: "California", CO: "Colorado",
+  CT: "Connecticut", DE: "Delaware", DC: "District of Columbia", FL: "Florida", GA: "Georgia",
+  HI: "Hawaii", ID: "Idaho", IL: "Illinois", IN: "Indiana", IA: "Iowa", KS: "Kansas", KY: "Kentucky",
+  LA: "Louisiana", ME: "Maine", MD: "Maryland", MA: "Massachusetts", MI: "Michigan", MN: "Minnesota",
+  MS: "Mississippi", MO: "Missouri", MT: "Montana", NE: "Nebraska", NV: "Nevada", NH: "New Hampshire",
+  NJ: "New Jersey", NM: "New Mexico", NY: "New York", NC: "North Carolina", ND: "North Dakota",
+  OH: "Ohio", OK: "Oklahoma", OR: "Oregon", PA: "Pennsylvania", RI: "Rhode Island",
+  SC: "South Carolina", SD: "South Dakota", TN: "Tennessee", TX: "Texas", UT: "Utah", VT: "Vermont",
+  VA: "Virginia", WA: "Washington", WV: "West Virginia", WI: "Wisconsin", WY: "Wyoming",
+  PR: "Puerto Rico", GU: "Guam", VI: "U.S. Virgin Islands", AS: "American Samoa",
+  MP: "Northern Mariana Islands",
+};
+
+/**
+ * What kind of coverage a payor offers. Medicaid is run by each state (directly, or through
+ * managed care organizations); TRICARE is federal; commercial covers employer and individual plans.
+ */
+export const LINES_OF_BUSINESS = [
+  "medicaid",
+  "medicaid_managed_care",
+  "commercial",
+  "tricare",
+  "other",
+] as const;
+export type LineOfBusiness = (typeof LINES_OF_BUSINESS)[number];
+export const LINE_OF_BUSINESS_LABELS: Record<LineOfBusiness, string> = {
+  medicaid: "Medicaid",
+  medicaid_managed_care: "Medicaid managed care",
+  commercial: "Commercial",
+  tricare: "TRICARE",
+  other: "Other",
+};
+
+/**
+ * A client's plan type. State autism mandates bind fully insured commercial plans only;
+ * self-funded employer (ERISA) plans are exempt. "commercial_unknown" means commercial, but
+ * nobody has confirmed which.
+ */
+export const PLAN_TYPES = [
+  "medicaid",
+  "medicaid_managed_care",
+  "commercial_fully_insured",
+  "commercial_self_funded",
+  "commercial_unknown",
+  "tricare",
+  "unknown",
+] as const;
+export type PlanType = (typeof PLAN_TYPES)[number];
+
+/** Plan types a rule can be limited to: the ones a plan can actually be. */
+export const RULE_PLAN_TYPES = [
+  "medicaid",
+  "medicaid_managed_care",
+  "commercial_fully_insured",
+  "commercial_self_funded",
+  "tricare",
+] as const satisfies readonly PlanType[];
+export type RulePlanType = (typeof RULE_PLAN_TYPES)[number];
+
+export const PLAN_TYPE_LABELS: Record<PlanType, string> = {
+  medicaid: "Medicaid (state)",
+  medicaid_managed_care: "Medicaid managed care (CMO)",
+  commercial_fully_insured: "Commercial, fully insured",
+  commercial_self_funded: "Commercial, self-funded employer (ERISA)",
+  commercial_unknown: "Commercial, funding not confirmed",
+  tricare: "TRICARE",
+  unknown: "Not recorded",
+};
+
+/** Plan types an unconfirmed plan type could turn out to be. */
+export function possiblePlanTypes(t: PlanType): readonly RulePlanType[] {
+  if (t === "unknown") return RULE_PLAN_TYPES;
+  if (t === "commercial_unknown") return ["commercial_fully_insured", "commercial_self_funded"];
+  return [t];
+}
+
 export const SeedRuleSchema = z.object({
   type: z.enum(RULE_TYPES),
   params: z.record(z.string(), z.unknown()).default({}),
@@ -32,6 +120,11 @@ export const SeedRuleSchema = z.object({
   /** Kept for the seed format. The app ignores it: a rule's status comes from recorded evidence. */
   verified: z.boolean(),
   notes: z.string().optional(),
+  /**
+   * Only for these plan types, when the source says so (e.g., a state mandate that binds fully
+   * insured plans only). Scope, not content: it is not part of the rule's fingerprint.
+   */
+  plan_types: z.array(z.enum(RULE_PLAN_TYPES)).min(1).optional(),
 });
 
 export const LocatorSchema = z.discriminatedUnion("kind", [
@@ -79,6 +172,12 @@ export const SeedSchema = z.object({
       id: z.string(),
       name: z.string(),
       inherits: z.string().optional(),
+      /** States the payor's rules apply in (USPS codes); empty means every state (TRICARE, national policies). */
+      states: z
+        .array(z.enum(US_STATES))
+        .default([])
+        .refine((s) => new Set(s).size === s.length, "states: listed twice"),
+      line_of_business: z.enum(LINES_OF_BUSINESS),
       rules: z.array(SeedRuleSchema).default([]),
       extra_rules: z.array(SeedRuleSchema).default([]),
     }),
@@ -122,6 +221,8 @@ export type Rule = {
   };
   notes: string | null;
   inheritedFrom: string | null;
+  /** Plan types the rule is limited to; empty or absent means every plan type. */
+  planTypes?: string[];
 };
 
 export type RuleStatus = "pass" | "fail" | "warn" | "n/a";
@@ -133,3 +234,6 @@ export type RuleResult = {
   message: string;
   evidence: string[];
 };
+
+/** A finding about the payor choice itself (wrong state, plan type unknown). Always a warning. */
+export type ScopeFinding = { id: string; status: "warn"; message: string; evidence: string[] };

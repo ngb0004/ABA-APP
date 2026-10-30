@@ -24,7 +24,9 @@ function canonical(v: unknown): string {
 /**
  * A rule's lineage key is a fingerprint of what it says (type, params, source,
  * section) within the payor that defines it. Reordering the YAML cannot move
- * evidence to another rule, and editing a rule detaches its old evidence.
+ * evidence to another rule, and editing a rule detaches its old evidence. Scope fields
+ * (plan_types, the payor's states) are left out on purpose: narrowing who a rule applies to
+ * does not change what the source says, so it keeps its evidence.
  */
 export function ruleFingerprint(
   payorKey: string,
@@ -71,6 +73,7 @@ export function resolvePayorRules(seed: PayorSeed, payorKey: string, seen = new 
       },
       notes: r.notes ?? null,
       inheritedFrom: null,
+      planTypes: r.plan_types ?? [],
     };
   });
   // Inherited copies keep the parent's lineage key, so one verification covers them all.

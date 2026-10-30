@@ -58,3 +58,8 @@ Each question lists the default the build uses today. Defaults are the safer cho
 ## Uploaded payor documents
 
 29. **How long does a verification against an uploaded document last?** Some official documents have no public copy (the 2026 TRICARE East handbook, the Humana Military FAQ), so a BCBA uploads the PDF and nothing can watch it for changes. *Default:* verifications against an uploaded copy last at most 90 days (180 for a watched document), and uploading a new edition re-checks every quoted sentence. Uploads that look like a client record (a name, date of birth, or member ID) are rejected, and uploads are off on the demo site. (`UNWATCHED_CEILING_DAYS` in `src/lib/rules-watch/status.ts`)
+
+## Payors by state and plan type
+
+30. **Which state is "BCBS via Lucet"?** The seed has one rule for it, taken from a single approval letter, and nothing that names the BCBS plan or state. Lucet manages behavioral health for several BCBS companies, and each BCBS company is separate per state. *Default:* scoped to Georgia (the launch market) as a commercial payor; choosing it for a plan issued in another state shows a warning, never a block. Which BCBS plan(s) does it cover for this practice?
+31. **Plan type unknown.** Whether a commercial plan is fully insured or self-funded (ERISA) decides whether Georgia's autism mandate applies, and nobody can tell from the card alone. *Default:* every rule still applies and one warning asks the BCBA to confirm the plan type with the benefits check (VOB). Should a reauth packet ever be blocked on it? (Currently: never.)

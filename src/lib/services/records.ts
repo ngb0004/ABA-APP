@@ -16,6 +16,7 @@ import { withOrg, withUser, type OrgCtx, type Tx } from "../db";
 import { dayToDate, toDay } from "../dates";
 import { HttpError, registerSensitiveName } from "../log";
 import { RECORDED_EVENTS } from "../payors/evaluate";
+import { PLAN_TYPES, US_STATES } from "../payors/types";
 import { isDemo } from "../demo";
 import { requirePermission } from "../permissions";
 
@@ -186,6 +187,18 @@ export const ClientPayorSchema = z.object({
   priority: z.enum(["primary", "secondary"]),
   memberId: SynId,
   planName: OptText(80),
+  /** Blank means not recorded yet: every rule still applies, with a warning to confirm it. */
+  planType: z
+    .enum(PLAN_TYPES)
+    .nullable()
+    .optional()
+    .transform((v) => v ?? "unknown"),
+  /** Blank means the plan was issued in the client's service state. */
+  planState: z
+    .enum(US_STATES)
+    .nullable()
+    .optional()
+    .transform((v) => v ?? null),
   secondaryDocsSigned: z.boolean().default(false),
 });
 
@@ -279,6 +292,12 @@ export const SettingsSchema = z.object({
     .max(20),
   reauthLeadDays: z.number().int().min(1).max(120),
   reassessmentLeadDays: z.number().int().min(1).max(180),
+  /** Where the practice works: the Payor rules page shows these states (plus nationwide payors) first. */
+  statesServed: z
+    .array(z.enum(US_STATES))
+    .max(US_STATES.length)
+    .optional()
+    .transform((v) => (v ? [...new Set(v)].sort() : undefined)),
 });
 
 export const NewMemberSchema = z.object({
@@ -749,7 +768,9 @@ export async function updateSettings(ctx: OrgCtx, input: unknown) {
   const v = SettingsSchema.parse(input);
   return withOrg(ctx, async (tx) => {
     const org = await tx.org.findUniqueOrThrow({ where: { id: ctx.orgId } });
-    const { name, ...rest } = v;
+    const { name, ...given } = v;
+    // Leave out what was not sent (e.g. statesServed from an older client), so it is kept too.
+    const rest = Object.fromEntries(Object.entries(given).filter(([, x]) => x !== undefined));
     // Merge: keys this form does not edit (e.g. seededAsOf, alertDays) are kept.
     await tx.org.update({
       where: { id: ctx.orgId },
@@ -860,7 +881,10 @@ export async function clientRecords(ctx: OrgCtx, clientId: string) {
       orderBy: [{ date: "desc" }, { startMinute: "desc" }],
       take: 60,
     });
-    const payors = await tx.payor.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true } });
+    const payors = await tx.payor.findMany({
+      orderBy: { name: "asc" },
+      select: { id: true, name: true, states: true },
+    });
     return { client, sessions, payors };
   });
 }

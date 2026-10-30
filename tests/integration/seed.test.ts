@@ -59,6 +59,20 @@ describe("synthetic seed", () => {
     }
   });
 
+  it("records plan types on insurance and syncs payor states from the YAML", async () => {
+    const ctx = { orgId: dataset.orgs[0]!.id, userId: null, role: null };
+    const rows = await withOrg(ctx, (tx) => tx.clientPayor.findMany({ include: { payor: true } }));
+    const byPayor = Object.fromEntries(rows.map((r) => [r.payor.key, r]));
+    expect(byPayor.amerigroup).toMatchObject({ planType: "medicaid_managed_care", planState: "GA" });
+    expect(byPayor.cigna_evernorth).toMatchObject({ planType: "commercial_fully_insured" });
+    expect(byPayor.tricare_east).toMatchObject({ planType: "tricare", planState: null });
+    expect(byPayor.amerigroup!.payor).toMatchObject({
+      states: ["GA"],
+      lineOfBusiness: "medicaid_managed_care",
+    });
+    expect(byPayor.tricare_east!.payor).toMatchObject({ states: [], lineOfBusiness: "tricare" });
+  });
+
   it("gives each client 26 weeks of goal data and Client 3 a caregiver-training shortfall", () => {
     const [c1, c2, c3] = dataset.orgs[0]!.clients;
     for (const c of [c1!, c2!, c3!])

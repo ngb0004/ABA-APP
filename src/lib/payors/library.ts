@@ -110,10 +110,16 @@ export async function syncPayorLibrary(tx: Tx, orgId: string, seed: PayorSeed = 
   for (const p of seed.payors) {
     const id = sid(`${orgId}:payor:${p.id}`);
     payorIds[p.id] = id;
+    const data = {
+      name: p.name,
+      inherits: p.inherits ?? null,
+      states: p.states,
+      lineOfBusiness: p.line_of_business,
+    };
     await tx.payor.upsert({
       where: { orgId_key: { orgId, key: p.id } },
-      create: { id, orgId, key: p.id, name: p.name, inherits: p.inherits ?? null },
-      update: { name: p.name, inherits: p.inherits ?? null },
+      create: { id, orgId, key: p.id, ...data },
+      update: data,
     });
   }
 
@@ -139,6 +145,7 @@ export async function syncPayorLibrary(tx: Tx, orgId: string, seed: PayorSeed = 
         notes: r.notes,
         inheritedFrom: r.inheritedFrom,
         lineageKey: lineage,
+        planTypes: r.planTypes ?? [],
         ordinal: i,
       };
       await tx.payorRule.upsert({ where: { id }, create: { id, orgId, ...data }, update: data });

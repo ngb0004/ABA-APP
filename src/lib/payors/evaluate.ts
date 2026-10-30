@@ -9,7 +9,16 @@ import { supervisionByMonth, DIRECT_CODE, SUPERVISION_CODE } from "../supervisio
 import { authWeeks } from "../utilization";
 import { sectionsForTopic } from "../plan/sections";
 import type { EvalContext } from "./context";
-import type { Rule, RuleResult, RuleStatus, RuleType } from "./types";
+import {
+  PLAN_TYPE_LABELS,
+  possiblePlanTypes,
+  type PlanType,
+  type Rule,
+  type RuleResult,
+  type RuleStatus,
+  type RuleType,
+  type ScopeFinding,
+} from "./types";
 
 type Outcome = { status: RuleStatus; message: string; evidence?: string[] };
 type Evaluator = (p: Record<string, unknown>, ctx: EvalContext, rule: Rule) => Outcome;
@@ -749,9 +758,35 @@ const EVALUATORS: Record<RuleType, Evaluator> = {
   },
 };
 
+const planLabel = (t: string) => PLAN_TYPE_LABELS[t as PlanType] ?? t.replace(/_/g, " ");
+
+/**
+ * Does a rule limited to some plan types apply to this client's plan? "maybe" when the plan
+ * type is not confirmed and could go either way: the rule stays in, with a note.
+ */
+function planTypeFit(rule: Rule, planType: PlanType): "yes" | "no" | "maybe" {
+  const only = rule.planTypes ?? [];
+  if (!only.length) return "yes";
+  const could = possiblePlanTypes(planType);
+  const hits = could.filter((t) => only.includes(t)).length;
+  return hits === 0 ? "no" : hits === could.length ? "yes" : "maybe";
+}
+
+/** The state the primary plan was issued in, else the client's service state ("" when neither is known). */
+export const effectivePlanState = (ctx: EvalContext) =>
+  (ctx.client.planState || ctx.client.serviceState || "").trim().toUpperCase();
+
 export function evaluateRule(rule: Rule, ctx: EvalContext): RuleResult {
+  const fit = planTypeFit(rule, ctx.client.planType);
+  const only = (rule.planTypes ?? []).map(planLabel).join(", ");
+  if (fit === "no") {
+    // Not a pass: the rule says nothing about this kind of plan.
+    const message = `Not applicable: applies only to ${only} plans; this plan is ${planLabel(ctx.client.planType)}`;
+    return { rule, status: "n/a", rawStatus: "n/a", message, evidence: [] };
+  }
   const out = EVALUATORS[rule.type](rule.params, ctx, rule);
   const evidence = [...(out.evidence ?? [])];
+  if (fit === "maybe") evidence.push(`Applies only to ${only} plans: confirm the plan type`);
   let status = out.status;
   // Why the rule can't be trusted yet (source changed, broken, expired, secondary only).
   if (rule.trust && rule.trust.status !== "verified") for (const r of rule.trust.reasons) evidence.push(r);
@@ -772,4 +807,39 @@ export function evaluateRule(rule: Rule, ctx: EvalContext): RuleResult {
 
 export function evaluateRules(rules: Rule[], ctx: EvalContext): RuleResult[] {
   return rules.map((r) => evaluateRule(r, ctx));
+}
+
+/**
+ * Findings about the payor choice rather than any one rule: a payor scoped to other states, or a
+ * plan type nobody has confirmed. Warnings only; they never block export.
+ */
+export function scopeFindings(rules: Rule[], ctx: EvalContext): ScopeFinding[] {
+  const out: ScopeFinding[] = [];
+  const state = effectivePlanState(ctx);
+  const p = ctx.payor;
+  if (p && p.states.length && state && !p.states.includes(state))
+    out.push({
+      id: "scope.payor_state",
+      status: "warn",
+      message: `${p.name} rules are for plans issued in ${p.states.join(", ")}; this plan is from ${state}. Confirm the right payor is selected.`,
+      evidence: [
+        ctx.client.planState
+          ? "Plan state recorded on the insurance"
+          : "Plan state not recorded: using the service state",
+      ],
+    });
+  const unconfirmed = ctx.client.planType === "unknown" || ctx.client.planType === "commercial_unknown";
+  const limited = rules.filter((r) => planTypeFit(r, ctx.client.planType) === "maybe");
+  // Fully insured or self-funded decides whether a state mandate applies to a commercial plan.
+  if (unconfirmed && (limited.length || p?.lineOfBusiness === "commercial"))
+    out.push({
+      id: "scope.plan_type",
+      status: "warn",
+      message: "Plan type not recorded: confirm whether this plan is fully insured or self-funded",
+      evidence: [
+        "Ask on the benefits check (VOB) or the payor portal, then record it on the client's insurance",
+        ...(limited.length ? [`${limited.length} rule(s) depend on the plan type`] : []),
+      ],
+    });
+  return out;
 }

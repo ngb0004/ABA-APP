@@ -5,6 +5,7 @@ import { FormToggle, RecordForm, type FieldSpec } from "@/components/record-form
 import { MEMBER_ROLES, practiceSettings } from "@/lib/services/records";
 import { orgSettings } from "@/lib/services/clients";
 import { requirePageCtx } from "@/lib/server/page-session";
+import { US_STATES } from "@/lib/payors/types";
 
 export const metadata: Metadata = { title: "Practice settings" };
 
@@ -21,6 +22,12 @@ const settingsFields: FieldSpec[] = [
     name: "reassessmentLeadDays",
     label: "Reassess this many days before the authorization ends",
     type: "number",
+  },
+  {
+    name: "statesServed",
+    label: "States we serve (the Payor rules page shows these first)",
+    type: "checkboxes",
+    options: US_STATES,
   },
   {
     name: "offices",
@@ -69,6 +76,7 @@ export default async function SettingsPage() {
             reauthLeadDays: s.reauthLeadDays,
             reassessmentLeadDays: s.reassessmentLeadDays,
             offices: s.offices,
+            statesServed: s.statesServed,
           }}
         />
       </div>

@@ -8,6 +8,7 @@ import { createHash } from "node:crypto";
 import { sid } from "../../src/lib/stable-id";
 import { addDays, addMonths, diffDays, weekday, type Day } from "../../src/lib/dates";
 import type { IntakeAnswers } from "../../src/lib/intake/schema";
+import type { PlanType } from "../../src/lib/payors/types";
 
 // ---------------------------------------------------------------- helpers
 
@@ -108,6 +109,9 @@ export type SynClient = {
     priority: "primary" | "secondary";
     memberId: string;
     planName: string;
+    planType: PlanType;
+    /** State the plan was issued in; null means the client's service state. */
+    planState: string | null;
     secondaryDocsSigned?: boolean;
   }[];
   attachments: { id: string; kind: string; title: string; documentDate: Day; caregiverSigned: boolean }[];
@@ -300,8 +304,9 @@ export const DEMO_PASSWORD = "synthetic-demo-only";
  * Bump when the fictional dataset or the plan structure changes in a way the hosted
  * demo should pick up: the demo reloads its fictional clients once on the next boot.
  * 2: 23-section plans and goal records (dates, status, locked baselines).
+ * 3: insurance plan types and plan states.
  */
-export const SEED_VERSION = 2;
+export const SEED_VERSION = 3;
 
 export function buildDataset(asOf: Day): SynDataset {
   const orgId = sid("org:sample-practice");
@@ -379,6 +384,8 @@ export function buildDataset(asOf: Day): SynDataset {
         priority: "primary",
         memberId: "SYN-AMG-000101",
         planName: "Amerigroup Georgia Medicaid (synthetic)",
+        planType: "medicaid_managed_care",
+        planState: "GA",
       },
     ],
     attachments: [
@@ -697,6 +704,8 @@ export function buildDataset(asOf: Day): SynDataset {
         priority: "primary",
         memberId: "SYN-CIG-000202",
         planName: "Cigna Open Access Plus (synthetic)",
+        planType: "commercial_fully_insured",
+        planState: "GA",
       },
     ],
     attachments: [
@@ -1042,6 +1051,8 @@ export function buildDataset(asOf: Day): SynDataset {
         priority: "primary",
         memberId: "SYN-TRI-000303",
         planName: "TRICARE Prime (synthetic)",
+        planType: "tricare",
+        planState: null,
       },
       {
         id: sid("c3:payor2"),
@@ -1049,6 +1060,9 @@ export function buildDataset(asOf: Day): SynDataset {
         priority: "secondary",
         memberId: "SYN-AET-000304",
         planName: "Aetna Choice POS II (synthetic)",
+        // A parent's employer plan: self-funded, administered by Aetna.
+        planType: "commercial_self_funded",
+        planState: "GA",
         secondaryDocsSigned: false,
       },
     ],
@@ -1324,6 +1338,8 @@ export function buildDataset(asOf: Day): SynDataset {
         priority: "primary",
         memberId: "SYN-AET-009901",
         planName: "Aetna (synthetic)",
+        planType: "commercial_unknown",
+        planState: null,
       },
     ],
     diagnoses: [{ ...c1.diagnoses[0]!, id: sid("o1:dx") }],
