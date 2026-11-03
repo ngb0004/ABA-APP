@@ -18,6 +18,12 @@ test("all three synthetic clients: alerts, safety flags, intake, goals, and plan
 
   const c2 = await openClient(page, "Bravo Testchild");
   await expect(page.locator("#authorization")).toContainText("97153");
+  // Payor rules start folded into one line of counts, and open like a dropdown.
+  const rules = page.getByTestId("client-payor-rules");
+  await expect(rules.locator(":scope > summary")).toContainText(/\d+ (fail|warn|pass)/);
+  await expect(rules.locator("table")).toBeHidden();
+  await rules.locator(":scope > summary").click();
+  await expect(rules.locator("table")).toBeVisible();
   await page.goto(`/clients/${c2}/goals`);
   await expect(page.getByText("No improvement over the last 8 weeks.")).toHaveCount(1);
   await expect(page.locator("svg line.phase-change")).toHaveCount(1);

@@ -306,8 +306,21 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
         </div>
       )}
 
-      <div className="panel">
-        <h2 style={{ marginTop: 0 }}>Payor rules</h2>
+      <details className="panel collapsible" data-testid="client-payor-rules">
+        <summary>
+          <h2>Payor rules</h2>
+          <span className="row" style={{ gap: 6 }}>
+            {(["fail", "warn", "pass", "n/a"] as const).map((st) => {
+              const n = d.ruleResults.filter((r) => r.status === st).length;
+              return n ? (
+                <span key={st} className={`badge ${st === "n/a" ? "na" : st}`}>
+                  {n} {st}
+                </span>
+              ) : null;
+            })}
+            {!d.ruleResults.length && <span className="muted">none yet</span>}
+          </span>
+        </summary>
         <div className="table-wrap">
           <table>
             <thead>
@@ -353,7 +366,7 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
             </tbody>
           </table>
         </div>
-      </div>
+      </details>
 
       <div className="grid2">
         <div className="panel">

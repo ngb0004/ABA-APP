@@ -963,3 +963,33 @@ button.small {
   justify-content: space-between;
   gap: 12px;
 }
+
+/* A panel that opens like a dropdown: the summary row is the panel's heading. */
+details.collapsible > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  list-style: none;
+}
+details.collapsible > summary::-webkit-details-marker {
+  display: none;
+}
+details.collapsible > summary h2 {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+details.collapsible > summary h2::before {
+  content: "▸";
+  font-size: 0.8em;
+  transition: transform 0.15s;
+}
+details.collapsible[open] > summary h2::before {
+  transform: rotate(90deg);
+}
+details.collapsible[open] > summary {
+  margin-bottom: 12px;
+}
