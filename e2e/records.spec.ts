@@ -1,5 +1,5 @@
 import { expect, test, type Locator } from "@playwright/test";
-import { api, login } from "./helpers";
+import { api, login, openClient } from "./helpers";
 
 /** Fill a RecordForm field by its label (inputs carry ids, labels point at them). */
 const fill = (form: Locator, label: string, value: string) =>
@@ -542,4 +542,46 @@ test("a change made in another tab never wipes what is typed: the BCBA chooses w
   await expect(page.getByTestId("goal-barriers-1")).toHaveValue("Typed in this tab.");
   await expect(page.getByLabel("Settings (comma separated)")).toHaveValue("home, clinic");
   await other.close();
+});
+
+test("sessions are browsed one month at a time, and a new session opens its own month", async ({ page }) => {
+  await login(page, "bcba@sample-practice.test");
+  const id = await openClient(page, "Bravo Testchild");
+  await page.goto(`/clients/${id}/records`);
+  const panel = page.getByTestId("records-sessions");
+  const month = panel.getByLabel("Month", { exact: true });
+  // The newest month with sessions is shown first; every listed month has a session count.
+  const options = await month.locator("option").allTextContents();
+  expect(options.length).toBeGreaterThan(1);
+  for (const o of options) expect(o).toMatch(/^[A-Z][a-z]+ \d{4} \(\d+ sessions?\)$/);
+  const newest = await month.inputValue();
+  await expect(page.getByTestId("session-month-summary")).toContainText(/sessions?, \d+ units/);
+  const rowsIn = async (m: string) => {
+    const dates = await panel.locator("tbody tr td:first-child").allTextContents();
+    expect(dates.length).toBeGreaterThan(0);
+    for (const d of dates) expect(d.startsWith(m)).toBe(true);
+  };
+  await rowsIn(newest);
+
+  // Previous month: the dropdown and the rows follow.
+  await panel.getByRole("button", { name: "Previous month with sessions" }).click();
+  await expect(page).toHaveURL(/month=\d{4}-\d{2}/);
+  const prev = await month.inputValue();
+  expect(prev < newest).toBe(true);
+  await rowsIn(prev);
+  // Picking a month from the dropdown.
+  await month.selectOption(newest);
+  await expect(month).toHaveValue(newest);
+  await rowsIn(newest);
+
+  // A session added for an older month opens that month.
+  await page.getByTestId("add-session").click();
+  const se = page.getByTestId("session-form");
+  await se.getByLabel("CPT code").selectOption("97153");
+  await se.getByLabel("Date").fill(`${prev}-03`);
+  await se.getByLabel("Units (15 min)").fill("4");
+  await se.getByLabel("Staff code").fill("RBT-M");
+  await se.getByTestId("session-form-submit").click();
+  await expect(month).toHaveValue(prev);
+  await expect(panel).toContainText("RBT-M");
 });

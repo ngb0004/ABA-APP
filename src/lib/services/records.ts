@@ -17,6 +17,7 @@ import { dayToDate, toDay } from "../dates";
 import { HttpError, registerSensitiveName } from "../log";
 import { RECORDED_EVENTS } from "../payors/evaluate";
 import { looksLikePhiInNote } from "../rules-watch/text";
+import { monthRange, pickMonth } from "../session-months";
 import {
   BENEFITS_CHECK_METHODS,
   checksForInsurance,
@@ -779,7 +780,8 @@ export async function addSession(
       select: { id: true },
     });
     await note(tx, "session:create", "ServiceSession", row.id, { cptCode: v.cptCode });
-    return row;
+    // The Records page shows sessions a month at a time: it opens the new session's month.
+    return { ...row, month: v.date.slice(0, 7) };
   });
 }
 
@@ -972,7 +974,7 @@ export async function removeMember(ctx: OrgCtx, membershipId: string) {
 
 // ---------------------------------------------------------------- read for the records page
 
-export async function clientRecords(ctx: OrgCtx, clientId: string) {
+export async function clientRecords(ctx: OrgCtx, clientId: string, opts: { month?: unknown } = {}) {
   requirePermission(ctx.role, "client:read");
   return withOrg(ctx, async (tx) => {
     const client = await tx.client.findUnique({
@@ -996,15 +998,24 @@ export async function clientRecords(ctx: OrgCtx, clientId: string) {
     registerSensitiveName(client.lastName);
     // The latest check for the payor each row has now (a row's payor can be changed).
     for (const p of client.payors) p.benefitsChecks = checksForInsurance(p.benefitsChecks, p).slice(0, 1);
-    const sessions = await tx.serviceSession.findMany({
-      where: { clientId },
-      orderBy: [{ date: "desc" }, { startMinute: "desc" }],
-      take: 60,
-    });
+    // Sessions are browsed a month at a time: every month that has sessions, then the chosen one.
+    const months = (
+      await tx.$queryRaw<{ month: string; sessions: number; units: number }[]>`
+        SELECT to_char(date, 'YYYY-MM') AS month, count(*)::int AS sessions, sum(units)::int AS units
+        FROM service_session WHERE "clientId" = ${clientId}::uuid
+        GROUP BY 1 ORDER BY 1 DESC`
+    ).map((m) => ({ month: m.month, sessions: Number(m.sessions), units: Number(m.units) }));
+    const month = pickMonth(months, opts.month);
+    const sessions = month
+      ? await tx.serviceSession.findMany({
+          where: { clientId, date: { gte: monthRange(month).start, lt: monthRange(month).end } },
+          orderBy: [{ date: "desc" }, { startMinute: "desc" }],
+        })
+      : [];
     const payors = await tx.payor.findMany({
       orderBy: { name: "asc" },
       select: { id: true, name: true, states: true },
     });
-    return { client, sessions, payors };
+    return { client, sessions, months, month, payors };
   });
 }

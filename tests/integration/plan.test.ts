@@ -313,25 +313,36 @@ describe("pre-submission audit", () => {
 
 describe("drafting outside the database transaction", () => {
   it("refuses a second draft of the same section while one is running, and never overwrites an edit", async () => {
+    // The provider tells the test when the model call has started, and finishes only when released,
+    // so the test never depends on how long the database takes.
+    let started: () => void = () => {};
+    let release: () => void = () => {};
     const slow = {
       name: "slow-mock",
       model: "slow-mock",
       async complete() {
-        await new Promise((r) => setTimeout(r, 400));
+        started();
+        await new Promise<void>((r) => (release = r));
         return { text: "A short draft about {{client.name}}.", model: "slow-mock" };
       },
     };
+    const callStarted = () => new Promise<void>((r) => (started = r));
     setLlmProvider(slow as never);
     const p = await createPlan(bcba, clientId("client2"), "reauth");
+    let begun = callStarted();
     const first = draftSection(bcba, p.id, "barriers_to_treatment", AS_OF);
+    await begun;
     await expect(draftSection(bcba, p.id, "barriers_to_treatment", AS_OF)).rejects.toMatchObject({
       status: 409,
     });
+    release();
     await first;
     // Edited while the model is writing: the late draft is not saved.
+    begun = callStarted();
     const late = draftSection(bcba, p.id, "barriers_to_treatment", AS_OF);
-    await new Promise((r) => setTimeout(r, 100));
+    await begun;
     await editSection(bcba, p.id, "barriers_to_treatment", "BCBA text.", AS_OF);
+    release();
     await expect(late).rejects.toMatchObject({ status: 409 });
     const v = await planView(bcba, p.id, AS_OF);
     expect(v.sections.find((s) => s.key === "barriers_to_treatment")!.content).toBe("BCBA text.");

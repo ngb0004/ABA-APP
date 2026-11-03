@@ -5,6 +5,8 @@ import { label, labeled } from "@/components/labels";
 import { planTypeLine } from "@/components/payor-display";
 import { FormToggle, RecordForm, type FieldSpec } from "@/components/record-form";
 import { RowMenu } from "@/components/row-menu";
+import { MonthPicker } from "@/components/month-picker";
+import { monthLabel } from "@/lib/session-months";
 import { toDay } from "@/lib/dates";
 import { formatClock } from "@/lib/time-format";
 import { isDemo } from "@/lib/demo";
@@ -33,11 +35,18 @@ export const metadata: Metadata = { title: "Records" };
 
 const yesNo = (b: boolean) => (b ? "yes" : "no");
 
-export default async function RecordsPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function RecordsPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ month?: string }>;
+}) {
   const id = await uuidParam(params);
+  const { month: requestedMonth } = await searchParams;
   const ctx = await requirePageCtx();
-  const [{ client: c, sessions, payors }, status] = await orNotFound(() =>
-    Promise.all([clientRecords(ctx, id), clientStatusSummary(ctx, id)]),
+  const [{ client: c, sessions, months, month, payors }, status] = await orNotFound(() =>
+    Promise.all([clientRecords(ctx, id, { month: requestedMonth }), clientStatusSummary(ctx, id)]),
   );
   const canClient = can(ctx.role, "client:write");
   const canIns = can(ctx.role, "insurance:manage");
@@ -476,14 +485,37 @@ export default async function RecordsPage({ params }: { params: Promise<{ id: st
         )}
       </div>
 
-      <div className="panel" data-testid="records-sessions">
-        <h2 style={{ marginTop: 0 }}>Sessions</h2>
+      <div className="panel" data-testid="records-sessions" id="sessions">
+        <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+          <h2 style={{ margin: 0 }}>Sessions</h2>
+          {month && <MonthPicker months={months} month={month} />}
+        </div>
+        {month && (
+          <p className="muted" data-testid="session-month-summary">
+            {monthLabel(month)}: {sessions.length} {sessions.length === 1 ? "session" : "sessions"},{" "}
+            {sessions.reduce((n, s) => n + s.units, 0)} units
+            {" ("}
+            {Object.entries(
+              sessions.reduce<Record<string, number>>((by, s) => {
+                by[s.cptCode] = (by[s.cptCode] ?? 0) + s.units;
+                return by;
+              }, {}),
+            )
+              .sort(([a], [b]) => a.localeCompare(b))
+              .map(([code, u]) => `${code}: ${u}`)
+              .join(" · ")}
+            {")"}
+          </p>
+        )}
         {canData && c.authorizations.length > 0 && (
           <FormToggle label="Add a session" testId="add-session">
             <RecordForm
               url={`${base}/sessions`}
               fields={sessionFields}
               submitLabel="Add session"
+              redirectKey="month"
+              redirectPrefix={`/clients/${id}/records?month=`}
+              redirectSuffix="#sessions"
               testId="session-form"
               initial={{
                 authorizationId: c.authorizations[0]!.id,
@@ -539,7 +571,6 @@ export default async function RecordsPage({ params }: { params: Promise<{ id: st
             </table>
           </div>
         )}
-        {sessions.length === 60 && <p className="muted">Showing the 60 most recent sessions.</p>}
       </div>
     </>
   );

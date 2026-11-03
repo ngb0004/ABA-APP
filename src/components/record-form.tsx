@@ -237,6 +237,8 @@ export function RecordForm(props: {
   /** After success: go to `${redirectPrefix}${response[redirectKey]}`, else refresh. */
   redirectKey?: string;
   redirectPrefix?: string;
+  /** Appended after the redirect value, e.g. "#sessions". */
+  redirectSuffix?: string;
   testId?: string;
   onDone?: () => void;
 }) {
@@ -268,7 +270,9 @@ export function RecordForm(props: {
           );
         props.onDone?.();
         if (props.redirectKey && r.data[props.redirectKey])
-          router.push(`${props.redirectPrefix ?? ""}${String(r.data[props.redirectKey])}`);
+          router.push(
+            `${props.redirectPrefix ?? ""}${String(r.data[props.redirectKey])}${props.redirectSuffix ?? ""}`,
+          );
         else router.refresh();
       }}
     >

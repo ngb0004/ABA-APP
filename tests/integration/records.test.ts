@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { withOrg } from "@/lib/db";
 import {
+  clientRecords,
   addDataPoint,
   addMember,
   addSession,
@@ -623,5 +624,28 @@ describe("past authorizations", () => {
     ).rejects.toMatchObject({
       status: 422,
     });
+  });
+});
+
+describe("sessions by month", () => {
+  it("lists every month with sessions and shows one month at a time", async () => {
+    const c2 = clientId("client2");
+    const all = await clientRecords(bcba, c2);
+    expect(all.months.length).toBeGreaterThan(1);
+    // Newest month first, with counts that add up to that month's rows.
+    expect(all.month).toBe(all.months[0]!.month);
+    expect(all.sessions.length).toBe(all.months[0]!.sessions);
+    expect(all.sessions.reduce((n, s) => n + s.units, 0)).toBe(all.months[0]!.units);
+    expect(all.sessions.every((s) => s.date.toISOString().startsWith(all.month!))).toBe(true);
+
+    const older = all.months[all.months.length - 1]!.month;
+    const picked = await clientRecords(bcba, c2, { month: older });
+    expect(picked.month).toBe(older);
+    expect(picked.sessions.length).toBe(all.months[all.months.length - 1]!.sessions);
+    expect(picked.sessions.every((s) => s.date.toISOString().startsWith(older))).toBe(true);
+
+    // A month with no sessions, or a malformed one, falls back to the newest month.
+    for (const month of ["1999-01", "2026-13", "x"])
+      expect((await clientRecords(bcba, c2, { month })).month).toBe(all.month);
   });
 });
