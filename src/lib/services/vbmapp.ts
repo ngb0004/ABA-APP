@@ -9,6 +9,7 @@ import { withOrg, type OrgCtx } from "../db";
 import { assertDemoUploadAllowed } from "../demo";
 import { HttpError } from "../log";
 import { requirePermission } from "../permissions";
+import { neutralUploadName } from "../upload-names";
 import { carryForward, totalsFromScores, type GridScore } from "../vbmapp/carry-forward";
 import { parseVbmappWorkbook, type ParsedWorkbook } from "../vbmapp/parse";
 import { assertClientActive, precheckClientActive } from "./client-status";
@@ -32,7 +33,8 @@ export async function uploadVbmapp(ctx: OrgCtx, clientId: string, filename: stri
       data: {
         orgId: ctx.orgId,
         clientId,
-        filename: filename.replace(/[^\w.\- ]/g, "_").slice(0, 120),
+        // Never the uploaded name: it can hold the child's name or DOB.
+        filename: neutralUploadName("VB-MAPP workbook", filename),
         fileSha256: sha256(data),
         // The workbook itself is not stored; neither are the name/DOB header cells.
         parsed: parsed as unknown as Prisma.InputJsonValue,

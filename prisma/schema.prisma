@@ -47,9 +47,13 @@ model User {
   passwordHash      String
   totpSecret        String?
   mfaEnabled        Boolean   @default(false)
-  /// Consecutive wrong authenticator codes across sessions; locks MFA for a while when too high.
-  failedMfaCount    Int       @default(0)
-  mfaLockedUntil    DateTime?
+  /// Consecutive failed sign-in attempts (wrong password or wrong authenticator code). Reset by a
+  /// successful sign-in; reaching the limit locks the account until lockedUntil.
+  failedLoginCount  Int       @default(0)
+  lockedUntil       DateTime?
+  /// TOTP time step (unix time / 30) of the last accepted authenticator code. Only later steps are
+  /// accepted, so a code cannot be replayed within its validity window.
+  lastTotpStep      Int?
   createdAt         DateTime  @default(now())
   /// Yoma staff who curate the payor rule library (verify rules against official documents).
   /// Not an org role: set only by scripts/set-curator.ts. A trigger rejects changes by the app role.
@@ -83,8 +87,9 @@ model AuthSession {
   mfaVerified       Boolean  @default(false)
   /// Authenticator secret being set up in this sign-in; moved to the user only on confirmation.
   pendingTotpSecret String?
-  failedMfaAttempts Int      @default(0)
   createdAt         DateTime @default(now())
+  /// Last user activity (written at most once a minute). Idle longer than the idle timeout: signed out.
+  lastSeenAt        DateTime @default(now())
   expiresAt         DateTime
 
   user User @relation(fields: [userId], references: [id])

@@ -13,7 +13,6 @@ import {
 } from "@/lib/services/rules-watch";
 import { syncPayorLibrary } from "@/lib/payors/library";
 import { loadPayorSeed } from "@/lib/payors/load";
-import { authenticator } from "otplib";
 import { POST as revokeRoute } from "@/app/api/payors/rules/[id]/revoke/route";
 import { POST as verifyRoute } from "@/app/api/payors/rules/[id]/verify/route";
 import { loginWithPassword, SESSION_COOKIE, verifyMfa } from "@/lib/auth/session";
@@ -21,6 +20,7 @@ import { DEMO_PASSWORD } from "../../seed/synthetic/dataset";
 import { ctxAs, curatorCtx, curatorUser, org, userOf } from "../helpers/ctx";
 import { dataset } from "../helpers/synthetic-eval";
 import { fakeFetch } from "../helpers/fake-fetch";
+import { freshCode } from "../helpers/totp";
 
 const bcba = ctxAs("BCBA");
 const other = dataset.orgs[1]!;
@@ -270,7 +270,7 @@ describe("verify with proof", () => {
     };
     const signIn = async (u: { email: string; totpSecret: string }) => {
       const s = await loginWithPassword(u.email, DEMO_PASSWORD);
-      await verifyMfa(s!.token, authenticator.generate(u.totpSecret));
+      await verifyMfa(s!.token, await freshCode(u.email, u.totpSecret));
       return s!.token;
     };
     const bcbaToken = await signIn(userOf("BCBA"));

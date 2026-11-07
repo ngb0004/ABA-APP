@@ -1,6 +1,5 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { Prisma, PrismaClient } from "@prisma/client";
-import { authenticator } from "otplib";
 import { isPlatformCurator, setPlatformCurator } from "@/lib/auth/curator";
 import {
   ctxFromRequest,
@@ -14,6 +13,7 @@ import { listOpenReports, reportRuleProblem, resolveRuleReport } from "@/lib/ser
 import { DEMO_PASSWORD } from "../../seed/synthetic/dataset";
 import { ctxAs, curatorCtx, curatorUser, org, userOf } from "../helpers/ctx";
 import { dataset } from "../helpers/synthetic-eval";
+import { freshCode } from "../helpers/totp";
 
 const bcba = ctxAs("BCBA");
 const other = dataset.orgs[1]!;
@@ -29,7 +29,7 @@ const ruleOf = (ctx: typeof bcba, payorKey: string) =>
 
 async function signIn(email: string, secret: string) {
   const step1 = await loginWithPassword(email, DEMO_PASSWORD);
-  await verifyMfa(step1!.token, authenticator.generate(secret));
+  await verifyMfa(step1!.token, await freshCode(email, secret));
   return step1!.token;
 }
 
@@ -66,7 +66,7 @@ describe("platform curator flag", () => {
       }),
     ).rejects.toThrow();
     // Ordinary account changes still work for the app role.
-    await db().user.update({ where: { id: bcba.userId }, data: { failedMfaCount: 0 } });
+    await db().user.update({ where: { id: bcba.userId }, data: { failedLoginCount: 0 } });
     expect(await isPlatformCurator(bcba)).toBe(false);
   });
 

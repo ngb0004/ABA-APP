@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { authenticator } from "otplib";
 import {
   ctxFromRequest,
   getSessionByToken,
@@ -9,6 +8,7 @@ import {
 } from "@/lib/auth/session";
 import { can, PERMISSIONS } from "@/lib/permissions";
 import { sampleOrg } from "../helpers/synthetic-eval";
+import { freshCode } from "../helpers/totp";
 
 const bcba = sampleOrg.users.find((u) => u.role === "BCBA")!;
 
@@ -26,7 +26,7 @@ describe("email + password + TOTP MFA", () => {
     const req = (t: string) => new Request("http://x/api", { headers: { cookie: `${SESSION_COOKIE}=${t}` } });
     await expect(ctxFromRequest(req(step1!.token))).rejects.toThrow(/Not authenticated/);
     expect(await verifyMfa(step1!.token, "000000")).toBeNull();
-    const s = await verifyMfa(step1!.token, authenticator.generate(bcba.totpSecret));
+    const s = await verifyMfa(step1!.token, await freshCode(bcba.email, bcba.totpSecret));
     expect(s).toMatchObject({ orgId: sampleOrg.id, role: "BCBA", mfaVerified: true });
     expect(await ctxFromRequest(req(step1!.token))).toEqual({
       orgId: sampleOrg.id,

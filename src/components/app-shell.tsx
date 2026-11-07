@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
+import { IdleWatcher } from "./idle-watcher";
 import { Lion } from "./lion";
 import { APP_NAME } from "@/lib/brand";
 
@@ -43,6 +44,7 @@ export function AppShell(props: {
   bcba: boolean;
   demo: boolean;
   logout: ReactNode;
+  idle: { timeoutSeconds: number; warningSeconds: number };
 }) {
   const path = usePathname();
   const [open, setOpen] = useState(false);
@@ -115,6 +117,7 @@ export function AppShell(props: {
           </span>
           {props.logout}
         </div>
+        <IdleWatcher {...props.idle} />
         <main>{props.children}</main>
       </div>
     </div>

@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
-import { cookies } from "next/headers";
 import "@fontsource/poppins/400.css";
 import "@fontsource/poppins/500.css";
 import "@fontsource/poppins/600.css";
 import "@fontsource/poppins/700.css";
-import { getSessionByToken, SESSION_COOKIE } from "@/lib/auth/session";
+import { IDLE_WARNING_SECONDS } from "@/lib/auth/idle";
+import { authConfig } from "@/lib/auth/session";
+import { currentSession } from "@/lib/server/current-session";
 import { LogoutButton } from "@/components/actions";
 import { AppShell } from "@/components/app-shell";
 import { label } from "@/components/labels";
@@ -21,7 +22,7 @@ export const metadata: Metadata = {
 export const dynamic = "force-dynamic";
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  const session = await getSessionByToken((await cookies()).get(SESSION_COOKIE)?.value);
+  const session = (await currentSession()).session;
   const demo = isDemo();
   if (!session?.orgId)
     return (
@@ -54,6 +55,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           bcba={session.role === "BCBA"}
           demo={demo}
           logout={<LogoutButton />}
+          idle={{ timeoutSeconds: authConfig().idleMinutes * 60, warningSeconds: IDLE_WARNING_SECONDS }}
         >
           {children}
         </AppShell>

@@ -4,7 +4,7 @@ import { useState } from "react";
 
 type Step = "password" | "mfa" | "enroll";
 
-export function LoginForm({ demo }: { demo: boolean }) {
+export function LoginForm({ demo, notice }: { demo: boolean; notice?: string | null }) {
   const [step, setStep] = useState<Step>("password");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -20,7 +20,14 @@ export function LoginForm({ demo }: { demo: boolean }) {
     });
     const data = await res.json().catch(() => ({}));
     setBusy(false);
-    if (!res.ok) setError(data.error ?? "Sign-in failed");
+    if (!res.ok) {
+      setError(data.error ?? "Sign-in failed");
+      // The sign-in ended (for example the account locked): start again from the password.
+      if (data.restart) {
+        setEnroll(null);
+        setStep("password");
+      }
+    }
     return res.ok ? data : null;
   }
 
@@ -50,6 +57,11 @@ export function LoginForm({ demo }: { demo: boolean }) {
   return (
     <div className="panel" style={{ maxWidth: 440, margin: "40px auto" }}>
       <h1>Sign in</h1>
+      {notice && !error && step === "password" && (
+        <p className="notice" role="status" data-testid="login-notice">
+          {notice}
+        </p>
+      )}
       {step === "password" && (
         <form
           onSubmit={async (e) => {

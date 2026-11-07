@@ -993,3 +993,27 @@ details.collapsible[open] > summary h2::before {
 details.collapsible[open] > summary {
   margin-bottom: 12px;
 }
+
+/* ---------------------------------------------------------------- idle sign-out warning */
+.idle-warning {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 50;
+  max-width: 360px;
+  background: var(--gold-50);
+  border: 1px solid var(--gold-600);
+  border-radius: 8px;
+  padding: 12px 16px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+}
+.idle-warning p {
+  margin: 0 0 8px;
+}
+.notice {
+  background: var(--gold-50);
+  border: 1px solid var(--gold-600);
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin: 0 0 12px;
+}

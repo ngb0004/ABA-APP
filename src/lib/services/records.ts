@@ -922,8 +922,9 @@ export async function addMember(ctx: OrgCtx, input: unknown) {
           passwordHash: hashPassword(v.password),
           totpSecret: null,
           mfaEnabled: false,
-          failedMfaCount: 0,
-          mfaLockedUntil: null,
+          failedLoginCount: 0,
+          lockedUntil: null,
+          lastTotpStep: null,
         },
         select: { id: true },
       });

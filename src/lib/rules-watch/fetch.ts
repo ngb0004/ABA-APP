@@ -13,6 +13,7 @@ import {
   type RevisionRow,
 } from "./parsers";
 import { htmlToText, normalizeText, textSha256 } from "./text";
+import { PDF_LIMITS, readPdfText } from "../pdf/guard";
 
 export type FetchLike = (
   url: string,
@@ -68,12 +69,8 @@ export async function extractDocumentText(bytes: Buffer, contentType: string, ur
 async function extract(bytes: Buffer, contentType: string, url: string): Promise<string> {
   const isPdf =
     contentType.includes("pdf") || bytes.subarray(0, 5).toString() === "%PDF-" || /\.pdf($|\?)/i.test(url);
-  if (isPdf) {
-    const { extractText, getDocumentProxy } = await import("unpdf");
-    const pdf = await getDocumentProxy(new Uint8Array(bytes));
-    const { text } = await extractText(pdf, { mergePages: true });
-    return text;
-  }
+  // Payor documents are untrusted files too: same guarded, memory-limited reader as uploads.
+  if (isPdf) return readPdfText(bytes, PDF_LIMITS.payorDocument);
   return htmlToText(bytes.toString("utf8"));
 }
 

@@ -16,7 +16,16 @@ export interface AuthProvider {
    * Writes nothing: the caller keeps the pending secret until it is confirmed.
    */
   beginTotpEnrollment(userId: string): Promise<{ secret: string; otpauthUrl: string }>;
-  /** Saves the secret and enables MFA if the code matches and MFA is still off. First confirmation wins. */
+  /**
+   * Saves the secret and enables MFA if the code matches and MFA is still off. First confirmation
+   * wins. The code's time step counts as used, so it cannot be replayed to sign in.
+   */
   confirmTotpEnrollment(userId: string, secret: string, code: string): Promise<boolean>;
-  verifyTotp(userId: string, code: string): Promise<boolean>;
+  /**
+   * Checks a sign-in code. "replayed": the code is right but its time step was already used
+   * successfully for this user (only strictly later steps are accepted).
+   */
+  verifyTotp(userId: string, code: string): Promise<TotpResult>;
 }
+
+export type TotpResult = "ok" | "invalid" | "replayed";

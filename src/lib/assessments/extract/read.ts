@@ -9,12 +9,12 @@ import path from "node:path";
 import * as XLSX from "xlsx";
 import { looksLikePhiInNote } from "../../rules-watch/text";
 import { HttpError } from "../../log";
+import { PDF_LIMITS, readPdfPages } from "../../pdf/guard";
 import { splitCells, textLine, type Cell, type Line } from "./lines";
 import type { ImportFormat } from "./match";
 
 const MAX_LINES = 5000;
 const MAX_SHEETS = 20;
-const MAX_PAGES = 40;
 
 const cap = (lines: Line[]) => lines.slice(0, MAX_LINES);
 
@@ -129,40 +129,25 @@ export function pdfPageLines(items: PdfItem[], page: number): Line[] {
 }
 
 export async function pdfLines(data: Buffer): Promise<Line[]> {
-  const { getDocumentProxy } = await import("unpdf");
-  let pdf: Awaited<ReturnType<typeof getDocumentProxy>>;
-  try {
-    pdf = await getDocumentProxy(new Uint8Array(data));
-  } catch {
-    throw new HttpError(400, "This PDF could not be read");
-  }
-  try {
-    const lines: Line[] = [];
-    for (let p = 1; p <= Math.min(pdf.numPages, MAX_PAGES); p++) {
-      const page = await pdf.getPage(p);
-      const content = await page.getTextContent();
-      const items = (
-        content.items as { str?: string; transform?: number[]; width?: number; height?: number }[]
-      )
-        .filter((i) => typeof i.str === "string" && Array.isArray(i.transform))
-        .map((i) => ({
-          str: i.str!,
-          x: i.transform![4]!,
-          y: i.transform![5]!,
-          w: i.width ?? 0,
-          h: i.height || Math.abs(i.transform![3]!) || 10,
-        }));
-      lines.push(...pdfPageLines(items, p));
-    }
-    if (!lines.some((l) => l.cells.some((c) => /[A-Za-z]{2}/.test(c.text))))
-      throw new HttpError(
-        422,
-        "No text found in this PDF (it may be a scan). Try a photo or screenshot of the page (.png or .jpg), or enter the scores by hand.",
-      );
-    return cap(lines);
-  } finally {
-    await (pdf as { destroy?: () => Promise<void> }).destroy?.().catch(() => undefined);
-  }
+  // Size, page, text, unpacked-size, and time limits; PDF.js runs in a memory-limited worker.
+  const pages = await readPdfPages(data, PDF_LIMITS.assessment);
+  const lines: Line[] = [];
+  pages.forEach((content, i) => {
+    const items = content.map((it) => ({
+      str: it.str,
+      x: it.transform[4]!,
+      y: it.transform[5]!,
+      w: it.width ?? 0,
+      h: it.height || Math.abs(it.transform[3]!) || 10,
+    }));
+    lines.push(...pdfPageLines(items, i + 1));
+  });
+  if (!lines.some((l) => l.cells.some((c) => /[A-Za-z]{2}/.test(c.text))))
+    throw new HttpError(
+      422,
+      "No text found in this PDF (it may be a scan). Try a photo or screenshot of the page (.png or .jpg), or enter the scores by hand.",
+    );
+  return cap(lines);
 }
 
 // ---------------------------------------------------------------- images (local OCR)

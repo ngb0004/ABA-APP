@@ -26,6 +26,7 @@ import {
   quoteIsSubstantial,
   textSha256,
 } from "../rules-watch/text";
+import { PdfRefusedError } from "../pdf/guard";
 
 export type SourceCheck = {
   key: string;
@@ -189,7 +190,10 @@ export async function uploadOfficialCopy(
   let text: string;
   try {
     text = normalizeText(await extractDocumentText(input.data, "application/pdf", "upload.pdf"));
-  } catch {
+  } catch (e) {
+    // A refused PDF (too many pages, too large unpacked, too slow...) says why, in plain words.
+    if (e instanceof PdfRefusedError && e.code !== "unreadable")
+      throw await reject(e.status, e.code, e.message);
     throw await reject(422, "unreadable", "Could not read text from that PDF.");
   }
   if (text.length < MIN_TEXT)

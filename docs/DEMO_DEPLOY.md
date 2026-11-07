@@ -58,6 +58,7 @@ The AI is a built-in stand-in (no real AI calls, no cost). To try real Claude dr
 - **Change the password:** edit `DEMO_PASSWORD` and let it redeploy. The new password works and the old one stops working; everyone is signed out.
 - **Reset one person's authenticator:** add `RESET_MFA` with the account email (or several, comma-separated, or `all`), let it redeploy, then **delete the variable**. That person sees the QR setup again at their next sign-in.
 - **Start over with fresh fictional data:** add `RESEED=true`, let it redeploy, then **delete the variable** (otherwise every restart resets the data). This also resets everyone's authenticator.
+- **Locked out:** five wrong passwords or codes in a row lock an account for 15 minutes, with the same "incorrect, or temporarily locked" message as a wrong password. Wait, or restart the app (a restart clears lockouts of the demo accounts). Idle sessions sign out after 30 minutes. `AUTH_LOCKOUT_MINUTES`, `SESSION_IDLE_MINUTES`, and the other settings in `.env.example` can be set on the app service.
 - **The demo's "today":** the fictional clients' dates are relative to the day they were loaded, so the app keeps its date fixed to that day (shown in the logs as `demo date is …`). Reseed to move it to the current date.
 - **Exported PDFs** are kept only until the app restarts or redeploys; export again if a download says the file is gone.
 - **New code:** Railway redeploys automatically when the branch changes.

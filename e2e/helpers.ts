@@ -1,6 +1,7 @@
 import { expect, type Page } from "@playwright/test";
 import { authenticator } from "otplib";
 import { buildDataset, DEMO_PASSWORD } from "../seed/synthetic/dataset";
+import { clearTotpReplay } from "./db";
 
 const users = buildDataset("2000-01-01").orgs.flatMap((o) => o.users);
 
@@ -10,6 +11,7 @@ export async function login(page: Page, email: string) {
   await page.fill("#email", email);
   await page.fill("#password", DEMO_PASSWORD);
   await page.click("button:has-text('Continue')");
+  await clearTotpReplay(email);
   await page.fill("#code", authenticator.generate(u.totpSecret));
   await page.click("button:has-text('Verify')");
   await expect(page.getByRole("heading", { name: "Caseload" })).toBeVisible();

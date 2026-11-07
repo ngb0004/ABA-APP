@@ -16,15 +16,19 @@ v1.0 runs locally on synthetic data only. **Nothing here is deployed.** This is 
 
 ## 3. Identity (Cognito)
 - [ ] Implement `CognitoAuthProvider` behind the existing `AuthProvider` interface (`src/lib/auth/provider.ts`).
-- [ ] Require TOTP MFA for every user; password policy of at least 12 characters; account lockout and advanced security (compromised-credential detection).
-- [ ] Add TOTP replay protection (reject a code already used in its time step); the local provider does not.
-- [ ] Session lifetime of 12 hours or less, with an idle timeout of 15 to 30 minutes; secure, HttpOnly, SameSite cookies over HTTPS only.
+- [ ] Require TOTP MFA for every user; password policy of at least 12 characters; advanced security (compromised-credential detection). Keep Cognito's own lockout on, or keep the app's.
+- [x] Account lockout (in code): wrong passwords and wrong or replayed codes share one per-account counter; 5 in a row lock the account for 15 minutes (`AUTH_MAX_FAILED_ATTEMPTS`, `AUTH_LOCKOUT_MINUTES`), with one generic message for every refusal and `auth:lockout` audit rows. Sign-in endpoints are also rate-limited per client IP (`AUTH_RATE_LIMIT_*`, in memory). Before running more than one app instance: set `TRUSTED_PROXY_COUNT` to the real proxy hops (ALB: 1; CloudFront + ALB: 2) and move the limiter to a shared store, or rely on the WAF rate rule in section 5.
+- [x] TOTP replay protection (in code): a code whose time step was already used for that user is refused, at sign-in and at authenticator setup (`user.lastTotpStep`). Confirm a `CognitoAuthProvider` keeps this (Cognito rejects reused codes; test it).
+- [x] Session lifetime of 12 hours or less (`SESSION_HOURS`, capped at 12) and an idle timeout of 30 minutes (`SESSION_IDLE_MINUTES`, 1 to 30; activity rules in `src/lib/auth/idle.ts`), with a sign-out warning in the UI. HttpOnly, SameSite=Lax cookies, Secure in production.
+- [ ] Cookies over HTTPS only in the deployed environment (HSTS, section 5); review the idle timeout value with the practice's security officer (15 to 30 minutes).
 - [ ] Map Cognito groups to `membership.role`; keep the permission matrix in `src/lib/permissions.ts` the single source of truth.
 
 ## 4. Data stores and encryption
 - [ ] RDS for PostgreSQL 16, Multi-AZ, storage encrypted with a customer-managed KMS key; TLS required (`rds.force_ssl=1`), and `sslmode=verify-full` in `DATABASE_URL`.
 - [ ] Two database roles exactly as local: `aba_owner` (migrations only, from CI) and `aba_app` (runtime, `NOBYPASSRLS`, not the table owner). Keep `FORCE ROW LEVEL SECURITY`.
 - [ ] Credentials in AWS Secrets Manager with rotation; nothing in environment files or images.
+- [x] Uploaded filenames are never stored or logged (they can hold a child's name): uploads keep a neutral name such as "VB-MAPP workbook (.xlsm), uploaded 2026-11-07".
+- [x] Untrusted PDFs (score files, payor letters, payor documents) are read in a memory-limited worker thread with size, page, text, unpacked-size, and time limits (`src/lib/pdf/guard.ts`). Give the container enough memory for two concurrent readers (512 MB heap each for payor documents) plus the app.
 - [ ] Exported PDFs and uploaded letters/workbooks: S3 with SSE-KMS, Block Public Access, bucket policy requiring TLS, versioning, and object lock for submitted packets. Replace the local `exports/` directory.
 - [ ] Do not store raw VB-MAPP workbooks (v1.0 stores parsed scores only; keep it that way) or, if required, store them encrypted with a short retention.
 

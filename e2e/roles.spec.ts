@@ -40,6 +40,8 @@ test("a wrong TOTP code does not sign in", async ({ page }) => {
   await page.click("button:has-text('Continue')");
   await page.fill("#code", "000000");
   await page.click("button:has-text('Verify')");
-  await expect(page.locator(".error[role=alert]")).toHaveText("Invalid code");
+  await expect(page.locator(".error[role=alert]")).toHaveText(
+    "Email, password, or code is incorrect, or the account is temporarily locked. Try again later.",
+  );
   await expect(page).toHaveURL(/\/login$/);
 });

@@ -12,7 +12,9 @@ import { toDay } from "../dates";
 import { pseudonymNames, pseudonymize } from "../intake/derive";
 import { assertDemoUploadAllowed } from "../demo";
 import { HttpError } from "../log";
+import { PDF_LIMITS, readPdfText } from "../pdf/guard";
 import { requirePermission } from "../permissions";
+import { neutralUploadName } from "../upload-names";
 import { assertClientActive, precheckClientActive } from "./client-status";
 
 export const LETTER_CLASSES = ["approval", "denial", "reduction", "request_for_info", "p2p_offer"] as const;
@@ -24,10 +26,8 @@ export async function extractLetterText(filename: string, data: Buffer): Promise
   if (lower.endsWith(".txt")) return data.toString("utf8");
   if (lower.endsWith(".pdf")) {
     if (data.subarray(0, 5).toString() !== "%PDF-") throw new HttpError(400, "Not a PDF file");
-    const { extractText, getDocumentProxy } = await import("unpdf");
-    const pdf = await getDocumentProxy(new Uint8Array(data));
-    const { text } = await extractText(pdf, { mergePages: true });
-    return text;
+    // Size, pages, text, unpacked size, and time limits; parsed in a memory-limited worker.
+    return readPdfText(data, PDF_LIMITS.letter);
   }
   throw new HttpError(400, "Upload a .pdf or .txt letter");
 }
@@ -119,7 +119,8 @@ export async function uploadLetter(ctx: OrgCtx, clientId: string, filename: stri
         orgId: ctx.orgId,
         clientId,
         authorizationId: client.authorizations[0]?.id ?? null,
-        filename: filename.slice(0, 200),
+        // Never the uploaded name: it can hold the child's name, DOB, or member ID.
+        filename: neutralUploadName("Payor letter", filename),
         text,
       },
     });

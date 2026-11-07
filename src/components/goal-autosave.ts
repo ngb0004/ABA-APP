@@ -26,7 +26,8 @@ let refreshPage: (() => void) | null = null;
 async function saveGoal(goalId: string, req: SaveRequest): Promise<SaveOutcome> {
   const res = await fetch(`/api/goals/${goalId}`, {
     method: "PATCH",
-    headers: { "content-type": "application/json" },
+    // Background save: not idle-timeout activity by itself (the typing that caused it already is).
+    headers: { "content-type": "application/json", "x-yoma-background": "1" },
     body: JSON.stringify({ ...req.patch, base: req.base, ...(req.baseAlt ? { baseAlt: req.baseAlt } : {}) }),
     // Leaving the page: the save must outlive it (sendBeacon cannot PATCH).
     keepalive: req.keepalive,

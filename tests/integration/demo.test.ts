@@ -12,6 +12,7 @@ import {
 import { authProvider } from "@/lib/auth/local";
 import { api } from "@/lib/server/api";
 import { sampleOrg } from "../helpers/synthetic-eval";
+import { freshCode } from "../helpers/totp";
 
 afterEach(() => {
   delete process.env.DEMO_MODE;
@@ -120,28 +121,24 @@ describe("first sign-in authenticator enrollment", () => {
     expect(user.totpSecret).toBe(ea!.secret);
   });
 
-  it("ends the sign-in after five wrong codes, and locks the account after ten", async () => {
+  it("five wrong codes lock the account and end the pending sign-in; even the right code is then refused", async () => {
     const email = "enroll-limit@sample-practice.test";
     await freshUser(email);
     const first = await loginWithPassword(email, "enroll-test-password");
     const en = await startMfaEnrollment(first!.token);
     await confirmMfaEnrollment(first!.token, authenticator.generate(en!.secret));
     const wrong = authenticator.generate(en!.secret) === "123456" ? "654321" : "123456";
-    const { verifyMfa, MAX_MFA_ATTEMPTS_PER_SESSION } = await import("@/lib/auth/session");
+    const { verifyMfa } = await import("@/lib/auth/session");
     const s1 = await loginWithPassword(email, "enroll-test-password");
-    for (let i = 0; i < MAX_MFA_ATTEMPTS_PER_SESSION; i++)
-      expect(await verifyMfa(s1!.token, wrong)).toBeNull();
+    for (let i = 0; i < 5; i++) expect(await verifyMfa(s1!.token, wrong)).toBeNull();
     expect(await getSessionByToken(s1!.token, { allowUnverified: true })).toBeNull();
+    // Locked: the password is refused too, the same way as a wrong one.
+    expect(await loginWithPassword(email, "enroll-test-password")).toBeNull();
+    const user = await db().user.findUniqueOrThrow({ where: { email } });
+    expect(user.lockedUntil!.getTime()).toBeGreaterThan(Date.now() + 14 * 60_000);
+    await db().user.update({ where: { email }, data: { lockedUntil: null, lastTotpStep: null } });
     const s2 = await loginWithPassword(email, "enroll-test-password");
-    for (let i = 0; i < MAX_MFA_ATTEMPTS_PER_SESSION; i++)
-      expect(await verifyMfa(s2!.token, wrong)).toBeNull();
-    // Ten consecutive failures: even the right code is refused for a while.
-    const s3 = await loginWithPassword(email, "enroll-test-password");
-    await expect(verifyMfa(s3!.token, authenticator.generate(en!.secret))).rejects.toMatchObject({
-      status: 429,
-    });
-    await db().user.update({ where: { email }, data: { mfaLockedUntil: null } });
-    expect(await verifyMfa(s3!.token, authenticator.generate(en!.secret))).not.toBeNull();
+    expect(await verifyMfa(s2!.token, authenticator.generate(en!.secret))).not.toBeNull();
   });
 });
 
@@ -149,7 +146,7 @@ describe("route ids", () => {
   it("returns 404 for a malformed id before touching the database", async () => {
     const step1 = await loginWithPassword(sampleOrg.users[0]!.email, sampleOrg.users[0]!.password);
     const { verifyMfa, SESSION_COOKIE } = await import("@/lib/auth/session");
-    await verifyMfa(step1!.token, authenticator.generate(sampleOrg.users[0]!.totpSecret));
+    await verifyMfa(step1!.token, await freshCode(sampleOrg.users[0]!.email, sampleOrg.users[0]!.totpSecret));
     const handler = api<{ id: string }>(async () => ({ reached: true }));
     const res = await handler(
       new Request("http://x/api/plans/undefined", {

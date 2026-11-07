@@ -1,7 +1,6 @@
 import "server-only";
-import { cookies } from "next/headers";
 import { notFound, redirect } from "next/navigation";
-import { getSessionByToken, SESSION_COOKIE } from "../auth/session";
+import { currentSession } from "./current-session";
 import type { OrgCtx } from "../db";
 import { loadOr404 } from "./not-found";
 
@@ -9,8 +8,9 @@ import { loadOr404 } from "./not-found";
 export async function requirePageCtx(): Promise<
   OrgCtx & { role: NonNullable<OrgCtx["role"]>; isPlatformCurator: boolean }
 > {
-  const token = (await cookies()).get(SESSION_COOKIE)?.value;
-  const s = await getSessionByToken(token);
+  const r = await currentSession();
+  const s = r.session;
+  if (r.ended === "idle") redirect("/login?reason=idle");
   if (!s || !s.orgId || !s.role) redirect("/login");
   return { orgId: s.orgId, userId: s.userId, role: s.role, isPlatformCurator: s.isPlatformCurator };
 }

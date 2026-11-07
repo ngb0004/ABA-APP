@@ -201,18 +201,23 @@ async function syncDemoCredentials() {
         passwordHash?: string;
         totpSecret?: null;
         mfaEnabled?: boolean;
-        failedMfaCount?: number;
-        mfaLockedUntil?: null;
+        failedLoginCount?: number;
+        lockedUntil?: null;
       } = {};
       if (!checkPassword(demoPassword, row.passwordHash)) data.passwordHash = hashPassword(demoPassword);
       // A public secret from the repo (seeded outside demo mode) must never stay active on the hosted demo.
       const publicSecret = row.totpSecret !== null && publicSecrets.has(row.totpSecret);
       if (publicSecret || resetMfa.includes("all") || resetMfa.includes(u.email))
-        Object.assign(data, { totpSecret: null, mfaEnabled: false, failedMfaCount: 0, mfaLockedUntil: null });
-      if (!Object.keys(data).length) continue;
-      await pg.user.update({ where: { id: row.id }, data });
-      await pg.authSession.deleteMany({ where: { userId: row.id } });
-      changed++;
+        Object.assign(data, { totpSecret: null, mfaEnabled: false });
+      if (Object.keys(data).length) {
+        await pg.user.update({ where: { id: row.id }, data });
+        await pg.authSession.deleteMany({ where: { userId: row.id } });
+        changed++;
+      }
+      // Anyone can mistype the public demo password on purpose: a restart always clears a
+      // temporary lockout of the shared demo accounts (it also expires on its own).
+      if (row.failedLoginCount || row.lockedUntil)
+        await pg.user.update({ where: { id: row.id }, data: { failedLoginCount: 0, lockedUntil: null } });
     }
     if (changed) say(`updated demo sign-in settings for ${changed} account(s)`);
     if (resetMfa.length) say("RESET_MFA applied; remove the variable so it does not run on every restart");
@@ -281,6 +286,20 @@ async function main() {
     DIRECT_DATABASE_URL: appUrl,
     SESSION_SECRET: sessionSecret,
     ...(asOf ? { APP_AS_OF: asOf } : {}),
+    // Sign-in hardening settings (src/lib/env.ts); unset ones keep their defaults.
+    ...Object.fromEntries(
+      [
+        "SESSION_HOURS",
+        "SESSION_IDLE_MINUTES",
+        "AUTH_MAX_FAILED_ATTEMPTS",
+        "AUTH_LOCKOUT_MINUTES",
+        "AUTH_RATE_LIMIT_MAX",
+        "AUTH_RATE_LIMIT_WINDOW_SECONDS",
+        "TRUSTED_PROXY_COUNT",
+      ]
+        .filter((k) => process.env[k])
+        .map((k) => [k, process.env[k]]),
+    ),
   };
   const child = spawn("pnpm", ["exec", "next", "start", "-p", port], { stdio: "inherit", env: appEnv });
   for (const sig of ["SIGTERM", "SIGINT"] as const) process.on(sig, () => child.kill(sig));
