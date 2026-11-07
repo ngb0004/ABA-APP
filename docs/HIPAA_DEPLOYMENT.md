@@ -46,12 +46,17 @@ v1.0 runs locally on synthetic data only. **Nothing here is deployed.** This is 
 - [ ] Headless Chromium (PDF export) runs with network access blocked and JavaScript off (already enforced in code with `page.route("**/*", abort)` and `javaScriptEnabled: false`). Still to do: run it with the Chromium sandbox on (a seccomp profile that allows it) or in a separate low-privilege worker without database credentials.
 - [x] Security headers on every response (`src/lib/security-headers.ts`): CSP with `frame-ancestors 'none'`, `object-src 'none'`, `base-uri 'none'`; nosniff; `Referrer-Policy: no-referrer`; HSTS in production. Still to do: a nonce-based `script-src` instead of `'unsafe-inline'`.
 - [x] The rules-watch fetcher (`src/lib/rules-watch/safe-url.ts`) fetches https only, follows at most 5 redirects by hand, stays on the seed URL's site, and refuses private, loopback and link-local addresses (by name and by DNS answer). Still to do: pin the checked address in an undici connect hook (DNS rebinding), and an egress allowlist for the task.
+- [ ] Run rules-watch as its own scheduled ECS task with its own security group and IAM role, with egress only through an egress proxy or AWS Network Firewall domain allowlist (the payor document hosts in `seed/payors.yaml`). The web app task gets no internet egress at all; its "check now" route enqueues a job instead of fetching in-process.
 
 ## 6. Logging, monitoring, audit
 - [ ] CloudTrail (all regions, management and S3 data events) to a separate log-archive account with object lock.
 - [ ] Application logs to CloudWatch through `src/lib/log.ts` only (scrubs member IDs, dates, emails, phone numbers, SSNs, street addresses, ZIPs, and client, preferred and guardian names). Next.js's own console output is scrubbed too (`src/lib/server/console-scrub.ts`), and page errors are logged as name, digest and route (`onRequestError`). Keep the `no-console` lint rule, the raw-SQL lint rule (raw queries bypass the audit), and the log-scan test (`tests/integration/log-scrub.test.ts`) in CI.
 - [x] Refused requests are audited (in code): every 401/403/404 from an API route logs a scrubbed `Access denied` line, and with a signed-in person writes an `access:denied` row (route pattern, target ids, permission, role); page permission refusals the same. Reads and attempted writes made before a failure are kept (`rolledBack` rows), automatic rows record the full row count and every id, and AI privacy-guard trips are audited as `ai:privacy_blocked`. AI-call rows carry the client id and a PHI-free payload manifest (keys, intake field ids, text length).
 - [ ] The `audit_event` table stays append-only (statement-level trigger plus revoked UPDATE/DELETE). Export it daily to the log-archive account; define who reviews it and how often.
+- [ ] Database-level audit: enable `pgaudit` on RDS (`pgaudit.log = 'write, ddl, role'` for all roles, plus `read` for `aba_owner` and break-glass roles), ship the RDS PostgreSQL log to CloudWatch with KMS encryption, forward it to the log-archive account, and alarm on any DDL against `audit_event` or `ALTER TABLE ... DISABLE TRIGGER`.
+- [ ] Retention: keep `audit_event` exports and security logs at least 6 years (S3 object lock in compliance mode), and set explicit CloudWatch log-group retention to match.
+- [ ] Written activity-review procedure: a named reviewer, a cadence (for example weekly), the queries to run (`access:denied`, `auth:lockout`, `packet:download`, `ai:call` with outcome other than ok, `ai:privacy_blocked`, read volume per user), and a record of each review.
+- [ ] Alarm on bulk record access: a daily check of distinct clients read per user (from the `audit_event` export) with a threshold, alongside the alarms below.
 - [ ] GuardDuty, Security Hub (HIPAA conformance pack in AWS Config), and alarms on failed logins, `Access denied` log lines (403 spikes), AI firewall rejections, and `ai:privacy_blocked` rows.
 - [ ] Platform-level review of org-less audit rows (unknown-email sign-ins, IP rate limits, curator grants): a NOLOGIN `aba_audit_reader` role with a narrow SELECT policy for the daily export.
 - [ ] Tamper evidence for `audit_event`: a BEFORE INSERT trigger forcing `createdAt` to the server clock and `userId` to `app.current_user`, a per-org hash chain whose head goes into the daily export, and a CI check that fails migrations touching its triggers.
@@ -59,14 +64,18 @@ v1.0 runs locally on synthetic data only. **Nothing here is deployed.** This is 
 ## 7. Backups and recovery
 - [ ] RDS automated backups (35 days) plus AWS Backup cross-account copies, encrypted with KMS.
 - [ ] Documented RPO/RTO; restore test at least quarterly, recorded.
+- [ ] S3 lifecycle and object-lock retention match the records-retention schedule; document how many days after a purge the data ages out of backups, and record that window in the disposal procedure.
 
 ## 8. Access reviews and operations
 - [ ] Quarterly access review of AWS IAM, Cognito users, and org memberships; remove leavers within 24 hours.
 - [ ] Break-glass procedure for production database access, logged and reviewed.
 - [ ] Dependency audit (`pnpm audit`) and container image scanning in CI; patch cadence defined.
 - [ ] Risk analysis and policies (Security Rule administrative safeguards) documented; workforce HIPAA training; incident response and breach notification runbook.
+- [ ] Records retention and patient-rights procedures: a per-org retention setting and disposal procedure; right-of-access and amendment request procedures using the in-app record export and amendment features (not built yet, see `docs/HIPAA_READINESS_AUDIT.md`); a misdirected-PHI procedure (remove, log, four-factor assessment); and the covered-entity / business-associate split of these duties in the BAA template given to practices.
+- [ ] Account-recovery procedure in the security policy: out-of-band identity verification and second-admin approval before any authenticator or password reset (code for it is in section 3).
 
 ## 9. Before the first real client
+- [ ] Every Critical and High gap in `docs/HIPAA_READINESS_AUDIT.md` section 4 (code, infrastructure and policy) is closed, and the risk analysis accepts in writing any that remain.
 - [ ] Every payor rule that will be relied on is verified against its cited document (Payor rules page) with the section recorded.
 - [ ] Remove the synthetic-only database constraint in a reviewed migration **only after** sections 1–8 are complete and signed off.
 - [ ] Penetration test of the deployed staging environment with synthetic data.
