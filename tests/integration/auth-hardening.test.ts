@@ -89,7 +89,7 @@ async function signIn(email: string, at: number) {
   const s = await loginWithPassword(email, PASSWORD);
   const v = await verifyMfa(s!.token, codeAt(at));
   expect(v).not.toBeNull();
-  return s!.token;
+  return v!.token;
 }
 
 beforeEach(() => {
@@ -180,7 +180,8 @@ describe("account lockout", () => {
     expect(await getSessionByToken(s!.token, { allowUnverified: true })).toBeNull();
     const lockouts = auditRows("auth:lockout", since);
     expect(lockouts).toHaveLength(1);
-    expect(lockouts[0]).toMatchObject({ entityId: userId, orgId: null });
+    // Filed under the person's practice, so the practice can review it (not an org-less row).
+    expect(lockouts[0]).toMatchObject({ entityId: userId, orgId: sampleOrg.id });
     expect(JSON.stringify(lockouts[0]!.meta)).not.toContain(email);
     // While locked even the right password is refused.
     vi.setSystemTime(T0 + 14 * 60_000);

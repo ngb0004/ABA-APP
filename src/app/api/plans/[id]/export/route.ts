@@ -1,11 +1,7 @@
-import { readFile } from "node:fs/promises";
-import path from "node:path";
-import { withOrg } from "@/lib/db";
 import { HttpError } from "@/lib/log";
-import { requirePermission } from "@/lib/permissions";
 import { api } from "@/lib/server/api";
 import { asOfToday } from "@/lib/server/as-of";
-import { EXPORT_DIR, exportPacketPdf } from "@/lib/services/packets";
+import { downloadPacketPdf, exportPacketPdf } from "@/lib/services/packets";
 
 const pdfResponse = (pdf: Buffer, planId: string) =>
   new Response(new Uint8Array(pdf), {
@@ -21,13 +17,8 @@ export const POST = api<{ id: string }>(async (_req, ctx, { id }) =>
 );
 
 export const GET = api<{ id: string }>(async (_req, ctx, { id }) => {
-  requirePermission(ctx.role, "export:pdf");
-  const packet = await withOrg(ctx, (tx) => tx.packet.findUnique({ where: { planId: id } }));
-  if (!packet?.exportedAt) throw new HttpError(404, "Not exported yet");
-  try {
-    return pdfResponse(await readFile(path.join(EXPORT_DIR, `${id}.pdf`)), id);
-  } catch {
-    // The file is gone (e.g. the server restarted); the packet record remains.
-    throw new HttpError(404, "The exported file is no longer available. Export the packet again.");
-  }
+  const pdf = await downloadPacketPdf(ctx, id);
+  // The file is gone (e.g. the server restarted); the packet record remains.
+  if (!pdf) throw new HttpError(404, "The exported file is no longer available. Export the packet again.");
+  return pdfResponse(pdf, id);
 });

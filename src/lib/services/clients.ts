@@ -11,7 +11,7 @@ import { withOrg } from "../db";
 import { ageYears, toDay, type Day } from "../dates";
 import { availabilityFit, priorEvaluationChecklist, safetyFlags, allowedSigners } from "../intake/derive";
 import { FIELD_BY_ID, type IntakeAnswers } from "../intake/schema";
-import { registerSensitiveName } from "../log";
+import { registerClientNames } from "../log";
 import { requirePermission } from "../permissions";
 import { redactRestricted } from "../sensitivity";
 import { supervisionByMonth } from "../supervision";
@@ -71,8 +71,7 @@ export async function listClients(ctx: OrgCtx, status: ClientStatus = "active") 
       orderBy: status === "inactive" ? [{ inactiveSince: "desc" }, { lastName: "asc" }] : { lastName: "asc" },
     });
     for (const c of clients) {
-      registerSensitiveName(c.firstName);
-      registerSensitiveName(c.lastName);
+      registerClientNames(c);
     }
     const grouped = await tx.client.groupBy({ by: ["status"], _count: { _all: true } });
     const count = (s: ClientStatus) => grouped.find((g) => g.status === s)?._count._all ?? 0;
@@ -97,8 +96,7 @@ export async function clientDetail(ctx: OrgCtx, clientId: string, asOf: Day) {
         plans: { orderBy: { createdAt: "desc" } },
       },
     });
-    registerSensitiveName(client.firstName);
-    registerSensitiveName(client.lastName);
+    registerClientNames(client);
     const org = await tx.org.findUniqueOrThrow({ where: { id: client.orgId } });
     const settings = orgSettings(org.settings);
     const auth = client.authorizations[0] ?? null;

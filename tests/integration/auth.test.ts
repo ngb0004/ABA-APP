@@ -28,12 +28,15 @@ describe("email + password + TOTP MFA", () => {
     expect(await verifyMfa(step1!.token, "000000")).toBeNull();
     const s = await verifyMfa(step1!.token, await freshCode(bcba.email, bcba.totpSecret));
     expect(s).toMatchObject({ orgId: sampleOrg.id, role: "BCBA", mfaVerified: true });
-    expect(await ctxFromRequest(req(step1!.token))).toEqual({
+    expect(await ctxFromRequest(req(s!.token))).toEqual({
       orgId: sampleOrg.id,
       userId: bcba.id,
       role: "BCBA",
       isPlatformCurator: false,
     });
+    // The token issued before MFA was retired when MFA passed: it is not a signed-in session.
+    expect(s!.token).not.toBe(step1!.token);
+    await expect(ctxFromRequest(req(step1!.token))).rejects.toThrow(/Not authenticated/);
   });
 });
 

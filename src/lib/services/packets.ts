@@ -1,7 +1,7 @@
 /** Reauth packet: checklist (payor rules + letter requirements), export to one ordered PDF, hand-off status. */
 import { goalNames } from "../goals/names";
 import type { Prisma } from "@prisma/client";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { audit, sha256 } from "../audit";
 import { withOrg, type OrgCtx } from "../db";
@@ -273,7 +273,7 @@ export function packetHtml(b: PlanBundle, results: RuleResult[], asOf: Day): str
     <tr><th>Payor</th><td>${esc(primary?.payor.name ?? "")}</td></tr><tr><th>Member ID</th><td>${esc(primary?.memberId ?? "")}</td></tr>
     <tr><th>Authorization</th><td>${esc(b.auth?.authNumber ?? "")}</td></tr><tr><th>Prepared</th><td>${asOf}</td></tr></table>
     <div class="placeholder"><strong>Payor request form (placeholder).</strong> Payor PDF form filling is not automated in v1.0. Complete the official form:
-      <ul>${forms.map((f) => `<li>${esc(String(f.rule.params.doc))}${f.rule.source.url ? `: <a href="${esc(f.rule.source.url)}">${esc(f.rule.source.url)}</a>` : " (obtain from the payor portal)"}</li>`).join("") || "<li>No payor form rule on file.</li>"}</ul></div>
+      <ul>${forms.map((f) => `<li>${esc(String(f.rule.params.doc))}${f.rule.source.url ? `: ${httpsLink(f.rule.source.url)}` : " (obtain from the payor portal)"}</li>`).join("") || "<li>No payor form rule on file.</li>"}</ul></div>
     <p class="meta">Written against: ${(b.plan.payorDocVersions as { name: string; version: string }[]).map((d) => `${esc(d.name)} (${esc(d.version)})`).join("; ")}</p>
   </div>
   <div class="page"><h1>Treatment plan</h1>${sections}</div>
@@ -284,7 +284,27 @@ export function packetHtml(b: PlanBundle, results: RuleResult[], asOf: Day): str
   </body></html>`;
 }
 
+/** A rule's source link: an https URL becomes a link, anything else (javascript:, http:) is text only. */
+export function httpsLink(url: string): string {
+  let ok = false;
+  try {
+    ok = new URL(url).protocol === "https:";
+  } catch {
+    ok = false;
+  }
+  return ok ? `<a href="${esc(url)}">${esc(url)}</a>` : esc(url);
+}
+
 export const EXPORT_DIR = path.join(process.cwd(), "exports");
+
+/**
+ * Each export is kept under its own name (plan id plus content hash) and never overwritten, so the
+ * copy sent to the payor survives a later export. The packet row's pdfSha256 names the current one.
+ */
+export const exportPath = (planId: string, sha: string) => path.join(EXPORT_DIR, `${planId}.${sha}.pdf`);
+
+export const SUBMITTED_EXPORT_LOCKED =
+  "This packet was submitted to the payor. Its PDF is kept as submitted and cannot be exported again; start a new plan to amend it.";
 
 export async function exportPacketPdf(
   ctx: OrgCtx,
@@ -292,16 +312,19 @@ export async function exportPacketPdf(
   asOf: Day,
 ): Promise<{ pdf: Buffer; sha256: string }> {
   requirePermission(ctx.role, "export:pdf");
-  return withOrg(ctx, async (tx) => {
+  const out = await withOrg(ctx, async (tx) => {
     await assertPlanClientActive(tx, planId);
+    const existing = await tx.packet.findUnique({ where: { planId }, select: { status: true } });
+    if (existing?.status === "submitted") throw new HttpError(409, SUBMITTED_EXPORT_LOCKED);
     const { bundle, results } = await assertExportable(tx, planId, asOf);
     const html = packetHtml(bundle, results, asOf);
     const { chromium } = await import("playwright");
     const browser = await chromium.launch();
     let pdf: Buffer;
     try {
-      const page = await browser.newPage();
-      // The document is self-contained; block any network access while rendering.
+      // No scripts run in the document (it needs none), and it gets no network access.
+      const context = await browser.newContext({ javaScriptEnabled: false });
+      const page = await context.newPage();
       await page.route("**/*", (r) => r.abort());
       await page.setContent(html, { waitUntil: "load" });
       pdf = Buffer.from(
@@ -315,9 +338,7 @@ export async function exportPacketPdf(
       await browser.close();
     }
     const hash = sha256(pdf);
-    await mkdir(EXPORT_DIR, { recursive: true });
-    await writeFile(path.join(EXPORT_DIR, `${planId}.pdf`), pdf);
-    await tx.packet.upsert({
+    const packet = await tx.packet.upsert({
       where: { planId },
       create: { orgId: ctx.orgId, planId, status: "ready", pdfSha256: hash, exportedAt: new Date() },
       update: { status: "ready", pdfSha256: hash, exportedAt: new Date() },
@@ -327,10 +348,52 @@ export async function exportPacketPdf(
       action: "packet:export",
       entityType: "Plan",
       entityId: planId,
-      meta: { sha256: hash },
+      meta: { sha256: hash, packetId: packet.id },
     });
     return { pdf, sha256: hash };
   });
+  // Written only after the export is committed, under a name of its own: a failed commit leaves
+  // the earlier file and its hash as they were.
+  await mkdir(EXPORT_DIR, { recursive: true });
+  await writeFile(exportPath(planId, out.sha256), out.pdf);
+  return out;
+}
+
+/**
+ * The exported PDF for a re-download, checked against the hash recorded at export. A missing file
+ * is null; a file whose bytes no longer match is refused and audited (packet:integrity_failed).
+ * Every served copy is audited as a disclosure (packet:download).
+ */
+export async function downloadPacketPdf(ctx: OrgCtx, planId: string): Promise<Buffer | null> {
+  requirePermission(ctx.role, "export:pdf");
+  const packet = await withOrg(ctx, async (tx) => tx.packet.findUnique({ where: { planId } }));
+  if (!packet?.exportedAt || !packet.pdfSha256) throw new HttpError(404, "Not exported yet");
+  let pdf: Buffer;
+  try {
+    pdf = await readFile(exportPath(planId, packet.pdfSha256));
+  } catch {
+    return null;
+  }
+  const actual = sha256(pdf);
+  const meta = { packetId: packet.id, sha256: packet.pdfSha256, status: packet.status };
+  if (actual !== packet.pdfSha256) {
+    await withOrg(ctx, (tx) =>
+      audit(tx, {
+        action: "packet:integrity_failed",
+        entityType: "Plan",
+        entityId: planId,
+        meta: { ...meta, actualSha256: actual },
+      }),
+    );
+    throw new HttpError(
+      409,
+      "The stored PDF does not match the one exported. It was not sent; export it again or contact support.",
+    );
+  }
+  await withOrg(ctx, (tx) =>
+    audit(tx, { action: "packet:download", entityType: "Plan", entityId: planId, meta }),
+  );
+  return pdf;
 }
 
 export async function markSubmitted(ctx: OrgCtx, planId: string) {

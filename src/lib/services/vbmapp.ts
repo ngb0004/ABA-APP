@@ -5,7 +5,7 @@
  */
 import type { Prisma } from "@prisma/client";
 import { audit, sha256 } from "../audit";
-import { withOrg, type OrgCtx } from "../db";
+import { withOrg, type OrgCtx, type Tx } from "../db";
 import { assertDemoUploadAllowed } from "../demo";
 import { HttpError } from "../log";
 import { requirePermission } from "../permissions";
@@ -83,6 +83,25 @@ const toGrid = (s: {
   carriedForward: s.carriedForward,
 });
 
+export const ADMINISTRATION_IN_USE =
+  "This administration's verified scores are already in an approved section or an exported plan, so a re-import cannot replace them. Reopen the sections that cite it first, or import it under the next administration number.";
+
+/**
+ * A verified administration is replaced only while nothing approved depends on it: no exported
+ * (finalized) plan for the client, and no approved section citing its tokens. Otherwise its scores
+ * would change under an approval without the section being reopened.
+ */
+async function assertAdministrationReplaceable(tx: Tx, clientId: string, adminNumber: number) {
+  const finalized = await tx.plan.count({ where: { clientId, status: "finalized" } });
+  if (finalized) throw new HttpError(409, ADMINISTRATION_IN_USE);
+  const approved = await tx.planSection.findMany({
+    where: { plan: { clientId }, state: "approved" },
+    select: { content: true },
+  });
+  const cites = new RegExp(`\\{\\{\\s*(?:vbmapp|score)\\.[\\w.:-]*admin${adminNumber}(?![0-9])`);
+  if (approved.some((s) => cites.test(s.content))) throw new HttpError(409, ADMINISTRATION_IN_USE);
+}
+
 export async function confirmImport(ctx: OrgCtx, importId: string, opts: { stripPhi: boolean }) {
   requirePermission(ctx.role, "vbmapp:confirm");
   return withOrg(ctx, async (tx) => {
@@ -109,6 +128,8 @@ export async function confirmImport(ctx: OrgCtx, importId: string, opts: { strip
       const existing = await tx.vbmappAdministration.findMany({
         where: { clientId: imp.clientId, adminNumber: a.adminNumber },
       });
+      if (existing.some((e) => e.verified))
+        await assertAdministrationReplaceable(tx, imp.clientId, a.adminNumber);
       for (const e of existing) {
         await tx.milestoneScore.deleteMany({ where: { administrationId: e.id } });
         await tx.vbmappAdministration.delete({ where: { id: e.id } });
@@ -166,9 +187,15 @@ export async function confirmImport(ctx: OrgCtx, importId: string, opts: { strip
 export async function discardImport(ctx: OrgCtx, importId: string) {
   requirePermission(ctx.role, "vbmapp:import");
   return withOrg(ctx, async (tx) => {
-    await tx.vbmappImport.update({
-      where: { id: importId },
+    // Only a pending import can be discarded: a confirmed one's administrations are in use.
+    const claimed = await tx.vbmappImport.updateMany({
+      where: { id: importId, status: "pending" },
       data: { status: "discarded", reviewerId: ctx.userId, reviewedAt: new Date() },
     });
+    if (claimed.count !== 1) {
+      const exists = await tx.vbmappImport.findUnique({ where: { id: importId }, select: { id: true } });
+      throw exists ? new HttpError(409, "This import was already reviewed") : new HttpError(404, "Not found");
+    }
+    await audit(tx, { action: "vbmapp:discard", entityType: "VbmappImport", entityId: importId });
   });
 }

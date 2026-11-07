@@ -1,8 +1,16 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+import { readFile, writeFile } from "node:fs/promises";
+import { withOrg } from "@/lib/db";
 import { MockProvider, setLlmProvider } from "@/lib/ai";
 import { confirmLetter, uploadLetter, verifyExtraction } from "@/lib/services/letters";
-import { exportPacketPdf, markSubmitted, packetView } from "@/lib/services/packets";
+import {
+  downloadPacketPdf,
+  exportPacketPdf,
+  exportPath,
+  markSubmitted,
+  packetView,
+} from "@/lib/services/packets";
 import {
   approveGoal,
   approveSection,
@@ -11,7 +19,9 @@ import {
   editSection,
   markSectionNotApplicable,
   planView,
+  reopenSection,
   setSectionItem,
+  SUBMITTED_LOCKED,
   updateGoal,
 } from "@/lib/services/plans";
 import { AS_OF } from "../helpers/synthetic-eval";
@@ -121,5 +131,35 @@ describe("reauth packet export", () => {
     await expect(markSubmitted(ctxAs("RBT"), plan.id)).rejects.toMatchObject({ status: 403 });
     await markSubmitted(ctxAs("AUTH_COORDINATOR"), plan.id);
     expect((await packetView(bcba, plan.id, AS_OF)).packet!.status).toBe("submitted");
+
+    // Re-download: served only when the bytes match the hash recorded at export, and audited.
+    const since = new Date(Date.now() - 1000);
+    expect((await downloadPacketPdf(bcba, plan.id))!.equals(out.pdf)).toBe(true);
+    const audits = (action: string) =>
+      withOrg(bcba, (tx) =>
+        tx.auditEvent.findMany({ where: { action, entityId: plan.id, createdAt: { gte: since } } }),
+      );
+    expect(await audits("packet:download")).toHaveLength(1);
+    expect((await audits("packet:download"))[0]!.meta).toMatchObject({ sha256: out.sha256 });
+
+    // The submitted packet is locked: no re-export, no section changes.
+    await expect(exportPacketPdf(bcba, plan.id, AS_OF)).rejects.toMatchObject({ status: 409 });
+    await expect(
+      reopenSection(bcba, plan.id, v.sections.find((s) => s.state === "approved")!.key),
+    ).rejects.toMatchObject({
+      status: 409,
+      message: SUBMITTED_LOCKED,
+    });
+
+    // A changed file on disk is refused, not served as the approved packet.
+    const file = exportPath(plan.id, out.sha256);
+    const original = await readFile(file);
+    await writeFile(file, Buffer.concat([original, Buffer.from("tampered")]));
+    try {
+      await expect(downloadPacketPdf(bcba, plan.id)).rejects.toMatchObject({ status: 409 });
+      expect(await audits("packet:integrity_failed")).toHaveLength(1);
+    } finally {
+      await writeFile(file, original);
+    }
   }, 120_000);
 });

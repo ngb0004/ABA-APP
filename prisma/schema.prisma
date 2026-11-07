@@ -41,23 +41,28 @@ model Org {
 }
 
 model User {
-  id                String    @id @default(uuid()) @db.Uuid
-  email             String    @unique
-  name              String
-  passwordHash      String
-  totpSecret        String?
-  mfaEnabled        Boolean   @default(false)
+  id                 String    @id @default(uuid()) @db.Uuid
+  email              String    @unique
+  name               String
+  passwordHash       String
+  totpSecret         String?
+  mfaEnabled         Boolean   @default(false)
   /// Consecutive failed sign-in attempts (wrong password or wrong authenticator code). Reset by a
   /// successful sign-in; reaching the limit locks the account until lockedUntil.
-  failedLoginCount  Int       @default(0)
-  lockedUntil       DateTime?
+  failedLoginCount   Int       @default(0)
+  lockedUntil        DateTime?
   /// TOTP time step (unix time / 30) of the last accepted authenticator code. Only later steps are
   /// accepted, so a code cannot be replayed within its validity window.
-  lastTotpStep      Int?
-  createdAt         DateTime  @default(now())
+  lastTotpStep       Int?
+  /// Set for an account a practice admin created with a temporary password: the person chooses
+  /// their own password before setting up an authenticator, and the temporary one stops working.
+  mustChangePassword Boolean   @default(false)
+  /// Lockouts since the last successful sign-in. Each doubles the next lock (capped at 24 hours).
+  lockoutCount       Int       @default(0)
+  createdAt          DateTime  @default(now())
   /// Yoma staff who curate the payor rule library (verify rules against official documents).
   /// Not an org role: set only by scripts/set-curator.ts. A trigger rejects changes by the app role.
-  isPlatformCurator Boolean   @default(false)
+  isPlatformCurator  Boolean   @default(false)
 
   memberships Membership[]
   sessions    AuthSession[]

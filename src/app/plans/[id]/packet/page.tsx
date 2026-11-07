@@ -4,6 +4,7 @@ import Link from "next/link";
 import { sectionDone } from "@/lib/plan/sections";
 import { ActionButton, UploadForm } from "@/components/actions";
 import { DEMO_SAMPLES, isDemo } from "@/lib/demo";
+import { sampleFilesAllowed } from "@/lib/env";
 import { AuditPanel } from "@/components/audit-panel";
 import { ChecklistToggle, ExportButton, LetterReview } from "@/components/letter-review";
 import { Status } from "@/components/status";
@@ -92,7 +93,7 @@ export default async function PacketPage({ params }: { params: Promise<{ id: str
             are accepted.
           </p>
         )}
-        {can(role, "letter:upload") && (
+        {can(role, "letter:upload") && sampleFilesAllowed() && (
           <SamplePicker
             label={`Or load a fictional sample letter${initial ? " (reauthorization letters)" : ""}`}
             urlPrefix={`/api/plans/${id}/letters?sample=`}

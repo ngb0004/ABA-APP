@@ -6,6 +6,7 @@ import {
   confirmMfaEnrollment,
   getSessionByToken,
   SESSION_COOKIE,
+  sessionCookieOptions,
   SIGN_IN_FAILED_MESSAGE,
 } from "@/lib/auth/session";
 import { assertSameOrigin, errorResponse } from "@/lib/server/api";
@@ -28,7 +29,10 @@ export async function POST(req: Request) {
       return NextResponse.json({ error, restart }, { status: 401 });
     }
     refundAuthRateLimit(req);
-    return NextResponse.json({ ok: true, role: s.role });
+    // The pre-MFA token is retired: the signed-in session gets a new one.
+    const res = NextResponse.json({ ok: true, role: s.role });
+    res.cookies.set(SESSION_COOKIE, s.token, sessionCookieOptions());
+    return res;
   } catch (e) {
     return errorResponse(e);
   }

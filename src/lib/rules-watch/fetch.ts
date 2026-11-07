@@ -14,6 +14,8 @@ import {
 } from "./parsers";
 import { htmlToText, normalizeText, textSha256 } from "./text";
 import { PDF_LIMITS, readPdfText } from "../pdf/guard";
+import { lookup } from "node:dns/promises";
+import { isPrivateAddress, MAX_REDIRECTS, siteOf, urlProblem } from "./safe-url";
 
 export type FetchLike = (
   url: string,
@@ -46,8 +48,17 @@ export type FetchedDocument =
     }
   | { ok: false; error: string; resolvedUrl: string | null };
 
-/** Real network fetch with a timeout. */
+/** Refuses a host whose DNS answer is a private, loopback or link-local address. */
+async function assertPublicHost(url: string) {
+  const host = new URL(url).hostname;
+  const addrs = await lookup(host, { all: true });
+  if (!addrs.length || addrs.some((a) => isPrivateAddress(a.address)))
+    throw Object.assign(new Error("private address"), { cause: { code: "PRIVATE_ADDRESS" } });
+}
+
+/** Real network fetch with a timeout. Callers follow redirects themselves (followSafely). */
 export const defaultFetch: FetchLike = async (url, init) => {
+  await assertPublicHost(url);
   const ctl = new AbortController();
   const t = setTimeout(() => ctl.abort(), 45_000);
   try {
@@ -87,12 +98,53 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   ]).finally(() => clearTimeout(t));
 }
 
+type FetchRes = Awaited<ReturnType<FetchLike>>;
+
+/** Thrown when a hop fails the URL checks; reported as a broken source, never fetched. */
+class BlockedUrl extends Error {
+  constructor(
+    public reason: string,
+    public url: string,
+  ) {
+    super(reason);
+  }
+}
+
+/**
+ * Fetches with redirects followed by hand: each hop must pass urlProblem() (https, the seed's own
+ * site, no private address), and at most MAX_REDIRECTS hops are followed.
+ */
+export async function followSafely(
+  fetcher: FetchLike,
+  url: string,
+  init: Parameters<FetchLike>[1] = {},
+  site: string | null = null,
+): Promise<{ res: FetchRes; finalUrl: string }> {
+  const allowed = site ?? siteOf(new URL(url).hostname);
+  let current = url;
+  let req = { ...init };
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    const problem = urlProblem(current, allowed);
+    if (problem) throw new BlockedUrl(problem, current);
+    const res = await fetcher(current, { ...req, redirect: "manual" });
+    const location = res.headers.get("location");
+    if (res.status < 300 || res.status >= 400 || !location) return { res, finalUrl: res.url || current };
+    current = new URL(location, current).toString();
+    // 303 (and 301/302 after a POST) continue as a GET without the body, like a browser.
+    if (res.status === 303 || ((res.status === 301 || res.status === 302) && req.method === "POST")) {
+      req = { ...req, method: "GET" };
+      delete req.body;
+    }
+  }
+  throw new BlockedUrl("Too many redirects", current);
+}
+
 async function download(fetcher: FetchLike, url: string, init?: Parameters<FetchLike>[1]) {
-  const res = await fetcher(url, { redirect: "follow", ...init });
+  const { res, finalUrl } = await followSafely(fetcher, url, init);
   const declared = Number(res.headers.get("content-length") ?? "0");
-  if (declared > MAX_BYTES) return { res, bytes: null as Buffer | null, tooLarge: true };
+  if (declared > MAX_BYTES) return { res, finalUrl, bytes: null as Buffer | null, tooLarge: true };
   const bytes = Buffer.from(await withTimeout(res.arrayBuffer(), BODY_TIMEOUT_MS));
-  return { res, bytes, tooLarge: bytes.length > MAX_BYTES };
+  return { res, finalUrl, bytes, tooLarge: bytes.length > MAX_BYTES };
 }
 
 function fail(error: string, resolvedUrl: string | null = null): FetchedDocument {
@@ -105,7 +157,7 @@ async function resolveGaMmis(
   indexUrl: string,
   title: string,
 ): Promise<{ url: string; listedDate: string | null } | { error: string }> {
-  const r = await fetcher(indexUrl, { redirect: "follow" });
+  const { res: r } = await followSafely(fetcher, indexUrl);
   if (r.status !== 200) return { error: `Index page returned HTTP ${r.status}` };
   const html = await withTimeout(r.text(), BODY_TIMEOUT_MS);
   const cookies = (r.headers.getSetCookie?.() ?? []).map((c) => c.split(";")[0]).join("; ");
@@ -146,9 +198,8 @@ async function resolveGaMmis(
   // Never post (with the site's cookies) anywhere but the index page's own site.
   if (postUrl.origin !== new URL(indexUrl).origin)
     return { error: "The index page's form points to another site" };
-  const post = await fetcher(postUrl.toString(), {
+  const { res: post } = await followSafely(fetcher, postUrl.toString(), {
     method: "POST",
-    redirect: "follow",
     headers: { "content-type": "application/x-www-form-urlencoded", ...(cookies ? { cookie: cookies } : {}) },
     body: form.toString(),
   });
@@ -178,8 +229,8 @@ export async function fetchCurrentDocument(
       listedDate = r.listedDate;
     } else url = locator.url;
 
-    const { res, bytes, tooLarge } = await download(fetcher, url);
-    const resolvedUrl = res.url || url;
+    const { res, finalUrl, bytes, tooLarge } = await download(fetcher, url);
+    const resolvedUrl = finalUrl;
     if (res.status !== 200) return fail(`HTTP ${res.status}`, resolvedUrl);
     if (tooLarge || !bytes) return fail("Document too large", resolvedUrl);
     if (bytes.length === 0) return fail("Empty response", resolvedUrl);
@@ -235,6 +286,7 @@ export async function fetchCurrentDocument(
       revisions,
     };
   } catch (e) {
+    if (e instanceof BlockedUrl) return fail(e.reason, e.url);
     const err = e as { name?: string; cause?: { code?: string } };
     return fail(
       err.name === "AbortError" ? describeNetworkError("TIMEOUT") : describeNetworkError(err.cause?.code),

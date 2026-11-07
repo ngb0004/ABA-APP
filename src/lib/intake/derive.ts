@@ -4,6 +4,7 @@
  * minimum-necessary AI payload.
  */
 import { BLOCKS, DAYS, FIELD_BY_ID, INTAKE_FIELDS, isNa, valueOf, type IntakeAnswers } from "./schema";
+import { replaceNames } from "../privacy/names";
 
 export type SafetyFlag = {
   fieldId: string;
@@ -134,16 +135,11 @@ export function intakeForAi(answers: IntakeAnswers, names: PseudonymNames) {
 export type PseudonymNames = { client: string[]; others: string[] };
 
 export function pseudonymize(text: string, names: PseudonymNames): string {
-  const all = [
+  // Unicode-aware and accent-insensitive (src/lib/privacy/names.ts): "José", "Zoë", "O'Brien".
+  return replaceNames(text, [
     ...names.client.map((n) => [n, "[Client]"] as const),
     ...names.others.map((n) => [n, "[Caregiver]"] as const),
-  ].filter(([n]) => n && n.trim().length >= 2);
-  // Longest first, so "Jordan Testparent" is replaced before "Jordan".
-  let out = text;
-  for (const [n, tag] of all.sort((a, b) => b[0].length - a[0].length)) {
-    out = out.replace(new RegExp(`\\b${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "gi"), tag);
-  }
-  return out;
+  ]);
 }
 
 /** Name parts to pseudonymize for a client record. */

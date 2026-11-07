@@ -2,7 +2,13 @@ import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { z } from "zod";
 import { assertAuthRateLimit, refundAuthRateLimit } from "@/lib/auth/rate-limit";
-import { getSessionByToken, SESSION_COOKIE, SIGN_IN_FAILED_MESSAGE, verifyMfa } from "@/lib/auth/session";
+import {
+  getSessionByToken,
+  SESSION_COOKIE,
+  sessionCookieOptions,
+  SIGN_IN_FAILED_MESSAGE,
+  verifyMfa,
+} from "@/lib/auth/session";
 import { assertSameOrigin, errorResponse } from "@/lib/server/api";
 
 const Body = z.object({ code: z.string().regex(/^\d{6}$/) });
@@ -21,7 +27,10 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: SIGN_IN_FAILED_MESSAGE, restart }, { status: 401 });
     }
     refundAuthRateLimit(req);
-    return NextResponse.json({ ok: true, role: s.role });
+    // The pre-MFA token is retired: the signed-in session gets a new one.
+    const res = NextResponse.json({ ok: true, role: s.role });
+    res.cookies.set(SESSION_COOKIE, s.token, sessionCookieOptions());
+    return res;
   } catch (e) {
     return errorResponse(e);
   }

@@ -6,7 +6,7 @@
  */
 import { withOrg, type OrgCtx } from "../db";
 import { toDay, type Day } from "../dates";
-import { HttpError, registerSensitiveName } from "../log";
+import { HttpError, registerClientNames } from "../log";
 import { checksForInsurance, fundingContradicts, type PlanFunding } from "../payors/benefits";
 import type { EvalContext } from "../payors/context";
 import {
@@ -88,8 +88,7 @@ export async function clientRequirements(ctx: OrgCtx, clientId: string, asOf: Da
       },
     });
     if (!client) throw new HttpError(404, "Not found");
-    registerSensitiveName(client.firstName);
-    registerSensitiveName(client.lastName);
+    registerClientNames(client);
 
     // An inactive client's requirements are history: evaluated as of the inactive date, nothing due.
     const inactive = client.status === "inactive";

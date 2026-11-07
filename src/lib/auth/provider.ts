@@ -9,8 +9,16 @@ export interface AuthProvider {
     password: string;
     totpSecret?: string;
   }): Promise<{ userId: string }>;
-  /** Returns the user id when the password is correct, otherwise null. */
-  verifyPassword(email: string, password: string): Promise<{ userId: string; mfaEnabled: boolean } | null>;
+  /**
+   * Returns the user id when the password is correct, otherwise null. `mustChangePassword`: the
+   * password is a temporary one an admin set (Cognito: FORCE_CHANGE_PASSWORD after AdminCreateUser).
+   */
+  verifyPassword(
+    email: string,
+    password: string,
+  ): Promise<{ userId: string; mfaEnabled: boolean; mustChangePassword: boolean } | null>;
+  /** The person's own new password replaces a temporary one (Cognito: RespondToAuthChallenge NEW_PASSWORD_REQUIRED). */
+  setOwnPassword(userId: string, newPassword: string): Promise<void>;
   /**
    * Generates a new TOTP secret and otpauth:// URI for an authenticator app.
    * Writes nothing: the caller keeps the pending secret until it is confirmed.

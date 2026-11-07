@@ -66,8 +66,31 @@ async function seedCurators(org: SynOrg) {
   }
 }
 
+/**
+ * The seed writes accounts whose password and authenticator secrets are in this repository (and a
+ * platform curator). That is only safe on a local database. It refuses a production deployment
+ * outright, and, outside the hosted demo (own password, no curator, no committed secrets), any
+ * database not on this machine unless ALLOW_SYNTHETIC_SEED=1 says so.
+ */
+export function seedRefusal(e: Record<string, string | undefined>): string | null {
+  if (e.DEPLOYMENT === "production")
+    return "Refusing to seed: synthetic accounts with published credentials never go on a production database";
+  if (e.DEMO_MODE === "true") return null;
+  let host = "";
+  try {
+    host = new URL(e.DATABASE_URL ?? "").hostname;
+  } catch {
+    return "Refusing to seed: DATABASE_URL is not set";
+  }
+  if (["localhost", "127.0.0.1", "::1", "[::1]"].includes(host) || e.ALLOW_SYNTHETIC_SEED === "1")
+    return null;
+  return `Refusing to seed ${host}: the synthetic accounts' passwords and authenticator secrets are public. Seed only a local database (or set ALLOW_SYNTHETIC_SEED=1 for a throwaway one).`;
+}
+
 /** seededAsOf marks the dataset date; it commits with the org's data, so it also marks a completed seed. */
 export async function seedOrg(fullOrg: SynOrg, asOf: Day) {
+  const refusal = seedRefusal(process.env);
+  if (refusal) throw new Error(refusal);
   const ctx = { orgId: fullOrg.id, userId: null, role: null };
   const prisma = new PrismaClient({ datasourceUrl: process.env.DATABASE_URL });
   // Hosted demo: the password comes from the host's settings (never the one in this repo),

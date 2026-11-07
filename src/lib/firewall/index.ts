@@ -67,7 +67,7 @@ const KEY_RE = /^[a-zA-Z][a-zA-Z0-9_.:-]*$/;
 const TOKEN_RE = /\{\{\s*([a-zA-Z][a-zA-Z0-9_.:-]*)\s*\}\}/g;
 
 /** Spelled-out quantities. "one" is excluded: it is overwhelmingly a pronoun in clinical prose. */
-const NUMBER_WORDS = [
+const CARDINALS = [
   "zero",
   "two",
   "three",
@@ -98,22 +98,74 @@ const NUMBER_WORDS = [
   "hundred",
   "thousand",
   "million",
+  "billion",
   "dozen",
-  "percent",
-  "percentage point",
-  "half",
-  "quarter",
-  "twice",
-  "thrice",
-  "double",
-  "triple",
+];
+/** Every ordinal through "hundredth" is built from these plus the -ieth decades. */
+const ORDINALS = [
   "first",
   "second",
   "third",
   "fourth",
   "fifth",
+  "sixth",
+  "seventh",
+  "eighth",
+  "ninth",
+  "tenth",
+  "eleventh",
+  "twelfth",
+  "thirteenth",
+  "fourteenth",
+  "fifteenth",
+  "sixteenth",
+  "seventeenth",
+  "eighteenth",
+  "nineteenth",
+  "twentieth",
+  "thirtieth",
+  "fortieth",
+  "fiftieth",
+  "sixtieth",
+  "seventieth",
+  "eightieth",
+  "ninetieth",
+  "hundredth",
+  "thousandth",
+  "millionth",
 ];
-const NUMBER_WORD_RE = new RegExp(`\\b(${NUMBER_WORDS.join("|")})\\b`, "i");
+const OTHER_QUANTITIES = [
+  "percent",
+  "percentage point",
+  "half",
+  "halves",
+  "quarter",
+  "twice",
+  "thrice",
+  "double",
+  "triple",
+  "quadruple",
+  "twenties",
+  "thirties",
+  "forties",
+  "fifties",
+  "sixties",
+  "seventies",
+  "eighties",
+  "nineties",
+];
+const NUMBER_WORDS = [...CARDINALS, ...ORDINALS, ...OTHER_QUANTITIES];
+/** Each word and its plural ("dozens", "hundreds", "tenths"); compounds ("twenty-three") match by part. */
+const NUMBER_WORD_RE = new RegExp(`\\b(?:${NUMBER_WORDS.join("|")})s?\\b`, "i");
+/**
+ * Month and weekday names place an event in time, which is a date the AI would be inventing.
+ * Capitalized only, so the modal "may" passes; "May" counts after a word that introduces a date.
+ */
+const CALENDAR_RE = new RegExp(
+  "\\b(?:January|February|March|April|June|July|August|September|October|November|December|" +
+    "Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sept?|Oct|Nov|Dec|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)s?\\b|" +
+    "\\b(?:in|since|by|until|of|on|through|before|after|during|early|late|mid|last|next|this)[\\s-]+May\\b",
+);
 /** A Roman numeral up to XXXIX ("II", "iv", "XII"). */
 const ROMAN = "(?:x{1,3}(?:ix|iv|v?i{0,3})|ix|iv|v?i{1,3}|v)";
 /**
@@ -159,9 +211,11 @@ function scan(text: string, ctx: SourcedContext) {
 export function validateAiText(text: string, ctx: SourcedContext): FirewallResult {
   const normalized = normalize(text);
   const { errors, keys, outside } = scan(normalized, ctx);
-  const digits = outside.match(/\p{Nd}+/gu);
+  // Every numeric character: digits, and also ½, ², ①, Ⅻ (Unicode No and Nl).
+  const digits = outside.match(/\p{N}+/gu);
   if (digits) errors.push({ kind: "digit", detail: digits.slice(0, 5).join(", ") });
-  const word = outside.match(NUMBER_WORD_RE) ?? outside.match(GOAL_BY_NUMBER_RE);
+  const word =
+    outside.match(NUMBER_WORD_RE) ?? outside.match(GOAL_BY_NUMBER_RE) ?? outside.match(CALENDAR_RE);
   if (word) errors.push({ kind: "number_word", detail: word[0] });
   return { ok: errors.length === 0, errors, normalized, keys };
 }
@@ -170,7 +224,7 @@ export function validateAiText(text: string, ctx: SourcedContext): FirewallResul
 export function validateBcbaText(text: string, ctx: SourcedContext) {
   const normalized = normalize(text);
   const { errors, keys, outside } = scan(normalized, ctx);
-  const unsourcedNumbers = outside.match(/\p{Nd}+(?:[.,]\p{Nd}+)?/gu) ?? [];
+  const unsourcedNumbers = outside.match(/\p{N}+(?:[.,]\p{N}+)?/gu) ?? [];
   return { ok: errors.length === 0, errors, normalized, keys, unsourcedNumbers };
 }
 

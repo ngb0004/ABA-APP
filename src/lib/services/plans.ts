@@ -128,6 +128,19 @@ async function defaultSelectionFor(tx: Tx, clientId: string, anchor: Day, months
   return defaultAssessmentSelection(assessments, assessmentWindowStart(anchor, months));
 }
 
+export const SUBMITTED_LOCKED =
+  "This plan's packet was submitted to the payor, so its sections are locked as submitted. Start a new plan to amend it.";
+
+/**
+ * Section changes need an active client and a packet that has not been submitted: the submitted
+ * packet is what the payor received, so its sections are never changed in place.
+ */
+export async function assertPlanEditable(tx: Tx, planId: string) {
+  await assertPlanClientActive(tx, planId);
+  const p = await tx.packet.findUnique({ where: { planId }, select: { status: true } });
+  if (p?.status === "submitted") throw new HttpError(409, SUBMITTED_LOCKED);
+}
+
 export async function createPlan(ctx: OrgCtx, clientId: string, type: "initial" | "reauth") {
   requirePermission(ctx.role, "plan:create");
   return withOrg(ctx, async (tx) => {
@@ -318,7 +331,7 @@ export async function draftSection(ctx: OrgCtx, planId: string, key: string, asO
   // Read everything in a short transaction; the model call (which can take most of a minute) runs
   // outside any transaction, and the result is written in a second one.
   const prep = await withOrg(ctx, async (tx) => {
-    await assertPlanClientActive(tx, planId);
+    await assertPlanEditable(tx, planId);
     const b = await loadPlanBundle(tx, planId);
     const section = b.plan.sections.find((s) => s.key === key);
     if (!section) throw new HttpError(404, "Unknown section");
@@ -349,7 +362,13 @@ export async function draftSection(ctx: OrgCtx, planId: string, key: string, asO
       payload: prep.payload,
       sourced: prep.sourced,
       identifiers: prep.identifiers,
-      audit: { entityType: "PlanSection", entityId: prep.sectionId, section: def.key, task: "draft_section" },
+      audit: {
+        entityType: "PlanSection",
+        entityId: prep.sectionId,
+        section: def.key,
+        task: "draft_section",
+        clientId: prep.clientId,
+      },
     });
   } finally {
     draftsInFlight.delete(prep.sectionId);
@@ -357,7 +376,7 @@ export async function draftSection(ctx: OrgCtx, planId: string, key: string, asO
   const text = tidyDraft(result.text);
   return withOrg(ctx, async (tx) => {
     // The client may have been marked inactive while the model was writing: drop the draft then too.
-    await assertPlanClientActive(tx, planId);
+    await assertPlanEditable(tx, planId);
     // The BCBA may have approved or edited the section while the model was writing: never overwrite that.
     const current = await tx.planSection.findUniqueOrThrow({ where: { id: prep.sectionId } });
     assertOpen(current.state, "drafting again");
@@ -416,7 +435,7 @@ function assertOpen(state: string, doing: string) {
 export async function editSection(ctx: OrgCtx, planId: string, key: string, content: string, asOf: Day) {
   requirePermission(ctx.role, "section:edit");
   return withOrg(ctx, async (tx) => {
-    await assertPlanClientActive(tx, planId);
+    await assertPlanEditable(tx, planId);
     const b = await loadPlanBundle(tx, planId);
     const section = b.plan.sections.find((s) => s.key === key);
     if (!section) throw new HttpError(404, "Unknown section");
@@ -459,7 +478,7 @@ export async function setSectionItem(
   // only through their own actions, never through the checklist.
   if (itemKey.startsWith("_")) throw new HttpError(422, "That item cannot be changed here");
   return withOrg(ctx, async (tx) => {
-    await assertPlanClientActive(tx, planId);
+    await assertPlanEditable(tx, planId);
     const section = await tx.planSection.findUniqueOrThrow({ where: { planId_key: { planId, key } } });
     assertOpen(section.state, "changing items");
     const items = { ...((section.items ?? {}) as Record<string, ItemState>) };
@@ -475,7 +494,7 @@ export async function setSectionItem(
 export async function approveSection(ctx: OrgCtx, planId: string, key: string, asOf: Day) {
   requirePermission(ctx.role, "section:approve");
   return withOrg(ctx, async (tx) => {
-    await assertPlanClientActive(tx, planId);
+    await assertPlanEditable(tx, planId);
     const b = await loadPlanBundle(tx, planId);
     const section = b.plan.sections.find((s) => s.key === key);
     if (!section) throw new HttpError(404, "Unknown section");
@@ -537,7 +556,7 @@ export async function markSectionNotApplicable(ctx: OrgCtx, planId: string, key:
   const why = reason.trim();
   if (!why) throw new HttpError(422, "Say why this section does not apply");
   return withOrg(ctx, async (tx) => {
-    await assertPlanClientActive(tx, planId);
+    await assertPlanEditable(tx, planId);
     const section = await tx.planSection.findUniqueOrThrow({ where: { planId_key: { planId, key } } });
     if (section.state === "not_applicable") return section;
     if (section.state === "approved")
@@ -576,7 +595,7 @@ export async function markSectionNotApplicable(ctx: OrgCtx, planId: string, key:
 export async function reopenSection(ctx: OrgCtx, planId: string, key: string) {
   requirePermission(ctx.role, "section:approve");
   return withOrg(ctx, async (tx) => {
-    await assertPlanClientActive(tx, planId);
+    await assertPlanEditable(tx, planId);
     const section = await tx.planSection.findUniqueOrThrow({ where: { planId_key: { planId, key } } });
     const items = { ...((section.items ?? {}) as Record<string, ItemState>) };
     delete items[NOT_APPLICABLE_ITEM];

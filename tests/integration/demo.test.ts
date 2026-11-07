@@ -146,11 +146,14 @@ describe("route ids", () => {
   it("returns 404 for a malformed id before touching the database", async () => {
     const step1 = await loginWithPassword(sampleOrg.users[0]!.email, sampleOrg.users[0]!.password);
     const { verifyMfa, SESSION_COOKIE } = await import("@/lib/auth/session");
-    await verifyMfa(step1!.token, await freshCode(sampleOrg.users[0]!.email, sampleOrg.users[0]!.totpSecret));
+    const v = await verifyMfa(
+      step1!.token,
+      await freshCode(sampleOrg.users[0]!.email, sampleOrg.users[0]!.totpSecret),
+    );
     const handler = api<{ id: string }>(async () => ({ reached: true }));
     const res = await handler(
       new Request("http://x/api/plans/undefined", {
-        headers: { cookie: `${SESSION_COOKIE}=${step1!.token}` },
+        headers: { cookie: `${SESSION_COOKIE}=${v!.token}` },
       }),
       { params: Promise.resolve({ id: "undefined" }) },
     );

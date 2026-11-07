@@ -58,8 +58,15 @@ export class LocalAuthProvider implements AuthProvider {
       return null;
     }
     return checkPassword(password, user.passwordHash)
-      ? { userId: user.id, mfaEnabled: user.mfaEnabled }
+      ? { userId: user.id, mfaEnabled: user.mfaEnabled, mustChangePassword: user.mustChangePassword }
       : null;
+  }
+
+  async setOwnPassword(userId: string, newPassword: string) {
+    await db().user.update({
+      where: { id: userId },
+      data: { passwordHash: hashPassword(newPassword), mustChangePassword: false },
+    });
   }
 
   async beginTotpEnrollment(userId: string) {

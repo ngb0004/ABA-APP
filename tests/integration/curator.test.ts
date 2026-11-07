@@ -29,8 +29,9 @@ const ruleOf = (ctx: typeof bcba, payorKey: string) =>
 
 async function signIn(email: string, secret: string) {
   const step1 = await loginWithPassword(email, DEMO_PASSWORD);
-  await verifyMfa(step1!.token, await freshCode(email, secret));
-  return step1!.token;
+  // The MFA step issues a new token (the password-step token is retired).
+  const s = await verifyMfa(step1!.token, await freshCode(email, secret));
+  return s!.token;
 }
 
 describe("platform curator flag", () => {

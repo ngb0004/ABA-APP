@@ -3,6 +3,7 @@ import { ZodError } from "zod";
 import { ctxFromRequest } from "../auth/session";
 import type { OrgCtx } from "../db";
 import { HttpError, log } from "../log";
+import { DENIED_STATUSES, recordAccessDenied } from "./access-denied";
 import { formatIssues } from "./zod-messages";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -15,9 +16,10 @@ type Handler<P> = (req: Request, ctx: OrgCtx, params: P) => Promise<Response | u
  */
 export function api<P = Record<string, string>>(fn: Handler<P>) {
   return async (req: Request, route: { params: Promise<P> }) => {
+    let ctx: OrgCtx | null = null;
     try {
       if (req.method !== "GET" && req.method !== "HEAD") assertSameOrigin(req);
-      const ctx = await ctxFromRequest(req);
+      ctx = await ctxFromRequest(req);
       const params = await route.params;
       // Record ids are UUIDs; anything else is a 404, not a database error.
       for (const [k, v] of Object.entries((params ?? {}) as Record<string, unknown>))
@@ -26,7 +28,15 @@ export function api<P = Record<string, string>>(fn: Handler<P>) {
       const out = await fn(req, ctx, params);
       return out instanceof Response ? out : NextResponse.json(out ?? { ok: true });
     } catch (e) {
-      return errorResponse(e);
+      const res = errorResponse(e);
+      if (DENIED_STATUSES.has(res.status))
+        await recordAccessDenied(ctx, {
+          status: res.status,
+          method: req.method,
+          path: new URL(req.url).pathname,
+          error: e,
+        });
+      return res;
     }
   };
 }
@@ -48,6 +58,14 @@ export function errorResponse(e: unknown) {
     return NextResponse.json(
       { error: "Please fix the following:", issues: formatIssues(e.issues) },
       { status: 400 },
+    );
+  if (e instanceof Error && e.name === "AiPrivacyError")
+    return NextResponse.json(
+      {
+        error:
+          "This text still holds an identifier (a name, date of birth, or member ID), so it was not sent to the AI. Remove it and try again.",
+      },
+      { status: 422 },
     );
   if (e instanceof Error && e.name === "AiFirewallError")
     return NextResponse.json({ error: e.message }, { status: 422 });

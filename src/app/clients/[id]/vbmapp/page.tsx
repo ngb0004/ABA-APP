@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Html, UploadForm } from "@/components/actions";
 import { DEMO_SAMPLES, isDemo } from "@/lib/demo";
+import { sampleFilesAllowed } from "@/lib/env";
 import { withOrg } from "@/lib/db";
 import { toDay } from "@/lib/dates";
 import { orgSettings } from "@/lib/services/clients";
@@ -71,14 +72,16 @@ export default async function VbmappPage({ params }: { params: Promise<{ id: str
                   below are accepted.
                 </p>
               )}
-              <SamplePicker
-                label="Or load a fictional sample workbook"
-                urlPrefix={`/api/clients/${id}/vbmapp?sample=`}
-                samples={DEMO_SAMPLES.vbmapp}
-                redirectKey="importId"
-                redirectPrefix="/vbmapp/imports/"
-                testId="sample-workbooks"
-              />
+              {sampleFilesAllowed() && (
+                <SamplePicker
+                  label="Or load a fictional sample workbook"
+                  urlPrefix={`/api/clients/${id}/vbmapp?sample=`}
+                  samples={DEMO_SAMPLES.vbmapp}
+                  redirectKey="importId"
+                  redirectPrefix="/vbmapp/imports/"
+                  testId="sample-workbooks"
+                />
+              )}
             </>
           )}
           {pending.length > 0 && (

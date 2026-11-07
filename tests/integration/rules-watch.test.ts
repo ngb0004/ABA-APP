@@ -21,6 +21,9 @@ import { ctxAs, curatorCtx, curatorUser, org, userOf } from "../helpers/ctx";
 import { dataset } from "../helpers/synthetic-eval";
 import { fakeFetch } from "../helpers/fake-fetch";
 import { freshCode } from "../helpers/totp";
+import { fetchCurrentDocument, type FetchLike } from "@/lib/rules-watch/fetch";
+import { isPrivateAddress } from "@/lib/rules-watch/safe-url";
+import { LocatorSchema } from "@/lib/payors/types";
 
 const bcba = ctxAs("BCBA");
 const other = dataset.orgs[1]!;
@@ -270,8 +273,8 @@ describe("verify with proof", () => {
     };
     const signIn = async (u: { email: string; totpSecret: string }) => {
       const s = await loginWithPassword(u.email, DEMO_PASSWORD);
-      await verifyMfa(s!.token, await freshCode(u.email, u.totpSecret));
-      return s!.token;
+      const v = await verifyMfa(s!.token, await freshCode(u.email, u.totpSecret));
+      return v!.token;
     };
     const bcbaToken = await signIn(userOf("BCBA"));
     const curatorToken = await signIn(curatorUser);
@@ -540,5 +543,68 @@ describe("document renames (run last: they change document rows)", () => {
     await expect(uploadOfficialCopy(curator, doc.id, { data: Buffer.from("x") })).rejects.toMatchObject({
       status: 422,
     });
+  });
+});
+
+describe("fetcher: redirects and addresses (SSRF)", () => {
+  const redirectTo = (location: string, status = 302) =>
+    ({
+      status,
+      url: "",
+      headers: {
+        get: (n: string) => (n.toLowerCase() === "location" ? location : null),
+        getSetCookie: () => [],
+      },
+      arrayBuffer: async () => new ArrayBuffer(0),
+      text: async () => "",
+    }) as Awaited<ReturnType<FetchLike>>;
+
+  it.each([
+    "http://169.254.170.2/v2/credentials/abc",
+    "http://169.254.169.254/latest/meta-data/",
+    "https://169.254.169.254/latest/meta-data/",
+    "https://localhost/x",
+    "https://10.0.0.5/policy.pdf",
+    "https://evil.example.net/policy.pdf",
+    "http://static.cigna.com/assets/applied-behavior-analysis.pdf",
+  ])("refuses a redirect to %s and fetches nothing there", async (target) => {
+    const calls: string[] = [];
+    const start = "https://static.cigna.com/start.pdf";
+    const fetcher = (async (url: string) => {
+      calls.push(url);
+      return redirectTo(target);
+    }) as unknown as FetchLike;
+    const r = await fetchCurrentDocument({ kind: "direct", url: start }, fetcher);
+    expect(r.ok).toBe(false);
+    expect(calls).toEqual([start]);
+  });
+
+  it("follows a redirect within the payor's site, and stops after five", async () => {
+    let n = 0;
+    const loop = (async () => redirectTo(`https://static.cigna.com/hop${++n}`)) as unknown as FetchLike;
+    const r = await fetchCurrentDocument({ kind: "direct", url: "https://static.cigna.com/a" }, loop);
+    expect(r).toMatchObject({ ok: false, error: "Too many redirects" });
+    expect(n).toBe(6);
+  });
+
+  it("classifies private and public addresses", () => {
+    for (const ip of [
+      "127.0.0.1",
+      "10.1.2.3",
+      "172.20.0.1",
+      "192.168.1.1",
+      "169.254.169.254",
+      "::1",
+      "fd00::1",
+      "fe80::1",
+      "::ffff:10.0.0.1",
+    ])
+      expect(isPrivateAddress(ip)).toBe(true);
+    for (const ip of ["8.8.8.8", "2606:4700::1111"]) expect(isPrivateAddress(ip)).toBe(false);
+  });
+
+  it("requires https in the locator schema", () => {
+    expect(LocatorSchema.safeParse({ kind: "direct", url: "http://example.com/a.pdf" }).success).toBe(false);
+    expect(LocatorSchema.safeParse({ kind: "direct", url: "https://example.com/a.pdf" }).success).toBe(true);
   });
 });

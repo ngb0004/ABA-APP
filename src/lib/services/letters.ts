@@ -9,7 +9,9 @@ import { completeJson } from "../ai";
 import { audit } from "../audit";
 import { withOrg, type OrgCtx } from "../db";
 import { toDay } from "../dates";
-import { pseudonymNames, pseudonymize } from "../intake/derive";
+import { pseudonymNames, pseudonymize, type PseudonymNames } from "../intake/derive";
+import { PHONE_RE, redactDate } from "../privacy/dates";
+import { replaceNames } from "../privacy/names";
 import { assertDemoUploadAllowed } from "../demo";
 import { HttpError } from "../log";
 import { PDF_LIMITS, readPdfText } from "../pdf/guard";
@@ -95,6 +97,39 @@ const SYSTEM = `You read a health-plan letter about ABA services and return JSON
  "requirements": ["<each requirement the letter lists for the next request, copied or closely paraphrased>"]}
 Every quote must be copied character-for-character from the letter. Do not compute, convert, or restate any number outside a quote.`;
 
+/**
+ * Minimum necessary for a letter sent to the AI: client and guardian names pseudonymized; member
+ * IDs, the date of birth (in any written form), the service address and phone or fax numbers
+ * (street and ZIP) removed. Other dates stay: the authorization dates are what the classification needs.
+ */
+export function redactLetterForAi(
+  text: string,
+  r: { names: PseudonymNames; memberIds: string[]; dob: string; serviceAddress?: unknown },
+): string {
+  let safe = pseudonymize(text, r.names);
+  for (const m of r.memberIds) if (m) safe = safe.split(m).join("[member-id]");
+  safe = redactDate(safe, r.dob, "[dob]");
+  // Street line and ZIP of the service address (the state is not an identifier).
+  const addr = (r.serviceAddress ?? {}) as { line1?: unknown; zip?: unknown };
+  const line1 = typeof addr.line1 === "string" ? addr.line1.trim() : "";
+  if (line1.length >= 4) safe = replaceNames(safe, [[line1, "[address]"]]);
+  const zip = typeof addr.zip === "string" ? addr.zip.trim() : "";
+  if (/^\d{5}(-\d{4})?$/.test(zip))
+    safe = safe.replace(new RegExp(`(?<!\\d)${zip.slice(0, 5)}(?:-\\d{4})?(?!\\d)`, "g"), "[zip]");
+  return safe.replace(PHONE_RE, "[phone]");
+}
+
+export const UNVERIFIED_FIGURE_PREFIX = "[Check the figure against the letter] ";
+
+/**
+ * Rule 2: a requirement the model paraphrased must not carry a number it made up. A requirement
+ * with a figure that is not copied word for word from the letter is marked for the BCBA to check.
+ */
+export function markUnverifiedFigures(requirement: string, letterText: string): string {
+  if (!/\p{N}/u.test(requirement)) return requirement;
+  return norm(letterText).includes(norm(requirement)) ? requirement : UNVERIFIED_FIGURE_PREFIX + requirement;
+}
+
 export async function uploadLetter(ctx: OrgCtx, clientId: string, filename: string, data: Buffer) {
   requirePermission(ctx.role, "letter:upload");
   assertDemoUploadAllowed(data);
@@ -109,11 +144,13 @@ export async function uploadLetter(ctx: OrgCtx, clientId: string, filename: stri
     });
     const names = pseudonymNames(client);
     // Minimum necessary: names pseudonymized, member IDs and DOB removed before the AI sees the letter.
-    let safe = pseudonymize(text, names);
-    for (const p of client.payors) safe = safe.split(p.memberId).join("[member-id]");
     const dob = toDay(client.dob);
-    for (const v of [dob, `${dob.slice(5, 7)}/${dob.slice(8, 10)}/${dob.slice(0, 4)}`])
-      safe = safe.split(v).join("[dob]");
+    const safe = redactLetterForAi(text, {
+      names,
+      memberIds: client.payors.map((p) => p.memberId),
+      dob,
+      serviceAddress: client.serviceAddress,
+    });
     const letter = await tx.payorLetter.create({
       data: {
         orgId: ctx.orgId,
@@ -132,7 +169,7 @@ export async function uploadLetter(ctx: OrgCtx, clientId: string, filename: stri
         dob,
         memberIds: client.payors.map((p) => p.memberId),
       },
-      audit: { entityType: "PayorLetter", entityId: letter.id, task: "classify_letter" },
+      audit: { entityType: "PayorLetter", entityId: letter.id, task: "classify_letter", clientId },
     });
     const parsed = AiLetterSchema.safeParse(json);
     if (!parsed.success)
@@ -141,7 +178,7 @@ export async function uploadLetter(ctx: OrgCtx, clientId: string, filename: stri
     const extracted = {
       classification: parsed.data.classification,
       fields,
-      requirements: parsed.data.requirements.map((r) => pseudonymize(r, names)),
+      requirements: parsed.data.requirements.map((r) => markUnverifiedFigures(pseudonymize(r, names), safe)),
     };
     await tx.payorLetter.update({
       where: { id: letter.id },

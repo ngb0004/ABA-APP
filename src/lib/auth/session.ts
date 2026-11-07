@@ -1,5 +1,6 @@
 import type { Role } from "@prisma/client";
 import { createHmac, randomBytes } from "node:crypto";
+import { z } from "zod";
 import { audit } from "../audit";
 import { db, withOrg, withUser, type OrgCtx } from "../db";
 import { env } from "../env";
@@ -50,53 +51,78 @@ export type SessionInfo = {
 const isLocked = (u: { lockedUntil: Date | null }, now: Date) => !!u.lockedUntil && u.lockedUntil > now;
 
 /**
+ * Sign-in events for a known account are filed under each practice the person belongs to, so the
+ * practice's security officer sees failed sign-ins, lockouts and new authenticators for its own
+ * staff on the audit page (164.308(a)(5)(ii)(C)). An account with no practice gets an org-less row.
+ */
+export async function auditAccount(
+  userId: string,
+  e: { action: string; meta?: Record<string, string | number | boolean | null> },
+) {
+  const memberships = await withUser(userId, (tx) =>
+    tx.membership.findMany({ where: { userId }, select: { orgId: true, role: true } }),
+  );
+  const row = { action: e.action, entityType: "User", entityId: userId, userId, meta: e.meta ?? {} };
+  if (!memberships.length) return audit(null, { ...row, orgId: null });
+  for (const m of memberships)
+    await withOrg({ orgId: m.orgId, userId, role: m.role }, (tx) => audit(tx, { ...row, orgId: m.orgId }));
+}
+
+/** Cookie settings for the session token (set at password sign-in, and again when MFA rotates it). */
+export function sessionCookieOptions() {
+  return {
+    httpOnly: true,
+    sameSite: "lax" as const,
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: Math.round(authConfig().sessionHours * 3600),
+  };
+}
+
+/**
+ * How long the next lockout lasts: the base length, doubled for each lockout since the last
+ * successful sign-in, capped at 24 hours. Someone holding the password cannot keep guessing codes
+ * at the base rate forever.
+ */
+export function lockoutMinutesFor(baseMinutes: number, priorLockouts: number): number {
+  return Math.min(baseMinutes * 2 ** Math.min(priorLockouts, 20), 24 * 60);
+}
+
+/**
  * Counts one failed attempt (wrong password, wrong or replayed code). At the limit the account
  * locks for a while, the counter restarts, and pending (not yet verified) sign-ins end.
  * Fully signed-in sessions are left alone, so an attacker cannot sign out the real person.
  */
 async function recordFailedAttempt(userId: string, reason: string) {
   const { maxFailedAttempts, lockoutMinutes } = authConfig();
-  await audit(null, {
-    action: "auth:login_failed",
-    entityType: "User",
-    entityId: userId,
-    orgId: null,
-    userId,
-    meta: { reason },
-  });
+  await auditAccount(userId, { action: "auth:login_failed", meta: { reason } });
   const u = await db().user.update({
     where: { id: userId },
     data: { failedLoginCount: { increment: 1 } },
-    select: { failedLoginCount: true },
+    select: { failedLoginCount: true, lockoutCount: true },
   });
   if (u.failedLoginCount < maxFailedAttempts) return;
   const now = new Date();
+  const minutes = lockoutMinutesFor(lockoutMinutes, u.lockoutCount);
   // Conditional: two failures racing past the limit lock once and audit once.
   const locked = await db().user.updateMany({
     where: { id: userId, failedLoginCount: { gte: maxFailedAttempts } },
-    data: { failedLoginCount: 0, lockedUntil: new Date(now.getTime() + lockoutMinutes * 60_000) },
+    data: {
+      failedLoginCount: 0,
+      lockoutCount: { increment: 1 },
+      lockedUntil: new Date(now.getTime() + minutes * 60_000),
+    },
   });
   if (!locked.count) return;
   await db().authSession.deleteMany({ where: { userId, mfaVerified: false } });
-  await audit(null, {
+  await auditAccount(userId, {
     action: "auth:lockout",
-    entityType: "User",
-    entityId: userId,
-    orgId: null,
-    userId,
-    meta: { minutes: lockoutMinutes },
+    meta: { minutes, consecutive: u.lockoutCount + 1 },
   });
 }
 
 async function refuseLocked(userId: string, step: string) {
-  await audit(null, {
-    action: "auth:login_failed",
-    entityType: "User",
-    entityId: userId,
-    orgId: null,
-    userId,
-    meta: { reason: "locked", step },
-  });
+  await auditAccount(userId, { action: "auth:login_failed", meta: { reason: "locked", step } });
 }
 
 /** Step 1: password. Creates a session that is not usable until MFA passes. */
@@ -135,14 +161,57 @@ export async function loginWithPassword(email: string, password: string) {
       expiresAt: new Date(now.getTime() + authConfig().sessionHours * 3600_000),
     },
   });
-  await audit(null, {
-    action: "auth:password_ok",
-    entityType: "User",
-    entityId: res.userId,
-    orgId: null,
+  await auditAccount(res.userId, { action: "auth:password_ok" });
+  return {
+    token,
+    mfaEnabled: res.mfaEnabled,
+    mustChangePassword: res.mustChangePassword,
     userId: res.userId,
+  };
+}
+
+export const CHOOSE_PASSWORD_FIRST = "Choose your own password before setting up your authenticator.";
+
+/** A temporary (admin-set) password only lets the person choose their own: no MFA step until then. */
+async function assertOwnPassword(userId: string) {
+  const u = await db().user.findUniqueOrThrow({
+    where: { id: userId },
+    select: { mustChangePassword: true },
   });
-  return { token, mfaEnabled: res.mfaEnabled, userId: res.userId };
+  if (u.mustChangePassword)
+    throw new HttpError(409, CHOOSE_PASSWORD_FIRST, undefined, { mustChangePassword: true });
+}
+
+export const NewPasswordSchema = z
+  .string()
+  .min(12, "Choose a password of at least 12 characters")
+  .max(200, "That password is too long");
+
+/**
+ * First sign-in of an account an admin created: the person replaces the temporary password with
+ * their own (checked again here), so the admin, or anyone who saw the temporary one, no longer
+ * holds a working password. Other sign-ins of the account end. Audited as auth:password_set.
+ */
+export async function chooseOwnPassword(token: string, currentPassword: string, newPassword: string) {
+  const s = await getSessionByToken(token, { allowUnverified: true });
+  if (!s) return null;
+  const next = NewPasswordSchema.parse(newPassword);
+  if (await lockedNow(s.userId)) {
+    await refuseLocked(s.userId, "password_set");
+    return null;
+  }
+  const user = await db().user.findUniqueOrThrow({ where: { id: s.userId } });
+  if (!user.mustChangePassword) throw new HttpError(409, "This account already has its own password");
+  if (!checkPassword(currentPassword, user.passwordHash)) {
+    await recordFailedAttempt(s.userId, "password_set");
+    return null;
+  }
+  if (next === currentPassword)
+    throw new HttpError(400, "Choose a password different from the temporary one");
+  await authProvider().setOwnPassword(s.userId, next);
+  await db().authSession.deleteMany({ where: { userId: s.userId, id: { not: s.id } } });
+  await auditAccount(s.userId, { action: "auth:password_set" });
+  return { mfaEnabled: user.mfaEnabled };
 }
 
 /** True when the account is locked right now (checked before every code). */
@@ -151,11 +220,17 @@ async function lockedNow(userId: string) {
   return isLocked(u, new Date());
 }
 
-/** After a correct code: bind the session to the user's org and role. */
-async function completeSignIn(s: SessionInfo): Promise<SessionInfo> {
+/** A fully signed-in session, with the new token the MFA step issued (set it as the cookie). */
+export type SignedIn = SessionInfo & { token: string };
+
+/**
+ * After a correct code: bind the session to the user's org and role, and issue a new token. The
+ * token seen before MFA (a logged proxy, a shared browser profile) never becomes a full session.
+ */
+async function completeSignIn(s: SessionInfo): Promise<SignedIn> {
   const user = await db().user.update({
     where: { id: s.userId },
-    data: { failedLoginCount: 0, lockedUntil: null },
+    data: { failedLoginCount: 0, lockedUntil: null, lockoutCount: 0 },
     select: { isPlatformCurator: true },
   });
   const memberships = await withUser(s.userId, (tx) =>
@@ -164,9 +239,11 @@ async function completeSignIn(s: SessionInfo): Promise<SessionInfo> {
   // v1.0: one org per user. Multi-org selection is a later UI.
   const m = memberships[0];
   if (!m) throw new HttpError(403, "No organization membership");
+  const token = randomBytes(32).toString("base64url");
   const updated = await db().authSession.update({
     where: { id: s.id },
     data: {
+      tokenHash: hashToken(token),
       mfaVerified: true,
       orgId: m.orgId,
       role: m.role,
@@ -175,9 +252,10 @@ async function completeSignIn(s: SessionInfo): Promise<SessionInfo> {
     },
   });
   await withOrg({ orgId: m.orgId, userId: s.userId, role: m.role }, (tx) =>
-    audit(tx, { action: "auth:login", entityType: "User", entityId: s.userId }),
+    audit(tx, { action: "auth:login", entityType: "User", entityId: s.userId, meta: { sessionId: s.id } }),
   );
   return {
+    token,
     id: updated.id,
     userId: updated.userId,
     orgId: updated.orgId,
@@ -188,13 +266,14 @@ async function completeSignIn(s: SessionInfo): Promise<SessionInfo> {
 }
 
 /** Step 2: TOTP. On success, binds the session to the user's org and role. */
-export async function verifyMfa(token: string, code: string): Promise<SessionInfo | null> {
+export async function verifyMfa(token: string, code: string): Promise<SignedIn | null> {
   const s = await getSessionByToken(token, { allowUnverified: true });
   if (!s) return null;
   if (await lockedNow(s.userId)) {
     await refuseLocked(s.userId, "code");
     return null;
   }
+  await assertOwnPassword(s.userId);
   const result = await authProvider().verifyTotp(s.userId, code);
   if (result !== "ok") {
     await recordFailedAttempt(s.userId, result === "replayed" ? "code_replayed" : "code");
@@ -211,28 +290,24 @@ export async function verifyMfa(token: string, code: string): Promise<SessionInf
 export async function startMfaEnrollment(token: string) {
   const s = await getSessionByToken(token, { allowUnverified: true });
   if (!s) return null;
+  await assertOwnPassword(s.userId);
   const user = await db().user.findUniqueOrThrow({ where: { id: s.userId } });
   if (user.mfaEnabled) throw new HttpError(409, "Authenticator already set up");
   const r = await authProvider().beginTotpEnrollment(s.userId);
   await db().authSession.update({ where: { id: s.id }, data: { pendingTotpSecret: r.secret } });
-  await audit(null, {
-    action: "auth:mfa_enroll_start",
-    entityType: "User",
-    entityId: s.userId,
-    orgId: null,
-    userId: s.userId,
-  });
+  await auditAccount(s.userId, { action: "auth:mfa_enroll_start" });
   return r;
 }
 
 /** Confirms enrollment with a first valid code, then completes sign-in. */
-export async function confirmMfaEnrollment(token: string, code: string): Promise<SessionInfo | null> {
+export async function confirmMfaEnrollment(token: string, code: string): Promise<SignedIn | null> {
   const s = await getSessionByToken(token, { allowUnverified: true });
   if (!s) return null;
   if (await lockedNow(s.userId)) {
     await refuseLocked(s.userId, "enroll");
     return null;
   }
+  await assertOwnPassword(s.userId);
   const row = await db().authSession.findUniqueOrThrow({ where: { id: s.id } });
   if (!row.pendingTotpSecret) throw new HttpError(409, "Start authenticator setup first");
   if (!(await authProvider().confirmTotpEnrollment(s.userId, row.pendingTotpSecret, code))) {
@@ -245,13 +320,7 @@ export async function confirmMfaEnrollment(token: string, code: string): Promise
     await recordFailedAttempt(s.userId, "enroll_code");
     return null;
   }
-  await audit(null, {
-    action: "auth:mfa_enrolled",
-    entityType: "User",
-    entityId: s.userId,
-    orgId: null,
-    userId: s.userId,
-  });
+  await auditAccount(s.userId, { action: "auth:mfa_enrolled" });
   return completeSignIn(s);
 }
 
@@ -346,9 +415,21 @@ export async function getSessionByToken(
   return (await resolveSession(token, opts)).session;
 }
 
+/** Ends the session and, for a signed-in one, writes auth:logout (so a sign-out is told apart from a session left open). */
 export async function logout(token: string | undefined) {
   if (!token) return;
-  await db().authSession.deleteMany({ where: { tokenHash: hashToken(token) } });
+  const row = await db().authSession.findUnique({ where: { tokenHash: hashToken(token) } });
+  if (!row) return;
+  const gone = await db().authSession.deleteMany({ where: { id: row.id } });
+  if (gone.count && row.mfaVerified && row.orgId && row.role)
+    await withOrg({ orgId: row.orgId, userId: row.userId, role: row.role }, (tx) =>
+      audit(tx, {
+        action: "auth:logout",
+        entityType: "User",
+        entityId: row.userId,
+        meta: { sessionId: row.id },
+      }),
+    );
 }
 
 export function tokenFromCookieHeader(header: string | null): string | null {

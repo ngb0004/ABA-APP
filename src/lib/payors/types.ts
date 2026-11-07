@@ -143,10 +143,16 @@ export const SeedRuleSchema = z
       });
   });
 
+/** Payor documents are fetched over https only (plain http lets anyone on the path swap the text). */
+const HttpsUrl = z
+  .string()
+  .url()
+  .refine((u) => u.startsWith("https://"), { message: "Payor document addresses must use https" });
+
 export const LocatorSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("direct"), url: z.string().url() }),
+  z.object({ kind: z.literal("direct"), url: HttpsUrl }),
   /** Georgia MMIS publication index: find the current file by its title. */
-  z.object({ kind: z.literal("ga_mmis_index"), indexUrl: z.string().url(), title: z.string().min(3) }),
+  z.object({ kind: z.literal("ga_mmis_index"), indexUrl: HttpsUrl, title: z.string().min(3) }),
 ]);
 export type Locator = z.infer<typeof LocatorSchema>;
 

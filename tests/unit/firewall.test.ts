@@ -162,3 +162,40 @@ describe("BCBA-authored text", () => {
     expect(validateBcbaText("{{bogus.key}}", ctx).ok).toBe(false);
   });
 });
+
+describe("numeric firewall: numbers that are not ASCII digits or listed words", () => {
+  it.each([
+    "mastered ½ of targets",
+    "x² trials",
+    "① target",
+    "Ⅻ sessions",
+    "the sixth session",
+    "the twelfth week",
+    "on the fifteenth",
+    "in the twentieth week",
+    "the hundredth trial",
+    "dozens of episodes",
+    "hundreds of trials",
+    "seconds later",
+    "since March",
+    "every Tuesday",
+    "progress since May",
+    "mastered half of targets",
+  ])("rejects %j", (text) => {
+    expect(validateAiText(text, ctx).ok).toBe(false);
+  });
+
+  it.each([
+    "[Client] may benefit from a secondary reinforcer.",
+    "[Client] tends to attend tentatively.",
+    "The score improved on {{score.total.admin2}}.",
+    "May include natural environment teaching.",
+    "[Client] responds to praise often.",
+  ])("still passes %j", (text) => {
+    expect(validateAiText(text, ctx)).toMatchObject({ ok: true });
+  });
+
+  it("reports ½ in BCBA text as an unsourced number", () => {
+    expect(validateBcbaText("about ½ of targets", ctx).unsourcedNumbers).toEqual(["½"]);
+  });
+});

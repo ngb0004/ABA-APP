@@ -6,6 +6,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { sha256 } from "./audit";
+import { sampleFilesAllowed } from "./env";
 import { HttpError } from "./log";
 
 export const isDemo = () => process.env.DEMO_MODE === "true";
@@ -42,7 +43,9 @@ export const ASSESSMENT_SAMPLE_TYPES: Record<(typeof DEMO_SAMPLES.assessments)[n
 };
 export type SampleKind = keyof typeof DEMO_SAMPLES;
 
+/** A bundled synthetic sample. Refused (404) on a production deployment, where only real uploads belong. */
 export function sampleFile(kind: SampleKind, name: string): Buffer {
+  if (!sampleFilesAllowed()) throw new HttpError(404, "Not found");
   if (!(DEMO_SAMPLES[kind] as readonly string[]).includes(name))
     throw new HttpError(404, "Unknown sample file");
   return readFileSync(path.join(process.cwd(), "fixtures", kind, name));

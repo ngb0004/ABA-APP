@@ -10,8 +10,32 @@ export function registerSensitiveName(name: string | null | undefined) {
   if (name && name.trim().length >= 2) registeredNames.add(name.trim());
 }
 
+/** Every name on a client record: first, last, preferred, and each guardian's (whole and in parts). */
+export function registerClientNames(c: {
+  firstName?: string | null;
+  lastName?: string | null;
+  preferredName?: string | null;
+  guardians?: unknown;
+}) {
+  registerSensitiveName(c.firstName);
+  registerSensitiveName(c.lastName);
+  registerSensitiveName(c.preferredName);
+  for (const g of Array.isArray(c.guardians) ? (c.guardians as { name?: unknown }[]) : [])
+    if (typeof g?.name === "string") {
+      registerSensitiveName(g.name);
+      for (const part of g.name.split(/\s+/)) if (part.length >= 3) registerSensitiveName(part);
+    }
+}
+
 export function scrub(input: string): string {
   let out = input
+    .replace(/\b\d{3}-\d{2}-\d{4}\b/g, "[ssn]")
+    .replace(/(?<!\d)(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}(?!\d)/g, "[phone]")
+    .replace(
+      /\b\d+\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:St|Street|Ave|Avenue|Rd|Road|Dr|Drive|Ln|Lane|Blvd|Ct|Court|Way|Pl|Place|Pkwy|Cir)\b\.?/g,
+      "[address]",
+    )
+    .replace(/\b\d{5}(?:-\d{4})?\b/g, "[zip]")
     .replace(/\bSYN-[A-Z0-9-]+\b/gi, "[member-id]")
     .replace(/\b[A-Z]{2,4}\d{6,}\b/g, "[member-id]")
     .replace(/[\w.+-]+@[\w-]+\.[\w.]+/g, "[email]")

@@ -12,9 +12,9 @@ import type { Prisma, Role } from "@prisma/client";
 import { z } from "zod";
 import { audit } from "../audit";
 import { hashPassword } from "../auth/local";
-import { withOrg, withUser, type OrgCtx, type Tx } from "../db";
+import { noteRawRead, withOrg, withUser, type OrgCtx, type Tx } from "../db";
 import { dayToDate, toDay } from "../dates";
-import { HttpError, registerSensitiveName } from "../log";
+import { HttpError, registerClientNames } from "../log";
 import { RECORDED_EVENTS } from "../payors/evaluate";
 import { looksLikePhiInNote } from "../rules-watch/text";
 import { monthRange, pickMonth } from "../session-months";
@@ -427,8 +427,7 @@ export async function createClient(ctx: OrgCtx, input: unknown, asOf: string = t
   requirePermission(ctx.role, "client:write");
   if (isDemo()) return createDemoClient(ctx, input, asOf);
   const v = NewClientSchema.parse(input);
-  registerSensitiveName(v.firstName);
-  registerSensitiveName(v.lastName);
+  registerClientNames(v);
   return withOrg(ctx, async (tx) => {
     const c = await tx.client.create({
       data: {
@@ -461,8 +460,7 @@ export async function updateClient(ctx: OrgCtx, clientId: string, input: unknown
   const v: z.infer<typeof ClientUpdateSchema> = isDemo()
     ? DemoUpdateSchema.parse(input)
     : ClientUpdateSchema.parse(input);
-  registerSensitiveName(v.firstName);
-  registerSensitiveName(v.lastName);
+  registerClientNames(v);
   return withOrg(ctx, async (tx) => {
     await clientOf(tx, clientId);
     const { dob, ...rest } = v;
@@ -895,6 +893,10 @@ export async function updateSettings(ctx: OrgCtx, input: unknown) {
 
 // ---------------------------------------------------------------- team members
 
+/** The same answer for any email that cannot be added, whatever the reason (it reveals no other practice). */
+export const MEMBER_EMAIL_TAKEN =
+  "That email can't be added to this practice. Ask the person for another email address.";
+
 async function assertKeepsABcba(tx: Tx, orgId: string, membershipId: string) {
   const bcbas = await tx.membership.findMany({ where: { orgId, role: "BCBA" }, select: { id: true } });
   if (bcbas.length === 1 && bcbas[0]!.id === membershipId)
@@ -906,24 +908,35 @@ export async function addMember(ctx: OrgCtx, input: unknown) {
   const v = NewMemberSchema.parse(input);
   return withOrg(ctx, async (tx) => {
     // Accounts belong to one practice in v1.0; never attach someone else's account here.
-    const existing = await tx.user.findUnique({ where: { email: v.email }, select: { id: true } });
+    const existing = await tx.user.findUnique({
+      where: { email: v.email },
+      select: { id: true, isPlatformCurator: true },
+    });
     let user: { id: string };
     if (existing) {
-      // An account that belongs to no practice any more (removed earlier) can be re-added, with a fresh
-      // password and authenticator. Its memberships are visible only as that user.
+      // Only an account this practice itself removed can be re-added (fresh password and
+      // authenticator). An account from another practice, or a platform curator's, is never
+      // re-keyed from here: that would hand its identity (and audit trail) to this admin.
       const memberships = await withUser(existing.id, (u) =>
         u.membership.count({ where: { userId: existing.id } }),
       );
-      if (memberships) throw new HttpError(409, "An account with that email already exists");
+      const removedHere = await tx.auditEvent.findFirst({
+        where: { action: "member:remove", meta: { path: ["userId"], equals: existing.id } },
+        select: { id: true },
+      });
+      if (memberships || existing.isPlatformCurator || !removedHere)
+        throw new HttpError(409, MEMBER_EMAIL_TAKEN);
       user = await tx.user.update({
         where: { id: existing.id },
         data: {
           name: v.name,
           passwordHash: hashPassword(v.password),
+          mustChangePassword: true,
           totpSecret: null,
           mfaEnabled: false,
           failedLoginCount: 0,
           lockedUntil: null,
+          lockoutCount: 0,
           lastTotpStep: null,
         },
         select: { id: true },
@@ -931,14 +944,21 @@ export async function addMember(ctx: OrgCtx, input: unknown) {
       await tx.authSession.deleteMany({ where: { userId: existing.id } });
     } else
       user = await tx.user.create({
-        data: { email: v.email, name: v.name, passwordHash: hashPassword(v.password), mfaEnabled: false },
+        data: {
+          email: v.email,
+          name: v.name,
+          passwordHash: hashPassword(v.password),
+          // A temporary password: the person chooses their own at first sign-in.
+          mustChangePassword: true,
+          mfaEnabled: false,
+        },
         select: { id: true },
       });
     const m = await tx.membership.create({
       data: { orgId: ctx.orgId, userId: user.id, role: v.role },
       select: { id: true },
     });
-    await note(tx, "member:add", "Membership", m.id, { role: v.role });
+    await note(tx, "member:add", "Membership", m.id, { role: v.role, userId: user.id });
     return m;
   });
 }
@@ -969,7 +989,7 @@ export async function removeMember(ctx: OrgCtx, membershipId: string) {
     await assertKeepsABcba(tx, ctx.orgId, m.id);
     await tx.membership.delete({ where: { id: m.id } });
     await tx.authSession.deleteMany({ where: { userId: m.userId, orgId: ctx.orgId } });
-    await note(tx, "member:remove", "Membership", m.id, { role: m.role });
+    await note(tx, "member:remove", "Membership", m.id, { role: m.role, userId: m.userId });
   });
 }
 
@@ -995,8 +1015,7 @@ export async function clientRecords(ctx: OrgCtx, clientId: string, opts: { month
       },
     });
     if (!client) throw new HttpError(404, "Not found");
-    registerSensitiveName(client.firstName);
-    registerSensitiveName(client.lastName);
+    registerClientNames(client);
     // The latest check for the payor each row has now (a row's payor can be changed).
     for (const p of client.payors) p.benefitsChecks = checksForInsurance(p.benefitsChecks, p).slice(0, 1);
     // Sessions are browsed a month at a time: every month that has sessions, then the chosen one.
@@ -1006,6 +1025,12 @@ export async function clientRecords(ctx: OrgCtx, clientId: string, opts: { month
         FROM service_session WHERE "clientId" = ${clientId}::uuid
         GROUP BY 1 ORDER BY 1 DESC`
     ).map((m) => ({ month: m.month, sessions: Number(m.sessions), units: Number(m.units) }));
+    // Raw SQL is invisible to the audit hook: record the aggregate as a read of this client's sessions.
+    noteRawRead(
+      "ServiceSession",
+      [clientId],
+      months.reduce((n, m) => n + m.sessions, 0),
+    );
     const month = pickMonth(months, opts.month);
     const sessions = month
       ? await tx.serviceSession.findMany({

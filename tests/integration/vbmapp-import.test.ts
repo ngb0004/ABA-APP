@@ -3,7 +3,15 @@ import { readFileSync } from "node:fs";
 import * as XLSX from "xlsx";
 import { withOrg } from "@/lib/db";
 import { carryForward } from "@/lib/vbmapp/carry-forward";
-import { confirmImport, importReview, uploadVbmapp } from "@/lib/services/vbmapp";
+import { createPlan } from "@/lib/services/plans";
+import { createClient } from "@/lib/services/records";
+import {
+  ADMINISTRATION_IN_USE,
+  confirmImport,
+  discardImport,
+  importReview,
+  uploadVbmapp,
+} from "@/lib/services/vbmapp";
 import { clientId, ctxAs } from "../helpers/ctx";
 
 const bcba = ctxAs("BCBA");
@@ -58,6 +66,48 @@ describe("VB-MAPP import workflow", () => {
     );
     expect(imp.phiStripped).toBe(true);
     expect(JSON.stringify(imp.parsed)).not.toContain("Fake Testname");
+  });
+
+  const newClient = () =>
+    createClient(bcba, {
+      firstName: "Vbmapp",
+      lastName: "Testcase",
+      dob: "2021-04-02",
+      serviceAddress: { line1: "1 Fiction Ln", city: "Example City", state: "GA", zip: "30000" },
+      guardians: [{ name: "Pat Testcase", relationship: "mother", legalCustody: true, canSign: true }],
+      fictional: true,
+    }).then((c) => c.id);
+
+  it("a confirmed import cannot be discarded", async () => {
+    const cid = await newClient();
+    const up = await uploadVbmapp(bcba, cid, "sample_G_level1.xlsm", fixture("sample_G_level1.xlsm"));
+    await confirmImport(bcba, up.importId, { stripPhi: true });
+    await expect(discardImport(bcba, up.importId)).rejects.toMatchObject({ status: 409 });
+    const pending = await uploadVbmapp(bcba, cid, "sample_G_level1.xlsm", fixture("sample_G_level1.xlsm"));
+    await discardImport(bcba, pending.importId);
+    await expect(discardImport(bcba, pending.importId)).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("does not replace a verified administration once an exported plan depends on it", async () => {
+    const cid = await newClient();
+    const first = await uploadVbmapp(bcba, cid, "sample_G_level1.xlsm", fixture("sample_G_level1.xlsm"));
+    await confirmImport(bcba, first.importId, { stripPhi: true });
+    const plan = await createPlan(bcba, cid, "reauth");
+    await withOrg(bcba, (tx) => tx.plan.update({ where: { id: plan.id }, data: { status: "finalized" } }));
+    try {
+      const again = await uploadVbmapp(bcba, cid, "sample_G_level1.xlsm", fixture("sample_G_level1.xlsm"));
+      await expect(confirmImport(bcba, again.importId, { stripPhi: true })).rejects.toMatchObject({
+        status: 409,
+        message: ADMINISTRATION_IN_USE,
+      });
+      // The scores the plan used are still there.
+      const kept = await withOrg(bcba, (tx) =>
+        tx.vbmappAdministration.findMany({ where: { importId: first.importId } }),
+      );
+      expect(kept.length).toBeGreaterThan(0);
+    } finally {
+      await withOrg(bcba, (tx) => tx.plan.update({ where: { id: plan.id }, data: { status: "draft" } }));
+    }
   });
 
   it("rejects non-workbook uploads", async () => {

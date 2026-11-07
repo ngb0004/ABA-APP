@@ -67,3 +67,15 @@ test("a warning two minutes before idle sign-out; Stay signed in keeps the sessi
   await expect(page).toHaveURL(/\/login\?reason=idle$/);
   await expect(page.getByTestId("login-notice")).toContainText("inactivity");
 });
+
+test("pages and API routes send the security headers", async ({ request }) => {
+  for (const path of ["/login", "/api/auth/session"]) {
+    const res = await request.get(path);
+    const h = res.headers();
+    expect(h["content-security-policy"]).toContain("frame-ancestors 'none'");
+    expect(h["content-security-policy"]).toContain("object-src 'none'");
+    expect(h["x-frame-options"]).toBe("DENY");
+    expect(h["x-content-type-options"]).toBe("nosniff");
+    expect(h["referrer-policy"]).toBe("no-referrer");
+  }
+});

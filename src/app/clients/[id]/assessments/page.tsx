@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { sampleFilesAllowed } from "@/lib/env";
 import { AddAssessment } from "@/components/add-assessment";
 import { addOptions, assessmentFields, editValues } from "@/components/assessment-fields";
 import { RowMenu } from "@/components/row-menu";
@@ -74,7 +75,7 @@ export default async function AssessmentsPage({ params }: { params: Promise<{ id
               groups={addOptions(catalog, id, asOfToday())}
               accept={IMPORT_ACCEPT}
               demo={isDemo()}
-              samples={DEMO_SAMPLES.assessments.map((name) => ({
+              samples={(sampleFilesAllowed() ? DEMO_SAMPLES.assessments : []).map((name) => ({
                 name,
                 type: ASSESSMENT_SAMPLE_TYPES[name],
               }))}
