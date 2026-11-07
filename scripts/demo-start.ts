@@ -231,7 +231,10 @@ async function main() {
     PATH: process.env.PATH,
     HOME: process.env.HOME,
     NODE_ENV: "production",
+    DEPLOYMENT: "demo",
     DEMO_MODE: "true",
+    // Every step loads the app config, which refuses a weak secret when NODE_ENV is production.
+    SESSION_SECRET: sessionSecret,
     LLM_PROVIDER: process.env.LLM_PROVIDER ?? "mock",
     LLM_MODEL: process.env.LLM_MODEL,
     ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
